@@ -1,0 +1,30 @@
+Context
+Validator must approve/reject extracted fields.
+Goal
+Create ValidationReview page that shows candidate_fields and evidence pointers.
+Inputs
+Endpoints:
+* GET /api/v1/records/{sro_id}
+* POST /api/v1/validation/approve
+* POST /api/v1/validation/reject
+Outputs
+UI showing candidate fields:
+* field_key
+* value_raw
+* confidence_score
+* evidence_pointer_id
+* validation_state
+Buttons:
+* approve (editable validated_value)
+* reject (enter reason)
+Constraints
+* must update UI state immediately after approval/rejection
+* must show validation_state changes
+* must show error message if backend fails
+Deliverables required
+* ValidationReview.tsx
+* CandidateFieldRow component
+DO NOT DO
+* DO NOT rename field_key
+* DO NOT approve without validated_value input support
+

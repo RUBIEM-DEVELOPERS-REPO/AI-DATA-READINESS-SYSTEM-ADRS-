@@ -1,0 +1,23 @@
+Context
+AI Engineer/Admin triggers extraction.
+Goal
+Build UI to trigger extraction.
+Inputs
+Endpoint:
+* POST /api/v1/intelligence/extract
+Request fields:
+* evidence_id
+* document_type_hint
+* options.run_ocr
+* options.run_tables
+Outputs
+* extraction_run_id displayed
+* link to extraction status screen
+Constraints
+* Must validate evidence_id input
+* Must handle async response (polling)
+Deliverables required
+* ExtractionTrigger.tsx
+DO NOT DO
+* DO NOT assume extraction finishes instantly
+

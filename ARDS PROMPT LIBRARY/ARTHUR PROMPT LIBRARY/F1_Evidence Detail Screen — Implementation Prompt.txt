@@ -1,0 +1,25 @@
+Context
+Evidence detail is required for validation and traceability.
+Goal
+Create EvidenceDetail page showing metadata and download/preview.
+Inputs
+Endpoints:
+* GET /api/v1/evidence/{evidence_id}/metadata
+* GET /api/v1/evidence/{evidence_id}/download
+Outputs
+UI showing:
+* evidence_id
+* file_hash
+* file_uri
+* immutability_status
+* status
+* preview iframe if pdf
+Constraints
+* Must show file_hash (sha256)
+* Must support download button
+* Must show errors if metadata not found
+Deliverables required
+* EvidenceDetail.tsx
+DO NOT DO
+* DO NOT expose internal server file paths directly in UI
+

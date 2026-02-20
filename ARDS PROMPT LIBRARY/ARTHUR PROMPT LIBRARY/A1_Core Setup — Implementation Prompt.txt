@@ -1,0 +1,34 @@
+Context
+Arthur is building the DRS MVP frontend using React.
+Goal
+Generate the full React application scaffold with routing, layout, authentication, and API client.
+Inputs
+* Backend API base path: /api/v1
+* JWT token authentication
+* Tenant header requirement
+Outputs
+* React project structure
+* Login flow
+* Protected routes
+* API client helper
+* Global error handling
+Constraints (CDM/ICD enforcement)
+* All API calls must use /api/v1
+* Must use response envelope
+* Must attach Authorization + X-Tenant-Id
+* Must store token in localStorage/sessionStorage
+* Must implement logout functionality
+Deliverables required
+* React Router setup
+* Layout component
+* Auth context/provider
+* API client module
+* Navigation sidebar
+Examples
+API client response parsing must follow:
+if (!resp.success) throw new Error(resp.error?.message);
+DO NOT DO
+* DO NOT hardcode API URLs outside API client module
+* DO NOT ignore request_id
+* DO NOT use endpoints not in ICD
+

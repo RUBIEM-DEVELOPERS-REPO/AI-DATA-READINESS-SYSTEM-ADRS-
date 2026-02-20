@@ -1,0 +1,21 @@
+Context
+Dataset Card is required for governance.
+Goal
+Create DatasetCard page.
+Inputs
+Endpoint:
+* GET /api/v1/publish/dataset/{dataset_version_id}/card
+Outputs
+Render:
+* dataset_name
+* dataset_version
+* schema_version
+* lineage_evidence_batches
+* validation_summary
+* approvals
+Constraints
+* Must display lineage clearly
+* Must show generated_at
+Deliverables required
+* DatasetCard.tsx
+

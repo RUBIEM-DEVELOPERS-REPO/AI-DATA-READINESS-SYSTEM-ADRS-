@@ -1,0 +1,5 @@
+Generate tests verifying:
+* metadata fetched and displayed
+* download button triggers call
+* errors handled
+

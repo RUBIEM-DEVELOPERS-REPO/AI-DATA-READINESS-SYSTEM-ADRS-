@@ -1,0 +1,6 @@
+Generate tests verifying:
+* candidate_fields render
+* approve sends correct payload
+* reject sends correct payload
+* UI updates validation_state
+

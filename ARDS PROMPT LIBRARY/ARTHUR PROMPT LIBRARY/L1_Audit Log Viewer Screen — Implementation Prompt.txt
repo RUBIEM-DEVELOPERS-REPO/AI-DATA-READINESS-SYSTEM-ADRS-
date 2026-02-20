@@ -1,0 +1,26 @@
+Context
+Compliance Officer/Admin must view audit logs.
+Goal
+Create AuditLogViewer page.
+Inputs
+Endpoint:
+* GET /api/v1/audit/events
+Filters:
+* action
+* actor
+* timestamp range
+Outputs
+Table showing:
+* timestamp
+* actor
+* action
+* object_ref
+* reason
+Constraints
+* Must support pagination
+* Must restrict access by role
+Deliverables required
+* AuditLogViewer.tsx
+DO NOT DO
+* DO NOT show audit logs to unauthorized roles
+

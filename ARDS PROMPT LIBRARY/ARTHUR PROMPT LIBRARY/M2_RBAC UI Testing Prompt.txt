@@ -1,0 +1,2 @@
+Generate tests verifying role wrapper hides content correctly.
+

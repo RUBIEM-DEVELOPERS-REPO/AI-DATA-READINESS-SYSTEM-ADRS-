@@ -1,0 +1,7 @@
+Goal
+Generate tests verifying CDM mapping correctness.
+Constraints:
+* only approved fields become Attributes
+* all Attributes have evidence_pointer_id
+* audit log MAP_TO_CDM exists
+

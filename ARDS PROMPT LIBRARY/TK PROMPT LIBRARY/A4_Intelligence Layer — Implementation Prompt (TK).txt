@@ -1,0 +1,69 @@
+Context
+This layer runs OCR/extraction and generates SRO + candidate fields + evidence pointers.
+Goal
+Implement extraction pipeline endpoints and persistence.
+Inputs
+Request JSON:
+* evidence_id
+* document_type_hint
+* options.run_ocr
+* options.run_tables
+Outputs
+SRO object and candidate fields with evidence pointers.
+Constraints
+Endpoints must match ICD:
+* POST /api/v1/intelligence/extract
+* GET /api/v1/intelligence/extract/{extraction_run_id}
+* GET /api/v1/records/{sro_id}
+SRO fields must include:
+* sro_id
+* tenant_id
+* evidence_id
+* document_id
+* extraction_run_id
+* candidate_fields
+* trust_score
+* status
+* created_at
+CandidateField fields must include:
+* field_key
+* value_raw
+* value_type
+* confidence_score
+* evidence_pointer_id
+* pii_flag
+* validation_state
+* validated_value
+EvidencePointer fields must include:
+* pointer_id
+* evidence_id
+* page_number
+* bbox_x1
+* bbox_y1
+* bbox_x2
+* bbox_y2
+* snippet_text
+* pointer_format_version
+Audit events required:
+* OCR_RUN
+* EXTRACTION_RUN
+Deliverables required
+* FastAPI routes
+* Background job support (Celery or FastAPI BackgroundTasks)
+* MySQL models + migrations
+* Unit tests
+Example
+Candidate field output example:
+{
+  "field_key": "invoice_number",
+  "value_raw": "INV-445",
+  "value_type": "string",
+  "confidence_score": 0.91,
+  "evidence_pointer_id": "PTR-001",
+  "validation_state": "PENDING"
+}
+DO NOT DO
+* DO NOT output fields without evidence_pointer_id
+* DO NOT rename candidate_fields
+* DO NOT skip OCR_RUN audit log
+

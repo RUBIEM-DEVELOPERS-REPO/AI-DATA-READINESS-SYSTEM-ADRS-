@@ -1,0 +1,21 @@
+Context
+AI Engineer resolves duplicate parties.
+Goal
+Create Resolution UI to run party resolution.
+Inputs
+Endpoint:
+* POST /api/v1/resolution/parties/run
+Payload:
+* party_ids[]
+* merge_rule_version
+Outputs
+Show:
+* golden_record_id
+* merged_from_ids
+* match_score
+Constraints
+* allow manual entry of party IDs for MVP
+* display errors clearly
+Deliverables required
+* PartyResolution.tsx
+

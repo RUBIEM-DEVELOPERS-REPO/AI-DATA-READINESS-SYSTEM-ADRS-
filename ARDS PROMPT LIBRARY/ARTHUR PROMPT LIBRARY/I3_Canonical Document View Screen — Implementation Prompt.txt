@@ -1,0 +1,21 @@
+Context
+User must see canonical Document + Object + Attributes.
+Goal
+Create CanonicalDocumentView page.
+Inputs
+Endpoints:
+* GET /api/v1/cdm/documents/{document_id}
+* GET /api/v1/cdm/attributes?subject_ref_type=OBJECT&subject_ref_id={object_id}
+Outputs
+Show:
+* Document metadata
+* classification_label + confidence
+* object_type_label + confidence
+* attribute list
+Constraints
+* must show evidence_pointer_id for each Attribute
+* must show validation_state
+Deliverables required
+* CanonicalDocumentView.tsx
+* AttributeTable.tsx
+
