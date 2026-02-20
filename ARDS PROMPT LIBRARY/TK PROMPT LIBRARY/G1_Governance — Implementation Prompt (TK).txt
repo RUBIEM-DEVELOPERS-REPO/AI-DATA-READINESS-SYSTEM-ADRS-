@@ -1,0 +1,30 @@
+Context
+Governance layer ensures auditability and access control.
+Goal
+Implement audit logging + RBAC enforcement.
+Inputs
+JWT token with roles.
+Outputs
+AuditEvent stored and retrievable.
+Constraints
+Endpoint must match ICD:
+* GET /api/v1/audit/events
+AuditEvent fields:
+* event_id
+* tenant_id
+* actor
+* action
+* object_ref
+* timestamp
+* before
+* after
+* reason
+Only Compliance Officer/Admin can view audit logs.
+Deliverables required
+* RBAC middleware
+* audit decorator/service
+* endpoint
+* tests
+DO NOT DO
+* DO NOT allow audit viewing by Data Validator
+

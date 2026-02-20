@@ -1,0 +1,2 @@
+Generate tests verifying list renders and buttons work.
+

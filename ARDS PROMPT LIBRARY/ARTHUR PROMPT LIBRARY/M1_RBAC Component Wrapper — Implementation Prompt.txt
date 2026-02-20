@@ -1,0 +1,18 @@
+Context
+Frontend must enforce role-based UI.
+Goal
+Create a reusable <RequireRole> component.
+Inputs
+* allowed_roles[]
+* current_user_role
+Outputs
+* wrapper that hides/disables children
+Constraints
+* Must match backend roles exactly:
+Archive Operator, Data Validator, AI Engineer, Compliance Officer, Admin
+Deliverables required
+* RequireRole.tsx
+* useAuth hook
+DO NOT DO
+* DO NOT hardcode roles in multiple files (centralize constants)
+

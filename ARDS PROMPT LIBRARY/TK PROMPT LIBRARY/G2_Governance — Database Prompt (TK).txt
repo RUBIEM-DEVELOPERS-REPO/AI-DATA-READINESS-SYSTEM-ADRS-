@@ -1,0 +1,2 @@
+Generate MySQL schema for AuditEvent.
+

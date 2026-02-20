@@ -1,0 +1,18 @@
+Context
+Testing frontend core setup.
+Goal
+Generate tests for authentication and route protection.
+Inputs
+AuthContext, Router.
+Outputs
+Jest tests.
+Constraints
+Must test:
+* unauthenticated redirect to login
+* token stored after login
+* logout clears token
+Deliverables required
+* Jest + React Testing Library test file
+DO NOT DO
+* DO NOT skip mocking fetch
+

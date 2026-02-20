@@ -1,0 +1,24 @@
+Context
+Generate MySQL schema for evidence storage.
+Goal
+Create MySQL table(s) and migrations for EvidenceObject and idempotency tracking.
+Inputs
+EvidenceObject schema fields (above).
+Outputs
+MySQL DDL for EvidenceObject.
+Constraints
+* evidence_id must be PRIMARY KEY
+* UNIQUE constraint: (tenant_id, file_hash)
+* Index on: tenant_id, batch_id, folder_id, ingested_at
+* Include immutability_status field
+Deliverables required
+* CREATE TABLE SQL
+* Alembic migration script
+Example
+Example constraint:
+UNIQUE KEY uniq_tenant_hash (tenant_id, file_hash)
+DO NOT DO
+* DO NOT use PostgreSQL syntax
+* DO NOT omit tenant_id
+* DO NOT omit file_hash
+

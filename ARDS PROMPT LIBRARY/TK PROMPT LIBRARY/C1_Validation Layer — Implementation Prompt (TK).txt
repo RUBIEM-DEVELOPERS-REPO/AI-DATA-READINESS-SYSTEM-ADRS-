@@ -1,0 +1,53 @@
+Context
+Validation layer enables HITL approval/rejection of extracted fields.
+Goal
+Implement validation tasks queue + claim + approve + reject.
+Inputs
+* validation task request
+* approvals array
+* rejections array
+Outputs
+* validation task created/updated
+* candidate_field validation_state updated
+Constraints
+Endpoints must match ICD:
+* GET /api/v1/validation/tasks
+* POST /api/v1/validation/tasks/{validation_id}/claim
+* POST /api/v1/validation/approve
+* POST /api/v1/validation/reject
+ValidationTask fields must include:
+* validation_id
+* tenant_id
+* sro_id
+* assigned_to
+* status
+* fields_to_validate
+* created_at
+* updated_at
+Audit events required:
+* CREATE_VALIDATION_TASK
+* APPROVE_FIELD
+* REJECT_FIELD
+RBAC:
+* Data Validator
+* Admin
+Deliverables required
+* FastAPI endpoints
+* ValidationTask service
+* MySQL schema + migrations
+* Tests
+Example
+Approve payload:
+{
+  "record_object_id": "SRO-001",
+  "approvals": [
+    {
+      "field_key": "invoice_number",
+      "validated_value": "INV-445"
+    }
+  ]
+}
+DO NOT DO
+* DO NOT allow approvals without validator identity
+* DO NOT skip audit logs
+

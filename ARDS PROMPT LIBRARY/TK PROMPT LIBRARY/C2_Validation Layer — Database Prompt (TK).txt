@@ -1,0 +1,16 @@
+Context
+Validation workflow requires persistence.
+Goal
+Generate MySQL schema for ValidationTask.
+Constraints
+Indexes required:
+* tenant_id
+* status
+* assigned_to
+* sro_id
+Deliverables required
+* SQL migration script
+* ORM models
+DO NOT DO
+* DO NOT store fields_to_validate as plain string (must be JSON array)
+

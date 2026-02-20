@@ -1,0 +1,26 @@
+Context
+User must login to access DRS portal.
+Goal
+Create Login page UI with token handling.
+Inputs
+* Username/email
+* Password
+* Tenant ID input field (or dropdown)
+Outputs
+* Login form
+* Token saved into auth context + localStorage
+Constraints
+* If backend has no login endpoint yet, mock login and store token
+* Must show errors in UI
+* Must redirect to dashboard after login
+Deliverables required
+* Login.tsx
+* AuthContext integration
+* Form validation
+Examples
+On submit:
+* show loading spinner
+* handle error.message
+DO NOT DO
+* DO NOT hardcode admin token permanently (except in development mode)
+

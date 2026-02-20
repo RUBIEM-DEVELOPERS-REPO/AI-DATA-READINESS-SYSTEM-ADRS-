@@ -1,0 +1,24 @@
+Context
+Publishing is MVP output delivery.
+Goal
+Create PublishDataset page.
+Inputs
+Endpoint:
+* POST /api/v1/publish/dataset
+Payload:
+* dataset_name
+* schema_version
+* source_batches[]
+* formats[]
+Outputs
+Show:
+* dataset_version_id
+* dataset_version
+* schema_version
+* publish status
+Constraints
+* Must support selecting CSV and JSON
+* Must show validation_summary
+Deliverables required
+* PublishDataset.tsx
+

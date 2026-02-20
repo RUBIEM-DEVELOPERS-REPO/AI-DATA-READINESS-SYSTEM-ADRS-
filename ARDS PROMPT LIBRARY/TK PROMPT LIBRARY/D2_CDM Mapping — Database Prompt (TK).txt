@@ -1,0 +1,13 @@
+Goal
+Generate MySQL schema for:
+* Document
+* Object
+* Attribute
+* Party
+* Identifier
+* Event
+* Relationship
+Constraints:
+* foreign keys between document/object/attribute/pointer
+* tenant_id index on all
+

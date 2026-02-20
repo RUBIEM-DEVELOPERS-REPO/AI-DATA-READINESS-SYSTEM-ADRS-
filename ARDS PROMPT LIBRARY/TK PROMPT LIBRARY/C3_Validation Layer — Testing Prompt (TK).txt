@@ -1,0 +1,10 @@
+Goal
+Generate tests for validation workflow.
+Constraints
+Test must validate:
+* tasks can be created
+* tasks can be claimed
+* approve changes validation_state
+* reject changes validation_state
+* audit logs exist
+

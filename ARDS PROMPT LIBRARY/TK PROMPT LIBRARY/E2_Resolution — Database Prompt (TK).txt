@@ -1,0 +1,3 @@
+Generate MySQL schema for GoldenRecord.
+Add FK to Party.golden_record_id.
+

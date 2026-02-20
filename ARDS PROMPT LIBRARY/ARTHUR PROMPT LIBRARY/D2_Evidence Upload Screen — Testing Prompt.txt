@@ -1,0 +1,6 @@
+Generate tests verifying:
+* upload button disabled until file chosen
+* multipart request is sent
+* success message displayed
+* error message displayed on failure
+

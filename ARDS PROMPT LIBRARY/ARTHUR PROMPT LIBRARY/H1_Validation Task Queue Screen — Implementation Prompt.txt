@@ -1,0 +1,20 @@
+Context
+Validators must see tasks waiting for review.
+Goal
+Create ValidationQueue page.
+Inputs
+Endpoint:
+* GET /api/v1/validation/tasks?status=PENDING_VALIDATION
+Outputs
+Task table with:
+* validation_id
+* sro_id
+* assigned_to
+* status
+* created_at
+Constraints
+* allow filter by status
+* clicking task opens review page
+Deliverables required
+* ValidationQueue.tsx
+

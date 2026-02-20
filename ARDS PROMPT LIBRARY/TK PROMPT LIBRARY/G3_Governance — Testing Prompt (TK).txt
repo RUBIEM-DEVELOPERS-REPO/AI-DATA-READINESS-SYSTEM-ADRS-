@@ -1,0 +1,2 @@
+Test RBAC enforcement and audit logging.
+

@@ -1,0 +1,20 @@
+Context
+Users must browse datasets.
+Goal
+Create DatasetList page.
+Inputs
+Endpoint:
+* GET /api/v1/publish/datasets
+Outputs
+List with:
+* dataset_name
+* dataset_version
+* schema_version
+* generated_at
+Buttons:
+* Download CSV
+* Download JSON
+* View Dataset Card
+Deliverables required
+* DatasetList.tsx
+

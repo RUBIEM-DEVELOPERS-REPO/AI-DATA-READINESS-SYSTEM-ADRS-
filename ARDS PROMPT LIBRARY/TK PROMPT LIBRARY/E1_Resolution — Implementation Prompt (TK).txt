@@ -1,0 +1,31 @@
+Context
+Resolution layer merges duplicates into golden records.
+Goal
+Implement party resolution endpoint.
+Inputs
+party_ids + merge_rule_version.
+Outputs
+GoldenRecord created.
+Constraints
+Endpoint must match ICD:
+* POST /api/v1/resolution/parties/run
+* GET /api/v1/resolution/golden-records/{golden_record_id}
+GoldenRecord fields must include:
+* golden_record_id
+* tenant_id
+* subject_kind
+* canonical_subject_id
+* merged_from_ids
+* merge_rule_version
+* match_score
+* merge_decision_log_ref
+Audit event required:
+* MERGE_ENTITIES
+Deliverables required
+* resolution logic
+* endpoints
+* tests
+DO NOT DO
+* DO NOT merge without storing merged_from_ids
+* DO NOT skip audit logs
+

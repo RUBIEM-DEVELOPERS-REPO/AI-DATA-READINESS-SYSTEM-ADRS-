@@ -1,0 +1,43 @@
+Context
+Persistence for extraction runs.
+Goal
+Generate MySQL schema for:
+* extraction_run
+* sro
+* candidate_field
+* evidence_pointer
+Inputs
+SRO + CandidateField + EvidencePointer schemas.
+Outputs
+DDL + migrations.
+Constraints
+* candidate_field.evidence_pointer_id must reference evidence_pointer.pointer_id
+* indexes required: evidence_id, extraction_run_id, validation_state
+Deliverables required
+* MySQL DDL
+* Alembic migration script
+DO NOT DO
+* DO NOT store bbox as JSON blob only (must keep numeric bbox fields)
+
+2C) Intelligence Layer — Testing Prompt (TK)
+Context
+Extraction must be testable.
+Goal
+Generate pytest tests to validate extraction output.
+Inputs
+Uploaded evidence_id.
+Outputs
+Test scripts.
+Constraints
+Test must validate:
+* extraction_run_id returned
+* SRO created
+* candidate_fields exist
+* evidence_pointer rows exist
+* audit events OCR_RUN and EXTRACTION_RUN exist
+Deliverables required
+* pytest test module
+* Postman tests
+DO NOT DO
+* DO NOT skip pointer validation
+

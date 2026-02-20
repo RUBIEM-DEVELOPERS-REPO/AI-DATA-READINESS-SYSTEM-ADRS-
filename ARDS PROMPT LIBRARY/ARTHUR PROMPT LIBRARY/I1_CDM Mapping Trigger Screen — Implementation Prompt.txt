@@ -1,0 +1,22 @@
+Context
+AI Engineer triggers mapping after validation.
+Goal
+Create UI to call CDM map endpoint.
+Inputs
+Endpoint:
+* POST /api/v1/cdm/map
+Payload:
+* sro_id
+* schema_version
+Outputs
+* document_id returned
+* object_id returned
+* link to canonical document view
+Constraints
+* must display classification_label
+* must display object_type_label
+Deliverables required
+* CDMMappingTrigger.tsx
+DO NOT DO
+* DO NOT create UI that assumes Invoice entity exists
+
