@@ -1,0 +1,61 @@
+name: API E2E (DRS Pipeline)
+
+on:
+  # Run on merges (pushes) to dev/main, and allow manual trigger
+  push:
+    branches: ["dev", "main"]
+  workflow_dispatch:
+
+jobs:
+  api-e2e:
+    runs-on: ubuntu-latest
+
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: drs_e2e
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -proot"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=15
+
+    env:
+      DB_HOST: 127.0.0.1
+      DB_PORT: 3306
+      DB_USER: root
+      DB_PASSWORD: root
+      DB_NAME: drs_e2e
+      DATABASE_URL: mysql+pymysql://root:root@127.0.0.1:3306/drs_e2e
+      ENV: test
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install backend dependencies
+        run: |
+          python -m pip install --upgrade pip
+          cd backend
+          pip install -r requirements.txt
+
+      - name: Apply migrations
+        run: |
+          cd backend
+          alembic upgrade head
+
+      - name: Run API E2E tests
+        run: |
+          cd backend
+          # Put your end-to-end pipeline tests here:
+          # backend/tests/e2e/test_pipeline_happy_path.py
+          pytest -q tests/e2e
