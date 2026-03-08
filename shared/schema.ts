@@ -82,12 +82,18 @@ export const extractionRuns = pgTable("extraction_runs", {
   consistencyScore: real("consistency_score").notNull().default(0),
   docQualityScore: real("doc_quality_score").notNull().default(0),
   trustScore: real("trust_score").notNull().default(0),
+  trustScoreBreakdown: jsonb("trust_score_breakdown"),
   extractedFields: jsonb("extracted_fields"),
   extractedEntities: jsonb("extracted_entities"),
   extractedTables: jsonb("extracted_tables"),
+  // NEW: normalized attributes with per-field metadata
+  extractedAttributes: jsonb("extracted_attributes"),
   rawText: text("raw_text"),
   modelVersion: text("model_version").notNull().default("v1.0"),
   processingTimeMs: integer("processing_time_ms").notNull().default(0),
+  // NEW: quality gate results
+  qualityGatesPassed: boolean("quality_gates_passed").notNull().default(true),
+  qualityGatesReport: jsonb("quality_gates_report"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
@@ -103,6 +109,10 @@ export const validationTasks = pgTable("validation_tasks", {
   approvalStage: integer("approval_stage").notNull().default(1),
   maxApprovalStages: integer("max_approval_stages").notNull().default(1),
   trustScore: real("trust_score").notNull().default(0),
+  // NEW: policy-based gating metadata
+  approvalPolicyRule: text("approval_policy_rule"),
+  approvalPolicyReason: text("approval_policy_reason"),
+  weakFields: jsonb("weak_fields"),
   validatedAt: timestamp("validated_at"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
@@ -114,8 +124,13 @@ export const cdmEntities = pgTable("cdm_entities", {
   entityType: entityTypeEnum("entity_type").notNull(),
   displayName: text("display_name").notNull(),
   canonicalFields: jsonb("canonical_fields").notNull(),
+  // NEW: identifiers linked to this entity (emails, phones, IDs)
+  identifiers: jsonb("identifiers"),
+  // NEW: relationships to other entities
+  relationships: jsonb("relationships"),
   sourceEvidenceIds: text("source_evidence_ids").array(),
   goldenRecordId: varchar("golden_record_id"),
+  mergedFromIds: text("merged_from_ids").array(),
   isGoldenRecord: boolean("is_golden_record").notNull().default(false),
   confidenceScore: real("confidence_score").notNull().default(0),
   schemaVersion: text("schema_version").notNull().default("1.0"),
@@ -137,6 +152,12 @@ export const publishedDatasets = pgTable("published_datasets", {
   qualityScore: real("quality_score").notNull().default(0),
   lineageInfo: jsonb("lineage_info"),
   datasetCard: jsonb("dataset_card"),
+  // NEW: multi-artifact URIs (ML, KG, RAG, bundle)
+  artifactUris: jsonb("artifact_uris"),
+  // NEW: actual artifact content for demonstration
+  artifactContents: jsonb("artifact_contents"),
+  // NEW: quality gates applied before publishing
+  qualityGates: jsonb("quality_gates"),
   publishedBy: text("published_by"),
   tenantId: text("tenant_id").notNull().default("TENANT-001"),
   publishedAt: timestamp("published_at"),
@@ -181,3 +202,105 @@ export type PublishedDataset = typeof publishedDatasets.$inferSelect;
 export type InsertDataset = z.infer<typeof insertDatasetSchema>;
 export type AuditLog = typeof auditLogs.$inferSelect;
 export type InsertAuditLog = z.infer<typeof insertAuditLogSchema>;
+
+// ─── Normalized Attribute type used in extractedAttributes ───────────────────
+export interface NormalizedAttribute {
+  field_key: string;
+  subject_type: "DOCUMENT" | "PARTY" | "OBJECT" | "EVENT";
+  value_raw: string;
+  value_normalized: string;
+  normalized_value_type: "string" | "number" | "date" | "datetime" | "phone" | "email" | "currency" | "boolean";
+  normalization_status: "SUCCESS" | "FAILED" | "SKIPPED";
+  normalization_error?: string;
+  confidence_score: number;
+  validation_state: "AUTO_APPROVED" | "PENDING" | "APPROVED" | "REJECTED";
+  approval_policy_rule?: string;
+  approval_policy_reason?: string;
+  evidence_pointer?: string;
+}
+
+// ─── Multi-artifact dataset types ────────────────────────────────────────────
+export interface DatasetArtifactUris {
+  ml?: string;
+  kg_entities?: string;
+  kg_identifiers?: string;
+  kg_edges?: string;
+  rag_chunks?: string;
+  bundle_zip?: string;
+}
+
+export interface MlFeatureRow {
+  entity_id: string;
+  entity_type: string;
+  display_name: string;
+  confidence_score: number;
+  [key: string]: any;
+}
+
+export interface KgEntityRow {
+  entity_id: string;
+  entity_type: string;
+  display_name: string;
+  golden_record_id?: string;
+  is_golden_record: boolean;
+  fields: Record<string, any>;
+  identifiers: any[];
+  evidence_ids: string[];
+}
+
+export interface KgEdgeRow {
+  edge_id: string;
+  source_entity_id: string;
+  target_entity_id: string;
+  relationship_type: string;
+  confidence: number;
+  evidence_id?: string;
+}
+
+export interface RagChunkRow {
+  chunk_id: string;
+  text: string;
+  evidence_id: string;
+  page_number?: number;
+  document_title?: string;
+  linked_entity_ids: string[];
+  trust_score: number;
+  validation_state: string;
+}
+
+export interface DatasetCard {
+  schema_version: string;
+  dataset_version: string;
+  dataset_code: string;
+  name: string;
+  description?: string;
+  generated_at: string;
+  lineage: {
+    source_batches: string[];
+    source_evidence_ids: string[];
+    pipeline_version: string;
+    extraction_model_version: string;
+  };
+  quality_metrics: {
+    total_records: number;
+    avg_confidence: number;
+    avg_trust_score: number;
+    approved_pct: number;
+    pending_pct: number;
+    normalization_success_pct: number;
+  };
+  validation_summary: {
+    total_attributes: number;
+    auto_approved: number;
+    human_approved: number;
+    pending: number;
+    rejected: number;
+  };
+  artifacts: {
+    ml_features?: { rows: number; columns: string[] };
+    kg_entities?: { count: number };
+    kg_edges?: { count: number };
+    rag_chunks?: { count: number; avg_chunk_length: number };
+  };
+  approvals?: Array<{ role: string; user: string; timestamp: string }>;
+}

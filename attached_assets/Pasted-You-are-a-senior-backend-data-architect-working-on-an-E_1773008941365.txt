@@ -1,0 +1,167 @@
+You are a senior backend + data architect working on an EXISTING system: “Data Readiness System (DRS)”.
+DO NOT propose a rewrite. DO NOT change the whole architecture. You must produce incremental, compatible changes.
+
+Goal
+Fix quality issues in extracted Attribute outputs and make published datasets truly AI-ready for:
+(1) supervised ML, (2) entity resolution/golden records + knowledge graph, (3) LLM/RAG.
+
+Key publishing decision (non-negotiable best practice)
+Publishing is ONE dataset version that produces MULTIPLE artifacts (files), not one mixed-shape file.
+One Publish action must create:
+- 1 DatasetVersionMetadata record (single dataset_version_id)
+- 3 use-case artifacts linked to the same dataset_version_id + lineage + approvals + schema_version:
+  A) ML-ready artifact (flat features)
+  B) Entity-resolution / GoldenRecord / Knowledge Graph artifact(s)
+  C) RAG/LLM artifact (chunked text corpus)
+Optionally provide ONE “bundle.zip” download that contains all artifacts + dataset card.
+Do NOT merge ML rows + KG edges + RAG chunks into a single JSONL/CSV (incompatible shapes).
+
+Context / current state
+- We already generate Attribute records with: subject_ref_type, subject_ref_id, attribute_key, value_raw, value_normalized (often same as raw), unit/currency often null, confidence_score, evidence_pointer_id, validation_state, validated_by (“SYSTEM”), validated_at, evidence_id, page_number, snippet_text, extraction_run_id, extracted_text.
+- We have a CDM contract (Document, Party, Object, Event, Relationship, Attribute, EvidencePointer, Identifier, GoldenRecord) and an SRO concept with CandidateFields.
+- Current problems to fix:
+  1) value_normalized is not normalized (dates as strings, phones/emails inconsistent, currency/units not structured).
+  2) weak/incorrect extractions are being auto-approved by SYSTEM (e.g., reference_number = “foundation”).
+  3) extracted_text is duplicated across multiple Attribute rows (bloats storage and ruins RAG indexing).
+  4) subject separation is weak: identity fields (name/email/phone/address) are stored under OBJECT instead of PARTY/IDENTIFIER.
+  5) publishing produces “raw attribute dumps” instead of 3 fit-for-purpose dataset artifacts.
+  6) duplicate subject_ref_ids / repeated fields across objects are not deduped prior to canonicalization.
+  7) no explicit quality gates (completeness checks, doc quality, cross-field consistency) before mapping/publishing.
+
+Non-negotiable constraints
+- Incremental development only. Preserve existing APIs/data models where possible.
+- Backward compatible migrations: additive fields/tables preferred; if refactors, provide compatibility adapters.
+- Keep evidence immutability and evidence_pointer traceability intact.
+- Keep confidence_score per field and add stronger trust + validation gates.
+- Any auto-approval must be explainable and conservative.
+- Must be testable: include unit tests + integration tests + sample fixtures.
+
+Your deliverables (must output in this order)
+1) Concise “Plan of Attack” describing incremental steps and what parts of the system you will touch.
+2) DB migration plan (SQL or migration tool format) with minimal disruption + backfill steps.
+3) Exact code changes: modules/classes/functions to add/modify (with file paths), including:
+   - normalization service
+   - validation gating rules
+   - entity typing + mapping improvements
+   - dedup before canonicalization
+   - publishing artifacts structure (3 outputs + optional zip bundle)
+4) Updated schemas (only if needed) with examples.
+5) Test plan + automated test cases + sample JSON fixtures.
+6) Rollout plan (feature flags, safe defaults, fallback behavior).
+
+Implementation requirements (be precise)
+
+A) NORMALIZATION LAYER (must implement)
+- Implement ValueNormalizationService that transforms value_raw -> value_normalized + typed representations.
+- Supported normalizations (minimum):
+  - date: ISO-8601 date (YYYY-MM-DD) while keeping original in value_raw
+  - datetime: ISO-8601 datetime (UTC)
+  - phone: E.164 when possible, store country guess if available
+  - email: lowercase + trim
+  - currency amounts: parse numeric + currency code (if present)
+  - names/addresses: whitespace normalization; keep raw
+- Add fields (additive):
+  - normalization_status = SUCCESS|FAILED
+  - normalization_error (nullable)
+  - normalized_value_type (string|number|date|datetime|boolean|json)
+- Ensure normalization runs for every CandidateField BEFORE validation decisions and before CDM mapping.
+
+B) AUTO-APPROVAL / VALIDATION GATING (must fix)
+- SYSTEM must not auto-approve weak fields.
+- Add AutoApprovalPolicy with explicit rules:
+  - Only auto-approve when confidence_score >= threshold AND field passes validators (regex/type/domain checks).
+  - Per-field thresholds (configurable): email>=0.90, phone>=0.90, date>=0.85 but must parse to ISO, reference_number must pass pattern.
+  - “needs_review” conditions:
+    - value too generic (e.g., “foundation”, “note”, “address”)
+    - extracted from body text without label context
+    - not parseable for the expected type
+- If any rule fails: validation_state=PENDING and create/keep ValidationTask.
+- Store decision metadata (additive):
+  - approval_policy_rule_id
+  - approval_policy_reason
+- Ensure audit logging records APPROVE_FIELD/REJECT_FIELD with rule context.
+
+C) SUBJECT SEPARATION + IDENTIFIERS (must implement)
+- Improve mapping so identity fields go to correct CDM subjects:
+  - name/address/email/phone -> PARTY + IDENTIFIER (not OBJECT)
+  - document_date/title/classification -> DOCUMENT
+  - business-record specifics -> OBJECT or EVENT based on classification
+- Implement Identifier creation:
+  - email -> Identifier(id_type_label="Email", id_value=normalized_email, is_verified = validation_state==APPROVED)
+  - phone -> Identifier(id_type_label="Phone", id_value=normalized_phone, is_verified = validation_state==APPROVED)
+- Implement Party creation heuristics:
+  - If name/email/phone present, create PARTY(PERSON) with display_name from best validated field.
+  - Link PARTY to DOCUMENT via Relationship (taxonomy label like “MENTIONED_IN”).
+- Preserve evidence pointers on each created Attribute/Identifier.
+
+D) STOP extracted_text DUPLICATION (must implement)
+- Do not store the same extracted_text blob on every Attribute row.
+- Add ExtractionText (or DocumentText) table keyed by (evidence_id, extraction_run_id, page_number optional).
+- Attributes should reference text via extraction_text_id (FK).
+- Backward compatibility:
+  - Keep extracted_text optional in API responses.
+  - Only include it when client requests include_text=true; otherwise return reference ids.
+
+E) TRUST SCORE + QUALITY GATES (must implement minimally)
+- Implement TrustScoreService:
+  - sro.trust_score computed from OCR confidence + extraction confidence + completeness + doc quality + consistency (configurable weights).
+- Implement Completeness rules (configurable per doc type label):
+  - Example “application_letter”: must have {document_date, person_name OR signature_name} before CDM mapping.
+- Implement Consistency checks:
+  - email valid
+  - phone parseable
+  - date parseable
+  - conflicting duplicates -> require validation
+- Use trust_score thresholds to:
+  - create ValidationTasks
+  - block CDM mapping/publishing when below threshold unless manually overridden (with audit reason).
+
+F) DEDUPLICATION BEFORE CANONICALIZATION (must implement)
+- Add DedupService to collapse duplicate Attributes for same subject+key:
+  - if same normalized value: keep highest confidence; mark others superseded
+  - if conflicting normalized values: keep both as PENDING + create ValidationTask
+- Apply dedup before CDM mapping and before dataset export.
+
+G) DATASET PUBLISHING: ONE dataset version, MULTIPLE artifacts (must implement)
+When publishing, generate a DatasetVersionMetadata record (single dataset_version_id) and store artifact URIs.
+
+Required artifacts under the same dataset_version_id:
+1) ML-ready artifact (flat features)
+   - Preferred: Parquet; fallback CSV
+   - Contains normalized typed values; stable entity IDs; no full extracted_text per row
+   - Example filename: ml_features.parquet
+
+2) Entity Resolution / GoldenRecord / Knowledge Graph artifacts
+   - Either:
+     - kg_entities.jsonl, kg_identifiers.jsonl, kg_edges.jsonl
+     OR
+     - kg_edges.parquet + kg_entities.parquet
+   - Must include golden_record_id / merged_from_ids where available and relationship edges.
+   - Example filenames: kg_entities.jsonl, kg_identifiers.jsonl, kg_edges.jsonl
+
+3) RAG/LLM artifact (chunked corpus)
+   - JSONL (recommended)
+   - Each row: chunk_id, text, document_id/evidence_id, page_number, evidence_pointers, linked canonical entity ids, validation/trust metadata
+   - Must be chunked by paragraph/page with stable chunk_ids
+   - Example filename: rag_chunks.jsonl
+
+Optional (strongly recommended):
+4) bundle.zip
+   - Contains dataset_card.json + the three artifacts
+   - This is the ONLY valid way to offer “one-file download” without mixing shapes.
+
+Dataset Card (must implement/extend)
+- dataset card must include: schema_version, dataset_version, lineage_evidence_batches/source_batches, validation_summary, quality metrics, generated_at, approvals (if configured).
+
+API/ICD changes (incremental, backward compatible)
+- Extend DatasetVersionMetadata.download_uris to support multiple artifacts:
+  - download_uris: { "ml": "...", "kg": {..} or "kg_edges": "...", "rag": "...", "bundle_zip": "..." }
+- Keep existing download endpoint behavior working; add new query param artifact=ml|kg|rag|bundle.
+
+Output format rules for your response
+- Show concrete code snippets (not pseudo only) where needed.
+- Provide exact migration scripts and data backfill strategy.
+- Provide a minimal set of config knobs (thresholds/weights) with sane defaults.
+- Provide at least 8 automated tests that cover the failure modes described above.
+
+Start now. Use incremental changes and keep backward compatibility.

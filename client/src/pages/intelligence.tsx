@@ -1,17 +1,16 @@
 import { useQuery } from "@tanstack/react-query";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
-import type { ExtractionRun, EvidenceFile } from "@shared/schema";
-import { Brain, FileText, Hash, TrendingUp, Eye, Table, Tag, Zap, Activity } from "lucide-react";
+import type { ExtractionRun, EvidenceFile, NormalizedAttribute } from "@shared/schema";
+import { Brain, TrendingUp, Eye, Tag, Zap, Activity, CheckCircle2, AlertTriangle, Shield, ChevronRight } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { useState } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
-import { Separator } from "@/components/ui/separator";
 
 const docTypeColors: Record<string, string> = {
   INVOICE: "bg-chart-1/15 text-chart-1 border-chart-1/30",
@@ -50,15 +49,75 @@ interface ExtractedTable {
   confidence: number;
 }
 
+const validationStateConfig = {
+  AUTO_APPROVED: { label: "Auto-Approved", color: "bg-chart-3/15 text-chart-3 border-chart-3/30", icon: CheckCircle2 },
+  APPROVED: { label: "Approved", color: "bg-chart-2/15 text-chart-2 border-chart-2/30", icon: CheckCircle2 },
+  PENDING: { label: "Pending Review", color: "bg-chart-5/15 text-chart-5 border-chart-5/30", icon: AlertTriangle },
+  REJECTED: { label: "Rejected", color: "bg-destructive/15 text-destructive border-destructive/30", icon: AlertTriangle },
+};
+
+const subjectColors: Record<string, string> = {
+  DOCUMENT: "bg-chart-1/10 text-chart-1",
+  PARTY: "bg-chart-2/10 text-chart-2",
+  OBJECT: "bg-chart-4/10 text-chart-4",
+  EVENT: "bg-chart-5/10 text-chart-5",
+};
+
+function NormalizedAttributeRow({ attr }: { attr: NormalizedAttribute }) {
+  const state = validationStateConfig[attr.validation_state] ?? validationStateConfig.PENDING;
+  const StateIcon = state.icon;
+  return (
+    <div className="flex items-start gap-3 p-2.5 rounded-md border border-border" data-testid={`attr-row-${attr.field_key}`}>
+      <div className="flex-1 min-w-0 space-y-1">
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-xs font-semibold text-foreground font-mono">{attr.field_key}</span>
+          <span className={`px-1.5 py-0.5 rounded text-xs font-medium ${subjectColors[attr.subject_type] ?? ""}`}>{attr.subject_type}</span>
+          <Badge variant="outline" className="text-xs">{attr.normalized_value_type}</Badge>
+          <Badge variant="outline" className={`text-xs ${state.color}`}><StateIcon className="w-2.5 h-2.5 mr-1" />{state.label}</Badge>
+        </div>
+        <div className="flex items-center gap-2 text-xs">
+          <span className="text-muted-foreground flex-shrink-0">Raw:</span>
+          <span className="text-foreground truncate font-mono">{attr.value_raw}</span>
+        </div>
+        {attr.value_normalized !== attr.value_raw && (
+          <div className="flex items-center gap-2 text-xs">
+            <span className="text-muted-foreground flex-shrink-0">Normalized:</span>
+            <span className="text-chart-3 truncate font-mono font-medium">{attr.value_normalized}</span>
+          </div>
+        )}
+        {attr.normalization_status === "FAILED" && attr.normalization_error && (
+          <p className="text-xs text-destructive">{attr.normalization_error}</p>
+        )}
+        {attr.approval_policy_reason && (
+          <p className="text-xs text-muted-foreground italic">{attr.approval_policy_reason}</p>
+        )}
+      </div>
+      <div className="flex flex-col items-end gap-1 flex-shrink-0">
+        <span className="text-xs font-semibold text-foreground">{Math.round(attr.confidence_score * 100)}%</span>
+        <span className="text-xs text-muted-foreground">conf.</span>
+      </div>
+    </div>
+  );
+}
+
 function ExtractionDetail({ run, evidenceFileName }: { run: ExtractionRun; evidenceFileName: string }) {
   const entities = (run.extractedEntities as ExtractedEntity[] | null) ?? [];
   const tables = (run.extractedTables as ExtractedTable[] | null) ?? [];
   const fields = (run.extractedFields as Record<string, any> | null) ?? {};
+  const attrs = (run.extractedAttributes as NormalizedAttribute[] | null) ?? [];
+  const qgReport = run.qualityGatesReport as any;
+  const trustBreakdown = run.trustScoreBreakdown as Record<string, number> | null;
+
+  const pendingAttrs = attrs.filter(a => a.validation_state === "PENDING").length;
+  const approvedAttrs = attrs.filter(a => a.validation_state === "AUTO_APPROVED" || a.validation_state === "APPROVED").length;
 
   return (
     <Tabs defaultValue="overview" className="w-full">
-      <TabsList className="w-full grid grid-cols-4 h-9">
+      <TabsList className="w-full grid grid-cols-5 h-9">
         <TabsTrigger value="overview" className="text-xs">Overview</TabsTrigger>
+        <TabsTrigger value="normalized" className="text-xs">
+          Normalized {pendingAttrs > 0 && <span className="ml-1 px-1.5 rounded-full text-xs bg-chart-5/20 text-chart-5">{pendingAttrs}</span>}
+        </TabsTrigger>
         <TabsTrigger value="entities" className="text-xs">Entities ({entities.length})</TabsTrigger>
         <TabsTrigger value="tables" className="text-xs">Tables ({tables.length})</TabsTrigger>
         <TabsTrigger value="text" className="text-xs">Raw Text</TabsTrigger>
@@ -67,12 +126,12 @@ function ExtractionDetail({ run, evidenceFileName }: { run: ExtractionRun; evide
       <TabsContent value="overview" className="space-y-4 mt-4">
         <div className="grid grid-cols-2 gap-4">
           <div className="space-y-3">
-            <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Confidence Scores</h4>
-            <ScoreBar label="OCR Confidence" value={run.ocrConfidence} color="text-chart-1" />
-            <ScoreBar label="Extraction Confidence" value={run.extractionConfidence} color="text-chart-2" />
-            <ScoreBar label="Completeness" value={run.completenessScore} color="text-chart-3" />
-            <ScoreBar label="Consistency" value={run.consistencyScore} color="text-chart-4" />
-            <ScoreBar label="Doc Quality" value={run.docQualityScore} color="text-chart-5" />
+            <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Trust Score Breakdown</h4>
+            <ScoreBar label="OCR Confidence (×0.35)" value={run.ocrConfidence} color="text-chart-1" />
+            <ScoreBar label="Extraction (×0.25)" value={run.extractionConfidence} color="text-chart-2" />
+            <ScoreBar label="Completeness (×0.15)" value={run.completenessScore} color="text-chart-3" />
+            <ScoreBar label="Consistency (×0.15)" value={run.consistencyScore} color="text-chart-4" />
+            <ScoreBar label="Doc Quality (×0.10)" value={run.docQualityScore} color="text-chart-5" />
           </div>
           <div className="space-y-3">
             <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Processing Info</h4>
@@ -90,11 +149,38 @@ function ExtractionDetail({ run, evidenceFileName }: { run: ExtractionRun; evide
                 </div>
               ))}
             </div>
+            {qgReport && (
+              <div className="mt-2 p-2.5 rounded-md border border-border">
+                <div className="flex items-center gap-1.5 mb-1.5">
+                  <Shield className="w-3 h-3 text-primary" />
+                  <span className="text-xs font-semibold text-foreground">Quality Gates</span>
+                  <Badge variant="outline" className={`text-xs ml-auto ${qgReport.passed ? "text-chart-3 border-chart-3/30" : "text-destructive border-destructive/30"}`}>
+                    {qgReport.passed ? "Passed" : "Failed"}
+                  </Badge>
+                </div>
+                {(qgReport.checks ?? []).map((c: any, i: number) => (
+                  <div key={i} className="flex items-center gap-1.5 text-xs mt-1">
+                    {c.passed ? <CheckCircle2 className="w-3 h-3 text-chart-3 flex-shrink-0" /> : <AlertTriangle className="w-3 h-3 text-chart-5 flex-shrink-0" />}
+                    <span className="text-muted-foreground">{c.rule}:</span>
+                    <span className="text-foreground">{c.detail}</span>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
+        {attrs.length > 0 && (
+          <div className="flex items-center gap-3 p-2.5 rounded-md bg-muted text-xs">
+            <span className="text-muted-foreground">Normalized attributes:</span>
+            <span className="font-semibold text-chart-3">{approvedAttrs} auto-approved</span>
+            {pendingAttrs > 0 && <span className="font-semibold text-chart-5">{pendingAttrs} need review</span>}
+            <ChevronRight className="w-3 h-3 text-muted-foreground ml-auto" />
+            <span className="text-muted-foreground">See Normalized tab →</span>
+          </div>
+        )}
         {Object.keys(fields).length > 0 && (
           <div>
-            <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Extracted Fields</h4>
+            <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Raw Extracted Fields</h4>
             <div className="grid grid-cols-2 gap-2">
               {Object.entries(fields).map(([key, val]) => (
                 <div key={key} className="flex flex-col gap-0.5 p-2 rounded bg-muted">
@@ -105,6 +191,29 @@ function ExtractionDetail({ run, evidenceFileName }: { run: ExtractionRun; evide
             </div>
           </div>
         )}
+      </TabsContent>
+
+      <TabsContent value="normalized" className="mt-4">
+        <ScrollArea className="h-72">
+          <div className="space-y-2 pr-2">
+            {attrs.length === 0 ? (
+              <p className="text-sm text-muted-foreground text-center py-8">No normalized attributes available</p>
+            ) : (
+              <>
+                <div className="flex items-center gap-3 p-2 rounded-md bg-muted text-xs mb-3">
+                  <span className="text-muted-foreground">Subject types:</span>
+                  {["DOCUMENT", "PARTY", "OBJECT", "EVENT"].map(t => {
+                    const c = attrs.filter(a => a.subject_type === t).length;
+                    return c > 0 ? (
+                      <span key={t} className={`px-1.5 py-0.5 rounded font-medium ${subjectColors[t]}`}>{t}: {c}</span>
+                    ) : null;
+                  })}
+                </div>
+                {attrs.map((attr, i) => <NormalizedAttributeRow key={i} attr={attr} />)}
+              </>
+            )}
+          </div>
+        </ScrollArea>
       </TabsContent>
 
       <TabsContent value="entities" className="mt-4">
