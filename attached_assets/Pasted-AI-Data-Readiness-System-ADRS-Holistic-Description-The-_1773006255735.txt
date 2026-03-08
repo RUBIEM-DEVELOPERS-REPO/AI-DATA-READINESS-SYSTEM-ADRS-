@@ -1,0 +1,115 @@
+AI Data Readiness System (ADRS) - Holistic Description
+The AI Data Readiness System (ADRS) is a comprehensive platform designed to transform raw, unstructured evidence (PDFs, images, documents) into structured, high-quality datasets ready for machine learning (ML), Knowledge Graphs (KG), and Retrieval-Augmented Generation (RAG).
+
+1. System Architecture Overview
+The system follows a modern decoupled architecture:
+
+Frontend: A React-based Single Page Application (SPA) providing a professional UI for evidence management, validation, and publishing.
+Backend (Python): A FastAPI-based service orchestrating OCR, AI-driven structuring, and dataset generation.
+Database: SQLite (for MVP) managed via SQLAlchemy, storing evidence metadata, extraction runs, and the Common Data Model (CDM) entities.
+2. Working Sections (Production Grade)
+The following sections are fully operational and integrate multiple complex services:
+
+A. Evidence Ingestion & Storage
+Functional Area: 
+EvidenceUpload.tsx
+ and 
+evidence_service.py
+.
+Capability: Handles multi-modal file uploads, calculates cryptographic hashes for immutability, and manages a structured storage layer.
+B. Multi-Modal Extraction Engine
+Functional Area: 
+extraction_engine.py
+ and 
+intelligence_service.py
+.
+Capability:
+Native PDF: Uses pdfplumber for high-fidelity text and layout extraction.
+OCR: Uses PaddleOCR with OpenCV preprocessing for scanned images and low-density PDFs.
+Structured Office: Handles .docx and .xlsx parsing.
+Ensemble Scoring: Calculates confidence scores by combining OCR results with LLM certainty.
+C. Common Data Model (CDM) Orchestration
+Functional Area: 
+cdm_service.py
+.
+Capability: Routes extracted attributes into a persistent graph-like structure (Documents, Objects, Parties, Relationships). It automatically handles merchant vs. person identification.
+D. Trust & Validation Workflow
+Functional Area: 
+TrustValidation.tsx
+, 
+validation_service.py
+, and 
+validation_gating_service.py
+.
+Capability: A human-in-the-loop (HITL) interface where "Compliance Officers" review AI-extracted fields, see visual bounding boxes (provenance), and approve/reject data points.
+E. Multi-Artifact Publishing Layer
+Functional Area: 
+Publishing.tsx
+, 
+publish_service.py
+, and 
+artifact_writer.py
+.
+Capability: Generates production-ready exports including:
+ML Features: Clean CSVs for training.
+KG Graph: Unified JSONL representing entities and edges.
+RAG Chunks: Deduplicated text segments for vector databases.
+Bundle: A signed ZIP containing all artifacts and a "Dataset Card".
+3. Sections with Mock or Placeholder Data
+While the core pipeline is real, some advanced features currently use heuristics or simulated responses for the MVP:
+
+AI Providers: The system is designed to use OpenAI and Hugging Face, but often defaults to placeholders or simulated JSON structuring if API keys are not provided (see 
+intelligence_service.py
+ error handlers).
+Handwriting Detection: 
+extraction_engine.py
+ uses a baseline heuristic (0.1 likelihood) rather than a dedicated ML classifier.
+Deduplication Service: 
+dedup_service.py
+ currently implements basic string-matching logic rather than complex semantic entity resolution.
+Golden Records: In 
+cdm.py
+, the golden_record_id exists in the schema but the full Master Data Management (MDM) merging engine is not yet implemented.
+4. Test-Only Files (Exclusion List)
+The following files are part of the repository for verification and developer testing, but are not required for the production runtime of the ADRS:
+
+Backend Tests (/backend/tests/)
+test_sro_fix.py
+: Repro script for the 
+relationship_type
+ KeyError.
+test_intelligence.py
+: Functional test for the extraction pipeline.
+test_cdm_v1_1.py
+: Comprehensive test for the CDM 1.1 schema.
+test_publish_advanced.py
+: Stress test for the publishing artifact generation.
+test_auth.py
+, 
+test_audit.py
+, 
+test_evidence.py
+, etc.: Individual unit tests for core modules.
+sample_evidence.pdf
+: Test asset for extraction verification.
+out_*.txt: Various terminal output captures from test runs.
+Frontend Tests
+frontend/src/components/ContextViewer.test.tsx: Jest test for the UI context visualization component.
+Root Level Debugging
+connection_results.txt
+: Log of backend-to-LLM connectivity checks.
+full_test_output.txt
+: Captured result of a full pytest suite run.
+single_test_fail.txt
+: Debug log for a specific pipeline failure.
+test_gov_output.txt
+: Audit and governance verification logs.
+mysql-init.txt
+: Script for environment initialization.
+New Compressed (zipped) Folder.zip: Remnant artifact.
+5. Summary of System Status
+The ADRS is a functional MVP+. The core "Data Pipeline" (Ingest -> Extract -> Map -> Validate -> Publish) is technically sound and production-grade. The "Intelligence" layer is the most complex, relying on a fallback strategy that ensures the system remains operational even if specific AI components encounter noisy data (as seen in the recent SRO fix).
+
+
+Comment
+Ctrl+Alt+M
