@@ -29,10 +29,10 @@ const statusColors: Record<string, string> = {
 };
 
 const artifactColors = {
-  ml: { icon: BarChart3, color: "text-chart-1", bg: "bg-chart-1/10", label: "ML Features", desc: "Flat feature matrix for supervised ML training", ext: "Parquet/CSV" },
-  kg: { icon: Network, color: "text-chart-2", bg: "bg-chart-2/10", label: "Knowledge Graph", desc: "Entities, identifiers, and relationship edges", ext: "JSONL" },
-  rag: { icon: Brain, color: "text-chart-3", bg: "bg-chart-3/10", label: "RAG Chunks", desc: "Chunked text corpus for LLM/RAG pipelines", ext: "JSONL" },
-  bundle: { icon: Package, color: "text-chart-5", bg: "bg-chart-5/10", label: "Bundle ZIP", desc: "All artifacts + dataset card in one download", ext: "ZIP" },
+  ml:  { icon: BarChart3, color: "text-chart-1", bg: "bg-chart-1/10", label: "ML Features",       desc: "Clean feature matrix for supervised ML/analytics — PII-free, no identifier leakage", ext: "CSV" },
+  kg:  { icon: Network,  color: "text-chart-2", bg: "bg-chart-2/10", label: "Knowledge Graph",    desc: "Unified NODE + EDGE graph ready for Neo4j, Memgraph, Graphistry and other graph tools", ext: "JSONL" },
+  rag: { icon: Brain,    color: "text-chart-3", bg: "bg-chart-3/10", label: "RAG Chunks",         desc: "Semantic sections for LLM/RAG pipelines — section-typed, PII-tagged, evidence-grounded", ext: "JSONL" },
+  bundle: { icon: Package, color: "text-chart-5", bg: "bg-chart-5/10", label: "Bundle ZIP",       desc: "All artifacts + dataset card + quality report in one download", ext: "ZIP" },
 };
 
 function ArtifactRow({ type, uri, counts }: {
@@ -194,13 +194,16 @@ function DatasetCard({ dataset }: { dataset: PublishedDataset }) {
   const artifactContents = dataset.artifactContents as any | null;
   const datasetCard = dataset.datasetCard as DatasetCard | null;
 
+  const kgGraph: any[] = artifactContents?.kg_graph ?? [];
   const counts = {
-    ml: artifactContents?.ml_features?.length,
-    kg_entities: artifactContents?.kg_entities?.length,
+    ml:            artifactContents?.ml_features?.length,
+    kg_nodes:      kgGraph.filter((r: any) => r.record_type === "NODE").length || undefined,
+    kg_edges:      kgGraph.filter((r: any) => r.record_type === "EDGE").length || undefined,
+    kg_entities:   artifactContents?.kg_entities?.length,
     kg_identifiers: artifactContents?.kg_identifiers?.length,
-    kg_edges: artifactContents?.kg_edges?.length,
-    rag_chunks: artifactContents?.rag_chunks?.length,
+    rag_chunks:    artifactContents?.rag_chunks?.length,
   };
+  const qualityGates: any = artifactContents?.quality_gates ?? null;
 
   const PUBLISH_THRESHOLD = 0.60;
   const isBelowThreshold = dataset.qualityScore < PUBLISH_THRESHOLD;
@@ -228,7 +231,8 @@ function DatasetCard({ dataset }: { dataset: PublishedDataset }) {
       queryClient.invalidateQueries({ queryKey: ["/api/dashboard/stats"] });
       setTrustBlockInfo(null);
       setShowOverride(false);
-      toast({ title: "Dataset published", description: `Generated ${data.ml} ML rows, ${data.kg_entities} KG entities, ${data.rag_chunks} RAG chunks.` });
+      const qgStatus = data.quality_gates?.overall_passed ? "All quality gates passed." : "Quality gates: review warnings.";
+      toast({ title: "Dataset published ✓", description: `ML: ${data.ml} rows · KG: ${data.kg_nodes} nodes, ${data.kg_edges} edges · RAG: ${data.rag_chunks} chunks. ${qgStatus}` });
     },
     onError: (err: any) => {
       if (err?.blocked) {
@@ -340,8 +344,13 @@ function DatasetCard({ dataset }: { dataset: PublishedDataset }) {
           {artifactContents && (
             <div className="grid grid-cols-3 gap-1.5 text-center">
               {counts.ml !== undefined && <div className="p-1.5 rounded bg-chart-1/8 border border-chart-1/20"><p className="text-xs font-semibold text-chart-1">{counts.ml}</p><p className="text-xs text-muted-foreground">ML rows</p></div>}
-              {counts.kg_entities !== undefined && <div className="p-1.5 rounded bg-chart-2/8 border border-chart-2/20"><p className="text-xs font-semibold text-chart-2">{counts.kg_entities}</p><p className="text-xs text-muted-foreground">KG ent.</p></div>}
-              {counts.rag_chunks !== undefined && <div className="p-1.5 rounded bg-chart-3/8 border border-chart-3/20"><p className="text-xs font-semibold text-chart-3">{counts.rag_chunks}</p><p className="text-xs text-muted-foreground">RAG</p></div>}
+              {(counts.kg_nodes ?? counts.kg_entities) !== undefined && (
+                <div className="p-1.5 rounded bg-chart-2/8 border border-chart-2/20">
+                  <p className="text-xs font-semibold text-chart-2">{counts.kg_nodes ?? counts.kg_entities}</p>
+                  <p className="text-xs text-muted-foreground">{kgGraph.length > 0 ? "KG nodes" : "KG ent."}</p>
+                </div>
+              )}
+              {counts.rag_chunks !== undefined && <div className="p-1.5 rounded bg-chart-3/8 border border-chart-3/20"><p className="text-xs font-semibold text-chart-3">{counts.rag_chunks}</p><p className="text-xs text-muted-foreground">RAG chunks</p></div>}
             </div>
           )}
 
@@ -407,28 +416,39 @@ function DatasetCard({ dataset }: { dataset: PublishedDataset }) {
                         )}
                       </div>
 
-                      {/* ── Primary trio: ML · KG · RAG ── */}
+                      {/* ── Primary trio: ML · RAG · KG ── */}
                       <ArtifactRow type="ml" uri={artifactUris?.ml} counts={{ rows: counts.ml }} />
                       <ArtifactRow type="rag" uri={artifactUris?.rag_chunks} counts={{ count: counts.rag_chunks }} />
-                      <ArtifactRow type="kg" uri={artifactUris?.kg_entities} counts={{ count: (counts.kg_entities ?? 0) + (counts.kg_identifiers ?? 0) + (counts.kg_edges ?? 0) }} />
+                      <ArtifactRow
+                        type="kg"
+                        uri={artifactUris?.kg_graph ?? artifactUris?.kg_entities}
+                        counts={{ count: kgGraph.length > 0 ? (counts.kg_nodes ?? 0) + (counts.kg_edges ?? 0) : (counts.kg_entities ?? 0) }}
+                      />
 
-                      {/* ── KG sub-file breakdown ── */}
-                      {counts.kg_entities !== undefined && (
+                      {/* ── KG record breakdown ── */}
+                      {(kgGraph.length > 0 || counts.kg_entities !== undefined) && (
                         <div className="grid grid-cols-3 gap-1.5 ml-4 text-xs">
                           <div className="p-2 rounded bg-muted text-center">
-                            <p className="font-semibold text-foreground">{counts.kg_entities}</p>
-                            <p className="text-muted-foreground">entities</p>
-                            {artifactUris?.kg_entities && <a href={artifactUris.kg_entities} className="text-primary mt-0.5 flex items-center justify-center gap-0.5"><Download className="w-2.5 h-2.5" />JSONL</a>}
+                            <p className="font-semibold text-foreground">{counts.kg_nodes ?? counts.kg_entities ?? 0}</p>
+                            <p className="text-muted-foreground">{kgGraph.length > 0 ? "nodes" : "entities"}</p>
+                            {(artifactUris?.kg_graph ?? artifactUris?.kg_entities) && (
+                              <a href={artifactUris?.kg_graph ?? artifactUris?.kg_entities} className="text-primary mt-0.5 flex items-center justify-center gap-0.5">
+                                <Download className="w-2.5 h-2.5" />unified
+                              </a>
+                            )}
                           </div>
                           <div className="p-2 rounded bg-muted text-center">
-                            <p className="font-semibold text-foreground">{counts.kg_identifiers}</p>
-                            <p className="text-muted-foreground">identifiers</p>
-                            {artifactUris?.kg_identifiers && <a href={artifactUris.kg_identifiers} className="text-primary mt-0.5 flex items-center justify-center gap-0.5"><Download className="w-2.5 h-2.5" />JSONL</a>}
-                          </div>
-                          <div className="p-2 rounded bg-muted text-center">
-                            <p className="font-semibold text-foreground">{counts.kg_edges}</p>
+                            <p className="font-semibold text-foreground">{counts.kg_edges ?? 0}</p>
                             <p className="text-muted-foreground">edges</p>
-                            {artifactUris?.kg_edges && <a href={artifactUris.kg_edges} className="text-primary mt-0.5 flex items-center justify-center gap-0.5"><Download className="w-2.5 h-2.5" />JSONL</a>}
+                          </div>
+                          <div className="p-2 rounded bg-muted text-center">
+                            <p className="font-semibold text-foreground">{counts.kg_identifiers ?? 0}</p>
+                            <p className="text-muted-foreground">identifiers</p>
+                            {artifactUris?.kg_identifiers && (
+                              <a href={artifactUris.kg_identifiers} className="text-primary mt-0.5 flex items-center justify-center gap-0.5">
+                                <Download className="w-2.5 h-2.5" />JSONL
+                              </a>
+                            )}
                           </div>
                         </div>
                       )}
@@ -449,31 +469,56 @@ function DatasetCard({ dataset }: { dataset: PublishedDataset }) {
             </TabsContent>
 
             <TabsContent value="quality" className="mt-3">
-              <ScrollArea className="h-80">
+              <ScrollArea className="h-96">
                 <div className="pr-2 space-y-3">
-                  {(() => {
-                    const qg = dataset.qualityGates as any;
-                    if (!qg) return <p className="text-xs text-muted-foreground text-center py-8">No quality gates data.</p>;
-                    return (
-                      <>
-                        <div className={`flex items-center gap-2 p-3 rounded-md border ${qg.passed ? "border-chart-3/40 bg-chart-3/5" : "border-destructive/40 bg-destructive/5"}`}>
-                          {qg.passed ? <CheckCircle2 className="w-4 h-4 text-chart-3" /> : <AlertTriangle className="w-4 h-4 text-destructive" />}
-                          <span className={`text-sm font-semibold ${qg.passed ? "text-chart-3" : "text-destructive"}`}>
-                            Quality Gates {qg.passed ? "Passed" : "Failed"}
-                          </span>
-                        </div>
-                        {(qg.checks ?? []).map((check: any, i: number) => (
-                          <div key={i} className="flex items-start gap-3 p-2.5 rounded-md border border-border" data-testid={`quality-check-${i}`}>
-                            {check.passed ? <CheckCircle2 className="w-4 h-4 text-chart-3 flex-shrink-0 mt-0.5" /> : <AlertTriangle className="w-4 h-4 text-chart-5 flex-shrink-0 mt-0.5" />}
-                            <div>
-                              <p className="text-xs font-semibold text-foreground">{check.rule}</p>
-                              <p className="text-xs text-muted-foreground">{check.detail}</p>
+                  {!qualityGates ? (
+                    <p className="text-xs text-muted-foreground text-center py-8">Quality gates run on publish.</p>
+                  ) : (
+                    <>
+                      <div className={`flex items-center gap-2 p-3 rounded-md border ${qualityGates.overall_passed ? "border-chart-3/40 bg-chart-3/5" : "border-chart-5/40 bg-chart-5/5"}`}>
+                        {qualityGates.overall_passed
+                          ? <CheckCircle2 className="w-4 h-4 text-chart-3" />
+                          : <AlertTriangle className="w-4 h-4 text-chart-5" />}
+                        <span className={`text-sm font-semibold ${qualityGates.overall_passed ? "text-chart-3" : "text-chart-5"}`}>
+                          {qualityGates.overall_passed ? "All quality gates passed" : "Quality warnings — artifacts published with notices"}
+                        </span>
+                      </div>
+
+                      {[
+                        { key: "ml",  label: "ML Features",       icon: BarChart3, meta: `${qualityGates.ml?.row_count ?? 0} rows` },
+                        { key: "kg",  label: "Knowledge Graph",    icon: Network,  meta: `${qualityGates.kg?.node_count ?? 0} nodes · ${qualityGates.kg?.edge_count ?? 0} edges` },
+                        { key: "rag", label: "RAG Chunks",         icon: Brain,    meta: `${qualityGates.rag?.chunk_count ?? 0} chunks` },
+                      ].map(({ key, label, icon: Icon, meta }) => {
+                        const section = qualityGates[key] as { passed: boolean; issues: string[] } | undefined;
+                        if (!section) return null;
+                        return (
+                          <div key={key} className="rounded-md border border-border overflow-hidden">
+                            <div className={`flex items-center gap-2 px-3 py-2 ${section.passed ? "bg-chart-3/5" : "bg-chart-5/5"}`}>
+                              {section.passed
+                                ? <CheckCircle2 className="w-3.5 h-3.5 text-chart-3 flex-shrink-0" />
+                                : <AlertTriangle className="w-3.5 h-3.5 text-chart-5 flex-shrink-0" />}
+                              <span className="text-xs font-semibold text-foreground">{label}</span>
+                              <span className="text-xs text-muted-foreground ml-auto">{meta}</span>
                             </div>
+                            {section.issues.length > 0 && (
+                              <div className="px-3 py-2 space-y-1 border-t border-border">
+                                {section.issues.map((issue: string, i: number) => (
+                                  <p key={i} className="text-xs text-chart-5 flex items-start gap-1.5" data-testid={`qg-issue-${key}-${i}`}>
+                                    <span className="flex-shrink-0 mt-0.5">⚠</span>{issue}
+                                  </p>
+                                ))}
+                              </div>
+                            )}
+                            {section.passed && (
+                              <div className="px-3 py-1.5 border-t border-border">
+                                <p className="text-xs text-chart-3">No issues detected</p>
+                              </div>
+                            )}
                           </div>
-                        ))}
-                      </>
-                    );
-                  })()}
+                        );
+                      })}
+                    </>
+                  )}
                 </div>
               </ScrollArea>
             </TabsContent>

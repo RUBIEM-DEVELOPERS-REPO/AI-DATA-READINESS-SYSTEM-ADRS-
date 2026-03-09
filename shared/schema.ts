@@ -248,6 +248,7 @@ export interface NormalizedAttribute {
 // ─── Multi-artifact dataset types ────────────────────────────────────────────
 export interface DatasetArtifactUris {
   ml?: string;
+  kg_graph?: string;
   kg_entities?: string;
   kg_identifiers?: string;
   kg_edges?: string;
@@ -258,8 +259,10 @@ export interface DatasetArtifactUris {
 export interface MlFeatureRow {
   entity_id: string;
   entity_type: string;
-  display_name: string;
   confidence_score: number;
+  is_golden_record: number;
+  schema_version: string;
+  source_evidence_count: number;
   [key: string]: any;
 }
 
@@ -283,6 +286,22 @@ export interface KgEdgeRow {
   evidence_id?: string;
 }
 
+export interface KgGraphRecord {
+  record_type: "NODE" | "EDGE";
+  id: string;
+  label?: string;
+  type_label?: string;
+  from?: string;
+  to?: string;
+  properties: Record<string, any>;
+  provenance: {
+    evidence_ids: string[];
+    confidence: number;
+    provenance_quality: "HIGH" | "MEDIUM" | "LOW";
+    dataset_version_id?: string;
+  };
+}
+
 export interface RagChunkRow {
   chunk_id: string;
   text: string;
@@ -291,7 +310,22 @@ export interface RagChunkRow {
   document_title?: string;
   linked_entity_ids: string[];
   trust_score: number;
-  validation_state: string;
+  validation_state: "VALIDATED" | "PARTIALLY_VALIDATED" | "UNVALIDATED";
+  chunk_type?: string;
+  language?: string;
+  span_start?: number;
+  span_end?: number;
+  contains_pii?: boolean;
+  redaction_status?: "REDACTED" | "INTERNAL_RAW" | "INTERNAL_STRUCTURED";
+  provenance_quality?: "HIGH" | "MEDIUM" | "LOW";
+  is_boilerplate?: boolean;
+}
+
+export interface ArtifactQualityGates {
+  ml: { passed: boolean; row_count: number; issues: string[] };
+  kg: { passed: boolean; node_count: number; edge_count: number; issues: string[] };
+  rag: { passed: boolean; chunk_count: number; issues: string[] };
+  overall_passed: boolean;
 }
 
 export interface DatasetCard {
@@ -323,10 +357,12 @@ export interface DatasetCard {
     rejected: number;
   };
   artifacts: {
-    ml_features?: { rows: number; columns: string[] };
+    ml_features?: { rows: number; columns: string[]; feature_count: number };
+    kg_graph?: { node_count: number; edge_count: number };
     kg_entities?: { count: number };
     kg_edges?: { count: number };
-    rag_chunks?: { count: number; avg_chunk_length: number };
+    rag_chunks?: { count: number; avg_chunk_length: number; validated_pct: number };
   };
+  quality_gates?: ArtifactQualityGates;
   approvals?: Array<{ role: string; user: string; timestamp: string }>;
 }

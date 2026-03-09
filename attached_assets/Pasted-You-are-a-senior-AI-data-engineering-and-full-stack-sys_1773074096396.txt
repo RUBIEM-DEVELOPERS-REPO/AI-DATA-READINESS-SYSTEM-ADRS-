@@ -1,0 +1,465 @@
+You are a senior AI data engineering and full-stack systems agent working on the existing Data Readiness System (DRS / ADRS).
+
+Your task is to fix the publishing outputs for ALL 3 downstream AI data use cases, using the existing architecture and the same AI model already configured inside the system.
+
+DO NOT redesign the platform.
+DO NOT rebuild from scratch.
+DO NOT create parallel pipelines that bypass the current system.
+Work incrementally inside the current ingestion → extraction → validation → CDM / entity / publishing flow.
+
+==================================================
+MISSION
+==================================================
+
+Make the Publishing Layer generate 3 truly usable AI-ready artifacts from the same published dataset version:
+
+1. ML-ready dataset
+2. Knowledge-graph-ready dataset
+3. RAG-ready dataset
+
+All three must be:
+- traceable to evidence
+- validation-aware
+- schema-stable
+- quality-controlled
+- downloadable through the existing publishing APIs
+- generated under one dataset_version_id
+
+==================================================
+CORE REQUIREMENT
+==================================================
+
+One publish action must produce ONE dataset version with THREE use-case-specific artifacts:
+
+A) ML artifact
+- optimized for supervised learning / analytics
+
+B) Knowledge Graph artifact
+- NOT fragmented
+- NOT split into semantically incomplete graph pieces
+- must be ready for analysis by existing graph systems
+- should be importable into graph tools as one coherent graph dataset
+
+C) RAG artifact
+- optimized for semantic retrieval / embeddings / enterprise document AI
+
+==================================================
+CRITICAL CONSTRAINT
+==================================================
+
+Where AI models can improve quality, they MUST be used.
+
+Use the SAME model already used in the system.
+Do not introduce a different model family unless already configured.
+
+Use that existing model for:
+- semantic normalization
+- chunk boundary detection
+- entity role disambiguation
+- noisy OCR cleanup
+- fuzzy entity consolidation support
+- document section classification
+- weak extraction repair where appropriate
+
+Model usage must be deterministic and tightly configured:
+- temperature = 0
+- top_p = 0
+- structured JSON output when applicable
+- strict schema validation
+- bounded token usage
+- retry/fallback only when necessary
+
+==================================================
+CURRENT KNOWN PROBLEMS ACROSS OUTPUTS
+==================================================
+
+Observed from current system behavior:
+
+ML issues:
+- mixed entity types in one dataset
+- identifier leakage into ML features
+- empty or sparse rows
+- redundant duplicate columns
+- weak typing / malformed dates / text leakage
+
+Knowledge Graph issues:
+- fragmented entities
+- duplicate parties
+- invalid relationship semantics
+- fallback objects with weak meaning
+- self-loop edges
+- null provenance
+- inconsistent identifier typing
+- graph not ready as one coherent analysis-ready graph
+
+RAG issues:
+- mechanical page slicing instead of semantic chunking
+- trivial chunks
+- placeholder AUTO-* entity links
+- missing evidence pointers
+- repeated boilerplate
+- everything marked UNVALIDATED
+- incomplete metadata
+
+==================================================
+UNIFIED TARGET
+==================================================
+
+When publishing completes, the system must generate these 3 outputs:
+
+1) ML artifact
+Recommended filename:
+ml_features.parquet
+(csv fallback allowed)
+
+2) Knowledge Graph artifact
+Recommended filename:
+kg_graph.jsonl
+
+IMPORTANT:
+The graph artifact must NOT be fragmented into separate partial graph datasets for analysis.
+It must be exportable as one coherent graph dataset ready for use by graph systems.
+If internal generation still uses entities/edges/identifiers separately, merge them into one final graph artifact for analysis/export.
+
+3) RAG artifact
+Recommended filename:
+rag_chunks.jsonl
+
+All 3 artifacts must be tied to the same:
+- dataset_version_id
+- schema_version
+- lineage metadata
+- validation summary
+- quality metrics
+
+==================================================
+DETAILED REQUIREMENTS BY USE CASE
+==================================================
+
+--------------------------------------------------
+A. ML-READY DATASET
+--------------------------------------------------
+
+GOAL
+Produce a clean feature matrix suitable for supervised ML and analytics.
+
+RULES
+1. Use a single clear row grain per ML artifact.
+Preferred:
+- transaction / case / object row
+OR
+- split into separate ML artifacts by row grain if necessary
+
+2. Exclude identifiers and high-cardinality leakage from model features.
+Do NOT use as ML features:
+- names
+- phone numbers
+- emails
+- national IDs
+- registration numbers
+- document ids
+- raw addresses
+- free text blobs
+
+3. Only include ML-appropriate features:
+- normalized numerics
+- booleans
+- dates
+- controlled categories
+- limited engineered features
+
+4. Use the existing model to improve normalization where rules alone are insufficient:
+- normalize payment methods
+- normalize statuses
+- normalize document types
+- repair OCR-corrupted but recoverable categorical fields
+
+5. Enforce feature quality rules:
+- validation_state must be APPROVED or explicitly policy-allowed
+- confidence must meet threshold
+- empty rows must be removed
+- malformed dates must be fixed or dropped
+- duplicated redundant columns must be collapsed
+
+6. Preserve metadata separately, not as training features:
+- entity_id
+- evidence_id
+- source_evidence_count
+- confidence_score
+- is_golden_record
+- schema_version
+
+7. Validate final ML artifact:
+- no empty rows
+- no identifier leakage
+- correct types
+- no duplicate columns
+- stable schema
+
+--------------------------------------------------
+B. KNOWLEDGE-GRAPH-READY DATASET
+--------------------------------------------------
+
+GOAL
+Produce ONE coherent graph artifact that is ready for analysis by existing graph systems.
+
+IMPORTANT
+The final graph output must NOT be fragmented in a way that makes graph analysis difficult.
+It should be analysis-ready for tools such as:
+- Neo4j
+- Memgraph
+- Neptune
+- Graphistry
+- TigerGraph
+- generic graph loaders
+
+FINAL OUTPUT FORMAT
+Export one unified graph dataset:
+kg_graph.jsonl
+
+Each record must be either:
+- NODE
+or
+- EDGE
+
+Example structure:
+
+{
+  "record_type": "NODE",
+  "id": "PARTY-001",
+  "label": "PARTY",
+  "properties": {...},
+  "provenance": {...}
+}
+
+{
+  "record_type": "EDGE",
+  "id": "EDGE-001",
+  "type_label": "CUSTOMER_OF",
+  "from": "PARTY-123",
+  "to": "PARTY-456",
+  "properties": {...},
+  "provenance": {...}
+}
+
+GRAPH REQUIREMENTS
+1. Canonical node labels only:
+- PARTY
+- DOCUMENT
+- TRANSACTION or EVENT
+- OBJECT (only if truly needed)
+- PRODUCT / ASSET if supported
+
+2. Eliminate fragmented/duplicate entities.
+Use deterministic rules plus the existing model to improve entity consolidation:
+- normalize names
+- remove titles/noise
+- reconcile merchant variants
+- detect likely same customer / same organization
+- produce merge candidates or merged canonical nodes
+
+3. Do not emit weak fragment nodes like:
+- single tokens
+- accidental OCR fragments
+- partial role words
+unless clearly justified
+
+4. Identifier handling
+- normalize all identifiers
+- canonicalize identifier types
+- do not concatenate multi-values
+- attach identifiers properly to relevant node types
+- use identifiers to support merge logic
+
+5. Relationship correctness
+- prevent invalid self-loops
+- enforce type-compatible edges
+- replace weak generic edges with meaningful semantic relations
+- do not publish low-confidence nonsense edges as normal graph facts
+
+6. Provenance is mandatory
+Every node and edge should carry as much of the following as possible:
+- evidence_id
+- document_id
+- evidence_pointer_ids
+- confidence
+- provenance_quality
+
+7. Use the existing model to improve graph quality in specific tasks:
+- role inference (merchant vs customer vs issuer)
+- organization/person disambiguation
+- fuzzy entity consolidation support
+- semantic edge labeling when rule-based signals are ambiguous
+
+8. Final graph must be one coherent analysis-ready dataset, not just raw intermediary exports.
+
+--------------------------------------------------
+C. RAG-READY DATASET
+--------------------------------------------------
+
+GOAL
+Produce a retrieval-ready corpus suitable for:
+- vector indexing
+- semantic search
+- grounded question answering
+- enterprise RAG
+
+FINAL OUTPUT
+rag_chunks.jsonl
+
+Each row must contain:
+- chunk_id
+- text
+- evidence_id
+- document_id if available
+- page_number
+- evidence_pointer_ids
+- linked_entity_ids
+- trust_score
+- validation_state
+- chunk_type
+- language
+- span_start
+- span_end
+- contains_pii
+- redaction_status
+- provenance_quality
+
+RAG REQUIREMENTS
+1. Replace mechanical page slicing with semantic chunking.
+Use the existing system model to detect semantic chunk boundaries.
+Chunk by meaningful sections such as:
+- issuer header
+- customer details
+- payment details
+- line items
+- totals
+- instructions
+- terms
+
+2. Remove trivial chunks:
+- label-only fragments
+- broken OCR scraps
+- isolated meaningless numbers
+unless contextually important
+
+3. Ground every chunk
+- populate evidence_pointer_ids
+- link chunk to source evidence precisely
+- use page_number + pointer ids + spans
+
+4. Replace placeholder AUTO-* entity links
+Use canonical entity ids where available.
+If unresolved, clearly mark unresolved candidates instead of pretending they are final.
+
+5. Make validation state meaningful
+Support:
+- VALIDATED
+- PARTIALLY_VALIDATED
+- UNVALIDATED
+
+6. Detect and manage repeated boilerplate
+- repeated headers
+- repeated payment instructions
+- repeated signatures
+Mark template-like content so downstream retrieval systems can down-rank it.
+
+7. Governance-aware output
+Support:
+- INTERNAL_RAW
+- INTERNAL_STRUCTURED
+- REDACTED
+Use the existing model plus rules to detect:
+- names
+- phones
+- emails
+- bank details
+- account numbers
+Populate contains_pii and redaction_status accordingly.
+
+==================================================
+PUBLISHING LAYER OUTPUT REQUIREMENTS
+==================================================
+
+One publish action must create one dataset card with download options for:
+
+- ml_features
+- kg_graph
+- rag_chunks
+- bundle_zip
+
+The dataset card must include:
+- dataset_version_id
+- dataset_name
+- version
+- schema_version
+- generated_at
+- validation_summary
+- approvals
+- quality_metrics
+- artifact statuses
+- download_uris
+
+==================================================
+QUALITY GATES BEFORE PUBLISH
+==================================================
+
+Implement pre-publish validation for each artifact:
+
+ML:
+- no empty rows
+- no identifiers in features
+- correct types
+- no malformed dates
+- no redundant duplicate fields
+
+KG:
+- no invalid self-loop semantic edges
+- no fragment entities
+- no concatenated identifiers
+- no null-only provenance for published high-confidence graph facts
+- dedup or merge-candidate logic applied
+
+RAG:
+- no trivial chunks
+- no duplicate chunks from same run
+- canonical or unresolved entity links only
+- evidence grounding present
+- validation states assigned meaningfully
+
+If an artifact fails quality gates:
+- mark artifact FAILED or PARTIAL
+- do not silently publish bad output as successful
+
+==================================================
+DELIVERABLES
+==================================================
+
+Provide your implementation output in this exact order:
+
+1. Root cause summary of current issues across ML, KG, and RAG artifacts
+2. Implementation plan for all three use cases
+3. Exact backend files/services/functions to modify
+4. Updated artifact schemas
+5. Updated publish response / dataset card structure
+6. Sample corrected outputs for:
+   - ML artifact
+   - KG graph artifact
+   - RAG artifact
+7. Tests added for all three use cases
+8. Quality gate logic added before publish
+
+==================================================
+STRICT SUCCESS CRITERIA
+==================================================
+
+This task is complete only if:
+
+- ML artifact becomes clean and model-ready
+- KG artifact becomes one coherent graph dataset ready for graph analysis systems
+- RAG artifact becomes semantically chunked and evidence-grounded
+- the same existing AI model is used where it can materially improve output quality
+- publishing returns all three artifacts correctly
+- artifact quality is enforced before publish
+
+Start now and implement precisely.

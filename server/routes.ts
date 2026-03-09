@@ -474,6 +474,7 @@ export async function registerRoutes(httpServer: any, app: Express): Promise<any
     }
 
     const jsonlMap: Record<string, any[]> = {
+      kg_graph:       contents.kg_graph ?? [],
       kg_entities:    contents.kg_entities,
       kg_identifiers: contents.kg_identifiers,
       kg_edges:       contents.kg_edges,
@@ -481,7 +482,7 @@ export async function registerRoutes(httpServer: any, app: Express): Promise<any
       dataset_card:   [contents.dataset_card],
     };
     const data = jsonlMap[type];
-    if (!data) return res.status(400).json({ error: `Unknown artifact type: ${type}. Valid: ml, kg_entities, kg_identifiers, kg_edges, rag_chunks, bundle` });
+    if (!data) return res.status(400).json({ error: `Unknown artifact type: ${type}. Valid: ml, kg_graph, kg_entities, kg_identifiers, kg_edges, rag_chunks, bundle` });
     const jsonl = data.map((r: any) => JSON.stringify(r)).join("\n");
     res.setHeader("Content-Disposition", `attachment; filename="${type}_${dataset.datasetCode}_v${dataset.version}.jsonl"`);
     res.setHeader("Content-Type", "application/x-ndjson");
@@ -499,6 +500,7 @@ export async function registerRoutes(httpServer: any, app: Express): Promise<any
 
   // ─── Publish with trust-score blocking + override ─────────────────────────
   app.post("/api/datasets/:id/publish", async (req: any, res: any) => {
+    req.body = req.body ?? {};
     const dataset = await storage.getPublishedDataset(req.params.id);
     if (!dataset) return res.status(404).json({ error: "Not found" });
 
@@ -525,12 +527,14 @@ export async function registerRoutes(httpServer: any, app: Express): Promise<any
 
     const artifacts    = buildArtifactContents(dataset, entities, extractions, evidenceMap);
     const artifactUris = buildArtifactUris(dataset.datasetCode, dataset.version);
-    const updated      = await storage.updatePublishedDataset(req.params.id, { status: "PUBLISHED", publishedAt: new Date(), publishedBy: req.body.publishedBy ?? "Wills", datasetCard: artifacts.dataset_card, artifactUris, artifactContents: artifacts, formats: ["ML_FEATURES", "KG_ENTITIES", "KG_EDGES", "KG_IDENTIFIERS", "RAG_CHUNKS"] });
+    const kgNodes      = artifacts.kg_graph.filter((r: any) => r.record_type === "NODE").length;
+    const kgEdges      = artifacts.kg_graph.filter((r: any) => r.record_type === "EDGE").length;
+    const updated      = await storage.updatePublishedDataset(req.params.id, { status: "PUBLISHED", publishedAt: new Date(), publishedBy: req.body.publishedBy ?? "Wills", datasetCard: artifacts.dataset_card, artifactUris, artifactContents: artifacts, formats: ["ML_FEATURES", "KG_GRAPH", "KG_ENTITIES", "KG_EDGES", "KG_IDENTIFIERS", "RAG_CHUNKS"] });
 
-    await storage.createAuditLog({ action: "ARTIFACT_GENERATED", resourceType: "DATASET", resourceId: dataset.datasetCode, userId: "system", details: { artifacts: ["ml_features.csv", "kg_entities.jsonl", "kg_identifiers.jsonl", "kg_edges.jsonl", "rag_chunks.jsonl", "bundle.zip"] }, tenantId: "TENANT-001" });
-    await storage.createAuditLog({ action: "DATASET_PUBLISHED", resourceType: "DATASET", resourceId: dataset.datasetCode, userId: req.body.publishedBy ?? "Wills", details: { name: dataset.name, version: dataset.version, ml_rows: artifacts.ml_features.length, kg_entities: artifacts.kg_entities.length, rag_chunks: artifacts.rag_chunks.length }, tenantId: "TENANT-001" });
+    await storage.createAuditLog({ action: "ARTIFACT_GENERATED", resourceType: "DATASET", resourceId: dataset.datasetCode, userId: "system", details: { artifacts: ["ml_features.csv", "kg_graph.jsonl", "kg_entities.jsonl", "kg_identifiers.jsonl", "kg_edges.jsonl", "rag_chunks.jsonl", "bundle.zip"], quality_gates_passed: artifacts.quality_gates.overall_passed }, tenantId: "TENANT-001" });
+    await storage.createAuditLog({ action: "DATASET_PUBLISHED", resourceType: "DATASET", resourceId: dataset.datasetCode, userId: req.body.publishedBy ?? "Wills", details: { name: dataset.name, version: dataset.version, ml_rows: artifacts.ml_features.length, kg_nodes: kgNodes, kg_edges: kgEdges, rag_chunks: artifacts.rag_chunks.length }, tenantId: "TENANT-001" });
 
-    res.json({ dataset: updated, ml: artifacts.ml_features.length, kg_entities: artifacts.kg_entities.length, kg_edges: artifacts.kg_edges.length, kg_identifiers: artifacts.kg_identifiers.length, rag_chunks: artifacts.rag_chunks.length });
+    res.json({ dataset: updated, ml: artifacts.ml_features.length, kg_nodes: kgNodes, kg_edges: kgEdges, kg_entities: artifacts.kg_entities.length, kg_identifiers: artifacts.kg_identifiers.length, rag_chunks: artifacts.rag_chunks.length, quality_gates: artifacts.quality_gates });
   });
 
   app.patch("/api/datasets/:id", async (req: any, res: any) => {
