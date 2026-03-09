@@ -545,11 +545,16 @@ function NewDatasetDialog() {
 
 export default function Publishing() {
   const { data: datasets, isLoading } = useQuery<PublishedDataset[]>({ queryKey: ["/api/datasets"] });
+  const [statusFilter, setStatusFilter] = useState<"ALL" | "PUBLISHED" | "DRAFT" | "ARCHIVED">("ALL");
 
   const published = datasets?.filter(d => d.status === "PUBLISHED").length ?? 0;
   const drafts = datasets?.filter(d => d.status === "DRAFT").length ?? 0;
   const archived = datasets?.filter(d => d.status === "ARCHIVED").length ?? 0;
   const totalRecords = datasets?.reduce((acc, d) => acc + d.recordCount, 0) ?? 0;
+
+  const filteredDatasets = statusFilter === "ALL"
+    ? (datasets ?? [])
+    : (datasets ?? []).filter(d => d.status === statusFilter);
 
   return (
     <div className="p-6 space-y-6 max-w-7xl mx-auto">
@@ -604,23 +609,59 @@ export default function Publishing() {
         </CardContent>
       </Card>
 
-      {isLoading ? (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {Array.from({ length: 3 }).map((_, i) => <Card key={i}><CardContent className="p-4"><Skeleton className="h-40 w-full" /></CardContent></Card>)}
+      <div className="space-y-4">
+        <div className="flex items-center gap-2 flex-wrap">
+          {(["ALL", "PUBLISHED", "DRAFT", "ARCHIVED"] as const).map((s) => {
+            const count = s === "ALL" ? (datasets?.length ?? 0) : s === "PUBLISHED" ? published : s === "DRAFT" ? drafts : archived;
+            return (
+              <Button
+                key={s}
+                size="sm"
+                variant={statusFilter === s ? "default" : "outline"}
+                className="h-7 text-xs gap-1.5"
+                onClick={() => setStatusFilter(s)}
+                data-testid={`filter-datasets-${s.toLowerCase()}`}
+              >
+                {s === "ARCHIVED" && <Archive className="w-3 h-3" />}
+                {s === "PUBLISHED" && <Globe className="w-3 h-3" />}
+                {s === "DRAFT" && <FileText className="w-3 h-3" />}
+                {s.charAt(0) + s.slice(1).toLowerCase()}
+                <span className="ml-0.5 opacity-70">({count})</span>
+              </Button>
+            );
+          })}
         </div>
-      ) : (datasets ?? []).length === 0 ? (
-        <Card>
-          <CardContent className="py-16 flex flex-col items-center justify-center gap-3">
-            <Upload className="w-12 h-12 text-muted-foreground opacity-40" />
-            <p className="text-sm font-medium text-muted-foreground">No datasets yet</p>
-            <p className="text-xs text-muted-foreground">Create a dataset and publish to generate ML, KG, and RAG artifacts</p>
-          </CardContent>
-        </Card>
-      ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {(datasets ?? []).map((d) => <DatasetCard key={d.id} dataset={d} />)}
-        </div>
-      )}
+
+        {isLoading ? (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            {Array.from({ length: 3 }).map((_, i) => <Card key={i}><CardContent className="p-4"><Skeleton className="h-40 w-full" /></CardContent></Card>)}
+          </div>
+        ) : filteredDatasets.length === 0 ? (
+          <Card>
+            <CardContent className="py-16 flex flex-col items-center justify-center gap-3">
+              {statusFilter === "ARCHIVED" ? (
+                <>
+                  <Archive className="w-12 h-12 text-muted-foreground opacity-40" />
+                  <p className="text-sm font-medium text-muted-foreground">No archived datasets</p>
+                  <p className="text-xs text-muted-foreground">Datasets you archive will appear here</p>
+                </>
+              ) : (
+                <>
+                  <Upload className="w-12 h-12 text-muted-foreground opacity-40" />
+                  <p className="text-sm font-medium text-muted-foreground">
+                    {statusFilter === "ALL" ? "No datasets yet" : `No ${statusFilter.toLowerCase()} datasets`}
+                  </p>
+                  <p className="text-xs text-muted-foreground">Create a dataset and publish to generate ML, KG, and RAG artifacts</p>
+                </>
+              )}
+            </CardContent>
+          </Card>
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            {filteredDatasets.map((d) => <DatasetCard key={d.id} dataset={d} />)}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
