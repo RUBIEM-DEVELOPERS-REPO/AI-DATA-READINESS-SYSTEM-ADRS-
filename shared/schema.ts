@@ -24,11 +24,17 @@ export const datasetStatusEnum = pgEnum("dataset_status", [
 ]);
 
 export const sourceTypeEnum = pgEnum("source_type", [
-  "SCAN", "SHAREPOINT", "GOOGLE_DRIVE", "EMAIL", "FTP", "ERP", "DATABASE"
+  "SCAN", "SHAREPOINT", "GOOGLE_DRIVE", "EMAIL", "FTP", "ERP", "DATABASE", "RECORDING", "DEVICE"
 ]);
 
 export const docTypeEnum = pgEnum("doc_type", [
-  "INVOICE", "CONTRACT", "REPORT", "PERMIT", "IDENTITY", "FINANCIAL", "CORRESPONDENCE", "OTHER"
+  "INVOICE", "CONTRACT", "REPORT", "PERMIT", "IDENTITY", "FINANCIAL", "CORRESPONDENCE", "OTHER",
+  "AUDIO_RECORDING", "VIDEO_RECORDING", "INTERVIEW", "MEETING_RECORDING"
+]);
+
+// Media type for A/V evidence
+export const mediaTypeEnum = pgEnum("media_type", [
+  "DOCUMENT", "IMAGE", "AUDIO", "VIDEO"
 ]);
 
 // ─── ExtractionText — deduplicated text store, one row per extraction run ─────
