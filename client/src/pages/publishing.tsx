@@ -386,9 +386,9 @@ function DatasetCard({ dataset }: { dataset: PublishedDataset }) {
             </TabsList>
 
             <TabsContent value="artifacts" className="mt-3">
-              <ScrollArea className="h-80">
+              <ScrollArea className="h-96">
                 <div className="space-y-2 pr-2">
-                  {dataset.status !== "PUBLISHED" || !artifactContents ? (
+                  {!artifactContents ? (
                     <div className="py-8 text-center">
                       <Package className="w-8 h-8 text-muted-foreground opacity-40 mx-auto mb-2" />
                       <p className="text-xs text-muted-foreground">Artifacts are generated when the dataset is published.</p>
@@ -396,35 +396,42 @@ function DatasetCard({ dataset }: { dataset: PublishedDataset }) {
                     </div>
                   ) : (
                     <>
-                      <div className="text-xs text-muted-foreground mb-3 p-2.5 rounded-md bg-muted">
-                        <span className="font-semibold text-foreground">One publish action → 3 fit-for-purpose artifacts</span>
-                        <span className="ml-2">linked by dataset_version_id</span>
-                      </div>
-                      <ArtifactRow type="ml" uri={artifactUris?.ml} counts={{ rows: counts.ml }} />
-                      <div className="pl-3 space-y-1.5">
-                        <ArtifactRow type="kg" uri={artifactUris?.kg_entities} counts={{ count: (counts.kg_entities ?? 0) + (counts.kg_identifiers ?? 0) + (counts.kg_edges ?? 0) }} />
-                        {counts.kg_entities !== undefined && (
-                          <div className="grid grid-cols-3 gap-1.5 ml-2 text-xs">
-                            <div className="p-2 rounded bg-muted text-center">
-                              <p className="font-semibold text-foreground">{counts.kg_entities}</p>
-                              <p className="text-muted-foreground">entities</p>
-                              {artifactUris?.kg_entities && <a href={artifactUris.kg_entities} className="text-primary mt-0.5 flex items-center justify-center gap-0.5"><Download className="w-2.5 h-2.5" />JSONL</a>}
-                            </div>
-                            <div className="p-2 rounded bg-muted text-center">
-                              <p className="font-semibold text-foreground">{counts.kg_identifiers}</p>
-                              <p className="text-muted-foreground">identifiers</p>
-                              {artifactUris?.kg_identifiers && <a href={artifactUris.kg_identifiers} className="text-primary mt-0.5 flex items-center justify-center gap-0.5"><Download className="w-2.5 h-2.5" />JSONL</a>}
-                            </div>
-                            <div className="p-2 rounded bg-muted text-center">
-                              <p className="font-semibold text-foreground">{counts.kg_edges}</p>
-                              <p className="text-muted-foreground">edges</p>
-                              {artifactUris?.kg_edges && <a href={artifactUris.kg_edges} className="text-primary mt-0.5 flex items-center justify-center gap-0.5"><Download className="w-2.5 h-2.5" />JSONL</a>}
-                            </div>
-                          </div>
+                      <div className="text-xs text-muted-foreground mb-2 p-2.5 rounded-md bg-muted flex items-center justify-between">
+                        <span><span className="font-semibold text-foreground">3 AI-ready artifacts</span> — linked by dataset_version_id</span>
+                        {artifactUris?.bundle_zip && (
+                          <Button size="sm" variant="default" className="h-6 text-xs gap-1 ml-2" asChild data-testid="button-download-bundle-top">
+                            <a href={artifactUris.bundle_zip} target="_blank" rel="noopener noreferrer">
+                              <Download className="w-3 h-3" /> Download All (ZIP)
+                            </a>
+                          </Button>
                         )}
                       </div>
+
+                      {/* ── Primary trio: ML · KG · RAG ── */}
+                      <ArtifactRow type="ml" uri={artifactUris?.ml} counts={{ rows: counts.ml }} />
                       <ArtifactRow type="rag" uri={artifactUris?.rag_chunks} counts={{ count: counts.rag_chunks }} />
-                      <ArtifactRow type="bundle" uri={artifactUris?.bundle_zip} />
+                      <ArtifactRow type="kg" uri={artifactUris?.kg_entities} counts={{ count: (counts.kg_entities ?? 0) + (counts.kg_identifiers ?? 0) + (counts.kg_edges ?? 0) }} />
+
+                      {/* ── KG sub-file breakdown ── */}
+                      {counts.kg_entities !== undefined && (
+                        <div className="grid grid-cols-3 gap-1.5 ml-4 text-xs">
+                          <div className="p-2 rounded bg-muted text-center">
+                            <p className="font-semibold text-foreground">{counts.kg_entities}</p>
+                            <p className="text-muted-foreground">entities</p>
+                            {artifactUris?.kg_entities && <a href={artifactUris.kg_entities} className="text-primary mt-0.5 flex items-center justify-center gap-0.5"><Download className="w-2.5 h-2.5" />JSONL</a>}
+                          </div>
+                          <div className="p-2 rounded bg-muted text-center">
+                            <p className="font-semibold text-foreground">{counts.kg_identifiers}</p>
+                            <p className="text-muted-foreground">identifiers</p>
+                            {artifactUris?.kg_identifiers && <a href={artifactUris.kg_identifiers} className="text-primary mt-0.5 flex items-center justify-center gap-0.5"><Download className="w-2.5 h-2.5" />JSONL</a>}
+                          </div>
+                          <div className="p-2 rounded bg-muted text-center">
+                            <p className="font-semibold text-foreground">{counts.kg_edges}</p>
+                            <p className="text-muted-foreground">edges</p>
+                            {artifactUris?.kg_edges && <a href={artifactUris.kg_edges} className="text-primary mt-0.5 flex items-center justify-center gap-0.5"><Download className="w-2.5 h-2.5" />JSONL</a>}
+                          </div>
+                        </div>
+                      )}
                     </>
                   )}
                 </div>
