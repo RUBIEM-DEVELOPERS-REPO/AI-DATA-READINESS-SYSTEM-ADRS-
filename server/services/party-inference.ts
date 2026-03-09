@@ -48,7 +48,11 @@ export function inferParties(
 
   const isOrg = !!orgNameAttr && !nameAttr;
   const entityType = isOrg ? "ORGANIZATION" : "PERSON";
-  const displayName = (orgNameAttr ?? nameAttr)!.value_normalized;
+  const primaryNameAttr = orgNameAttr ?? nameAttr;
+  const displayName = primaryNameAttr?.value_normalized
+    ?? emailAttr?.value_normalized
+    ?? phoneAttr?.value_normalized
+    ?? `${entityType}-${runId.slice(0, 8).toUpperCase()}`;
   const entityCode  = `AUTO-${entityType.slice(0, 3)}-${runId.slice(0, 8).toUpperCase()}`;
 
   const canonicalFields: Record<string, any> = {};
