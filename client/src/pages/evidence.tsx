@@ -1,5 +1,5 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { useState } from "react";
+import { useState, useRef, useCallback } from "react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -10,12 +10,15 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import type { EvidenceFile, Batch } from "@shared/schema";
 import {
-  FileText, Upload, Search, Filter, Lock, Hash, HardDrive, Clock, FolderOpen, Plus, Eye, RefreshCw, CheckCircle2, XCircle, AlertCircle, Mic, Video, Timer
+  FileText, Upload, Search, Filter, Lock, Hash, HardDrive, Clock, FolderOpen, Plus, Eye, RefreshCw, CheckCircle2, XCircle, AlertCircle, Mic, Video, Timer,
+  Link2, CloudDownload, FolderInput, HardDriveUpload, Globe, Building2
 } from "lucide-react";
+import { SiGoogledrive, SiDropbox } from "react-icons/si";
 import { formatDistanceToNow, format } from "date-fns";
 import { useForm } from "react-hook-form";
 import { Form, FormField, FormItem, FormLabel, FormControl } from "@/components/ui/form";
@@ -128,7 +131,20 @@ function EvidenceCard({ file }: { file: EvidenceFile }) {
         <div className="flex items-center gap-2 pt-1 border-t border-border">
           <Badge variant="outline" className="text-xs">{file.sourceType}</Badge>
           <Badge variant="outline" className="text-xs">{file.fileFormat.toUpperCase()}</Badge>
-          <span className="ml-auto text-xs text-muted-foreground flex items-center gap-1">
+          {file.storedUri?.startsWith("local://") && (
+            <a
+              href={`/api/evidence/${file.id}/file`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="ml-auto"
+              data-testid={`link-view-file-${file.id}`}
+            >
+              <Button variant="ghost" size="sm" className="h-6 px-2 text-xs gap-1">
+                <Eye className="w-3 h-3" /> View
+              </Button>
+            </a>
+          )}
+          <span className={`${file.storedUri?.startsWith("local://") ? "" : "ml-auto"} text-xs text-muted-foreground flex items-center gap-1`}>
             <Clock className="w-3 h-3" />
             {formatDistanceToNow(new Date(file.createdAt), { addSuffix: true })}
           </span>
@@ -212,147 +228,357 @@ const IMG_FORMATS = ["png", "tiff", "jpeg", "jpg", "bmp"];
 const AUD_FORMATS = ["mp3", "wav", "aac", "flac", "ogg", "m4a"];
 const VID_FORMATS = ["mp4", "mov", "webm", "avi", "mkv", "m4v"];
 
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+}
+
+function detectUrlProvider(url: string): { name: string; color: string } | null {
+  if (!url.startsWith("http")) return null;
+  if (url.includes("drive.google.com") || url.includes("docs.google.com"))
+    return { name: "Google Drive", color: "text-blue-500" };
+  if (url.includes("dropbox.com") || url.includes("dropboxusercontent.com"))
+    return { name: "Dropbox", color: "text-blue-600" };
+  if (url.includes("1drv.ms") || url.includes("sharepoint.com") || url.includes("onedrive.live.com"))
+    return { name: "OneDrive / SharePoint", color: "text-blue-400" };
+  if (url.includes("ftp://"))
+    return { name: "FTP", color: "text-muted-foreground" };
+  return { name: "HTTP URL", color: "text-muted-foreground" };
+}
+
 function IngestFileDialog() {
   const { toast } = useToast();
   const [open, setOpen] = useState(false);
+  const [tab, setTab] = useState("upload");
   const { data: batches } = useQuery<Batch[]>({ queryKey: ["/api/batches"] });
-  const form = useForm({
-    defaultValues: {
-      fileName: "", fileFormat: "pdf", fileSizeBytes: "1024000", pageCount: "1",
-      sourceType: "SCAN", batchId: "", uploadedBy: "operator_001", sourceReference: "",
-      durationSeconds: ""
-    }
-  });
 
-  const watchedFormat = form.watch("fileFormat");
-  const isAVForm = [...AUD_FORMATS, ...VID_FORMATS].includes(watchedFormat);
+  const [dragOver, setDragOver] = useState(false);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const [uploadOperator, setUploadOperator] = useState("operator_001");
+  const [uploadBatch, setUploadBatch] = useState("");
+  const [uploadDuration, setUploadDuration] = useState("");
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const mutation = useMutation({
-    mutationFn: (data: any) => apiRequest("POST", "/api/evidence", data),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/evidence"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/dashboard/stats"] });
-      toast({ title: "Evidence ingested", description: "File has been ingested and immutably stored." });
+  const [importUrl, setImportUrl] = useState("");
+  const [importing, setImporting] = useState(false);
+  const [importOperator, setImportOperator] = useState("operator_001");
+  const [importBatch, setImportBatch] = useState("");
+  const [importDuration, setImportDuration] = useState("");
+
+  const invalidate = () => {
+    queryClient.invalidateQueries({ queryKey: ["/api/evidence"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/dashboard/stats"] });
+  };
+
+  const resetAll = () => {
+    setSelectedFile(null);
+    setUploadDuration("");
+    setUploadBatch("");
+    setImportUrl("");
+    setImportDuration("");
+    setImportBatch("");
+    setDragOver(false);
+  };
+
+  const onDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    setDragOver(false);
+    const file = e.dataTransfer.files[0];
+    if (file) setSelectedFile(file);
+  }, []);
+
+  const onFileInput = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) setSelectedFile(file);
+  };
+
+  const fileExt = selectedFile ? selectedFile.name.split(".").pop()?.toLowerCase() ?? "" : "";
+  const fileMediaType = getMediaType(fileExt);
+  const isAV = fileMediaType === "AUDIO" || fileMediaType === "VIDEO";
+
+  const handleUpload = async () => {
+    if (!selectedFile) return;
+    setUploading(true);
+    try {
+      const fd = new FormData();
+      fd.append("file", selectedFile);
+      fd.append("uploadedBy", uploadOperator || "operator_001");
+      fd.append("sourceType", isAV ? (fileMediaType === "AUDIO" ? "RECORDING" : "DEVICE") : "SCAN");
+      if (uploadBatch) fd.append("batchId", uploadBatch);
+      if (uploadDuration) fd.append("durationSeconds", uploadDuration);
+      const res = await fetch("/api/evidence/upload", { method: "POST", body: fd });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Upload failed");
+      invalidate();
+      toast({ title: "Evidence ingested", description: `${data.evidenceCode} — ${selectedFile.name} stored with SHA-256 hash.` });
       setOpen(false);
-      form.reset();
-    },
-    onError: () => toast({ title: "Error", description: "Failed to ingest evidence.", variant: "destructive" }),
-  });
+      resetAll();
+    } catch (e: any) {
+      toast({ title: "Upload failed", description: e.message, variant: "destructive" });
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const handleImportUrl = async () => {
+    if (!importUrl.trim()) return;
+    setImporting(true);
+    try {
+      const data = await apiRequest("POST", "/api/evidence/import-url", {
+        url: importUrl.trim(),
+        uploadedBy: importOperator || "operator_001",
+        batchId: importBatch || undefined,
+        durationSeconds: importDuration ? parseInt(importDuration) : undefined,
+      });
+      invalidate();
+      toast({ title: "Import complete", description: `${(data as any).evidenceCode} — file imported and immutably stored.` });
+      setOpen(false);
+      resetAll();
+    } catch (e: any) {
+      toast({ title: "Import failed", description: e.message ?? "Could not fetch file from URL.", variant: "destructive" });
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  const urlProvider = detectUrlProvider(importUrl);
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
+    <Dialog open={open} onOpenChange={(v) => { setOpen(v); if (!v) resetAll(); }}>
       <DialogTrigger asChild>
         <Button size="sm" variant="outline" className="gap-2" data-testid="button-ingest-file">
           <Upload className="w-4 h-4" /> Ingest Evidence
         </Button>
       </DialogTrigger>
-      <DialogContent className="max-w-md">
+      <DialogContent className="max-w-xl">
         <DialogHeader>
-          <DialogTitle>Ingest Evidence File</DialogTitle>
+          <DialogTitle>Ingest Evidence</DialogTitle>
         </DialogHeader>
-        <Form {...form}>
-          <form onSubmit={form.handleSubmit((d) => {
-            const mediaType = getMediaType(d.fileFormat);
-            mutation.mutate({
-              ...d,
-              fileSizeBytes: parseInt(d.fileSizeBytes),
-              pageCount: parseInt(d.pageCount),
-              batchId: d.batchId || undefined,
-              mediaType,
-              durationSeconds: d.durationSeconds ? parseInt(d.durationSeconds) : undefined,
-            });
-          })} className="space-y-3">
-            <FormField name="fileName" control={form.control} render={({ field }) => (
-              <FormItem>
-                <FormLabel>File Name</FormLabel>
-                <FormControl><Input {...field} placeholder="interview_2025_q4.mp3" data-testid="input-file-name" /></FormControl>
-              </FormItem>
-            )} />
-            <div className="grid grid-cols-2 gap-3">
-              <FormField name="fileFormat" control={form.control} render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Format</FormLabel>
-                  <Select onValueChange={field.onChange} defaultValue={field.value}>
-                    <FormControl><SelectTrigger data-testid="select-file-format"><SelectValue /></SelectTrigger></FormControl>
-                    <SelectContent>
-                      <div className="px-2 py-1 text-xs text-muted-foreground font-medium">Documents</div>
-                      {DOC_FORMATS.map(f => <SelectItem key={f} value={f}>{f.toUpperCase()}</SelectItem>)}
-                      <div className="px-2 py-1 text-xs text-muted-foreground font-medium border-t border-border mt-1 pt-1">Images</div>
-                      {IMG_FORMATS.map(f => <SelectItem key={f} value={f}>{f.toUpperCase()}</SelectItem>)}
-                      <div className="px-2 py-1 text-xs text-muted-foreground font-medium border-t border-border mt-1 pt-1 flex items-center gap-1"><Mic className="w-3 h-3" />Audio</div>
-                      {AUD_FORMATS.map(f => <SelectItem key={f} value={f}>{f.toUpperCase()}</SelectItem>)}
-                      <div className="px-2 py-1 text-xs text-muted-foreground font-medium border-t border-border mt-1 pt-1 flex items-center gap-1"><Video className="w-3 h-3" />Video</div>
-                      {VID_FORMATS.map(f => <SelectItem key={f} value={f}>{f.toUpperCase()}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
-                </FormItem>
-              )} />
-              <FormField name="sourceType" control={form.control} render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Source</FormLabel>
-                  <Select onValueChange={field.onChange} defaultValue={field.value}>
-                    <FormControl><SelectTrigger data-testid="select-source-type"><SelectValue /></SelectTrigger></FormControl>
-                    <SelectContent>
-                      {["SCAN", "SHAREPOINT", "GOOGLE_DRIVE", "EMAIL", "FTP", "ERP", "DATABASE", "RECORDING", "DEVICE"].map(s => (
-                        <SelectItem key={s} value={s}>{s}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </FormItem>
-              )} />
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <FormField name="fileSizeBytes" control={form.control} render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Size (bytes)</FormLabel>
-                  <FormControl><Input {...field} type="number" data-testid="input-file-size" /></FormControl>
-                </FormItem>
-              )} />
-              {isAVForm ? (
-                <FormField name="durationSeconds" control={form.control} render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Duration (seconds)</FormLabel>
-                    <FormControl><Input {...field} type="number" min="1" placeholder="e.g. 2700" data-testid="input-duration" /></FormControl>
-                  </FormItem>
-                )} />
+
+        <Tabs value={tab} onValueChange={setTab} className="mt-1">
+          <TabsList className="w-full grid grid-cols-3">
+            <TabsTrigger value="upload" data-testid="tab-upload" className="gap-1.5 text-xs">
+              <HardDriveUpload className="w-3.5 h-3.5" /> Upload File
+            </TabsTrigger>
+            <TabsTrigger value="url" data-testid="tab-url" className="gap-1.5 text-xs">
+              <Link2 className="w-3.5 h-3.5" /> From URL
+            </TabsTrigger>
+            <TabsTrigger value="cloud" data-testid="tab-cloud" className="gap-1.5 text-xs">
+              <CloudDownload className="w-3.5 h-3.5" /> Cloud Storage
+            </TabsTrigger>
+          </TabsList>
+
+          {/* ── Upload Tab ── */}
+          <TabsContent value="upload" className="space-y-3 mt-3">
+            <div
+              data-testid="drop-zone"
+              onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+              onDragLeave={() => setDragOver(false)}
+              onDrop={onDrop}
+              onClick={() => fileInputRef.current?.click()}
+              className={`border-2 border-dashed rounded-lg p-6 text-center cursor-pointer transition-colors ${dragOver ? "border-primary bg-primary/5" : "border-border hover:border-primary/50 hover:bg-muted/30"}`}
+            >
+              {selectedFile ? (
+                <div className="space-y-1">
+                  <div className="flex items-center justify-center gap-2">
+                    {fileMediaType === "AUDIO" ? <Mic className="w-7 h-7 text-chart-5" /> :
+                     fileMediaType === "VIDEO" ? <Video className="w-7 h-7 text-chart-2" /> :
+                     <FileText className="w-7 h-7 text-primary" />}
+                    <div className="text-left">
+                      <p className="font-medium text-sm text-foreground truncate max-w-xs">{selectedFile.name}</p>
+                      <p className="text-xs text-muted-foreground">{fileExt.toUpperCase()} · {formatBytes(selectedFile.size)} · {fileMediaType}</p>
+                    </div>
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-1">Click to choose a different file</p>
+                </div>
               ) : (
-                <FormField name="pageCount" control={form.control} render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Pages</FormLabel>
-                    <FormControl><Input {...field} type="number" min="1" data-testid="input-page-count" /></FormControl>
-                  </FormItem>
-                )} />
+                <>
+                  <FolderInput className="w-10 h-10 text-muted-foreground/50 mx-auto mb-2" />
+                  <p className="text-sm font-medium text-foreground">Drag &amp; drop your file here</p>
+                  <p className="text-xs text-muted-foreground mt-1">or click to browse your computer</p>
+                  <p className="text-xs text-muted-foreground/70 mt-2">PDF, DOCX, XLSX, TXT, CSV, PNG, TIFF, MP3, WAV, MP4, MOV and more · up to 500 MB</p>
+                </>
               )}
+              <input
+                ref={fileInputRef}
+                type="file"
+                className="hidden"
+                accept=".pdf,.docx,.xlsx,.pptx,.txt,.csv,.json,.png,.jpg,.jpeg,.tiff,.bmp,.gif,.mp3,.wav,.aac,.flac,.ogg,.m4a,.mp4,.mov,.webm,.avi,.mkv,.m4v"
+                onChange={onFileInput}
+                data-testid="input-file-picker"
+              />
             </div>
-            {isAVForm && (
-              <div className="flex items-center gap-2 p-2.5 rounded-md bg-chart-2/5 border border-chart-2/20">
-                {AUD_FORMATS.includes(watchedFormat) ? <Mic className="w-3.5 h-3.5 text-chart-5 flex-shrink-0" /> : <Video className="w-3.5 h-3.5 text-chart-2 flex-shrink-0" />}
-                <p className="text-xs text-muted-foreground">
-                  {AUD_FORMATS.includes(watchedFormat) ? "Audio file — transcription pipeline will be used" : "Video file — transcription + frame extraction will be used"}
-                </p>
+
+            {selectedFile && (
+              <div className="space-y-3">
+                {isAV && (
+                  <div className="flex items-center gap-2 p-2.5 rounded-md bg-chart-5/5 border border-chart-5/20">
+                    {fileMediaType === "AUDIO" ? <Mic className="w-3.5 h-3.5 text-chart-5 shrink-0" /> : <Video className="w-3.5 h-3.5 text-chart-2 shrink-0" />}
+                    <p className="text-xs text-muted-foreground">
+                      {fileMediaType === "AUDIO" ? "Audio — transcription pipeline will be triggered" : "Video — transcription + frame extraction pipeline will be triggered"}
+                    </p>
+                  </div>
+                )}
+                <div className="grid grid-cols-2 gap-3">
+                  {isAV && (
+                    <div>
+                      <Label className="text-xs mb-1 block">Duration (seconds)</Label>
+                      <Input value={uploadDuration} onChange={(e) => setUploadDuration(e.target.value)} type="number" min="1" placeholder="e.g. 2700" className="h-8 text-sm" data-testid="input-upload-duration" />
+                    </div>
+                  )}
+                  <div className={isAV ? "" : "col-span-2"}>
+                    <Label className="text-xs mb-1 block">Operator ID</Label>
+                    <Input value={uploadOperator} onChange={(e) => setUploadOperator(e.target.value)} placeholder="operator_001" className="h-8 text-sm" data-testid="input-upload-operator" />
+                  </div>
+                </div>
+                {batches && batches.length > 0 && (
+                  <div>
+                    <Label className="text-xs mb-1 block">Batch (optional)</Label>
+                    <Select value={uploadBatch} onValueChange={setUploadBatch}>
+                      <SelectTrigger className="h-8 text-sm" data-testid="select-upload-batch"><SelectValue placeholder="Select batch..." /></SelectTrigger>
+                      <SelectContent>
+                        {batches.map(b => <SelectItem key={b.id} value={b.id}>{b.batchCode} — {b.sourceLocation}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
               </div>
             )}
-            {batches && batches.length > 0 && (
-              <FormField name="batchId" control={form.control} render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Batch (optional)</FormLabel>
-                  <Select onValueChange={field.onChange} defaultValue="">
-                    <FormControl><SelectTrigger data-testid="select-batch"><SelectValue placeholder="Select batch..." /></SelectTrigger></FormControl>
-                    <SelectContent>
-                      {batches.map(b => <SelectItem key={b.id} value={b.id}>{b.batchCode} — {b.sourceLocation}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
-                </FormItem>
-              )} />
-            )}
+
             <div className="flex justify-end gap-2 pt-1">
               <Button type="button" variant="outline" size="sm" onClick={() => setOpen(false)}>Cancel</Button>
-              <Button type="submit" size="sm" disabled={mutation.isPending} data-testid="button-submit-ingest">
-                {mutation.isPending ? "Ingesting..." : "Ingest File"}
+              <Button size="sm" disabled={!selectedFile || uploading} onClick={handleUpload} data-testid="button-submit-upload">
+                {uploading ? <><RefreshCw className="w-3.5 h-3.5 mr-1.5 animate-spin" /> Uploading...</> : <><Upload className="w-3.5 h-3.5 mr-1.5" /> Upload &amp; Ingest</>}
               </Button>
             </div>
-          </form>
-        </Form>
+          </TabsContent>
+
+          {/* ── From URL Tab ── */}
+          <TabsContent value="url" className="space-y-3 mt-3">
+            <div>
+              <Label className="text-xs mb-1 block">File URL</Label>
+              <div className="relative">
+                <Globe className="absolute left-2.5 top-2 w-3.5 h-3.5 text-muted-foreground" />
+                <Input
+                  value={importUrl}
+                  onChange={(e) => setImportUrl(e.target.value)}
+                  placeholder="https://drive.google.com/file/d/... or any HTTP/FTP URL"
+                  className="pl-8 h-8 text-sm font-mono"
+                  data-testid="input-import-url"
+                />
+              </div>
+              {urlProvider && (
+                <p className={`text-xs mt-1 flex items-center gap-1 ${urlProvider.color}`}>
+                  <CheckCircle2 className="w-3 h-3" /> Detected: {urlProvider.name}
+                </p>
+              )}
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label className="text-xs mb-1 block">Operator ID</Label>
+                <Input value={importOperator} onChange={(e) => setImportOperator(e.target.value)} placeholder="operator_001" className="h-8 text-sm" data-testid="input-import-operator" />
+              </div>
+              <div>
+                <Label className="text-xs mb-1 block">Duration in secs (A/V only)</Label>
+                <Input value={importDuration} onChange={(e) => setImportDuration(e.target.value)} type="number" min="1" placeholder="optional" className="h-8 text-sm" data-testid="input-import-duration" />
+              </div>
+            </div>
+
+            {batches && batches.length > 0 && (
+              <div>
+                <Label className="text-xs mb-1 block">Batch (optional)</Label>
+                <Select value={importBatch} onValueChange={setImportBatch}>
+                  <SelectTrigger className="h-8 text-sm" data-testid="select-import-batch"><SelectValue placeholder="Select batch..." /></SelectTrigger>
+                  <SelectContent>
+                    {batches.map(b => <SelectItem key={b.id} value={b.id}>{b.batchCode} — {b.sourceLocation}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+
+            <div className="rounded-md border border-border bg-muted/20 p-3 space-y-2">
+              <p className="text-xs font-medium text-muted-foreground">How to get a sharing link</p>
+              <div className="space-y-1.5">
+                {[
+                  { Icon: SiGoogledrive, name: "Google Drive", tip: "Right-click file → Share → Copy link (set to Anyone with link)" },
+                  { Icon: SiDropbox, name: "Dropbox", tip: "Hover file → Share → Copy Dropbox link" },
+                  { Icon: Building2, name: "OneDrive / SharePoint", tip: "Right-click → Share → Copy link (Anyone)" },
+                ].map(({ Icon, name, tip }) => (
+                  <div key={name} className="flex items-start gap-2">
+                    <Icon className="w-3.5 h-3.5 mt-0.5 shrink-0 text-muted-foreground" />
+                    <div>
+                      <span className="text-xs font-medium text-foreground">{name}: </span>
+                      <span className="text-xs text-muted-foreground">{tip}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2 pt-1">
+              <Button type="button" variant="outline" size="sm" onClick={() => setOpen(false)}>Cancel</Button>
+              <Button size="sm" disabled={!importUrl.trim() || importing} onClick={handleImportUrl} data-testid="button-submit-import-url">
+                {importing ? <><RefreshCw className="w-3.5 h-3.5 mr-1.5 animate-spin" /> Importing...</> : <><CloudDownload className="w-3.5 h-3.5 mr-1.5" /> Import &amp; Ingest</>}
+              </Button>
+            </div>
+          </TabsContent>
+
+          {/* ── Cloud Storage Tab ── */}
+          <TabsContent value="cloud" className="space-y-2 mt-3">
+            <p className="text-xs text-muted-foreground mb-3">Connect cloud storage platforms to browse and import files directly into ADRS.</p>
+            {[
+              {
+                Icon: SiGoogledrive, name: "Google Drive", status: "not_connected",
+                desc: "Browse and import files from your Google Drive — PDFs, Docs, Sheets, and more.",
+                action: "Connect Google Drive",
+              },
+              {
+                Icon: SiDropbox, name: "Dropbox", status: "url_import",
+                desc: "Import Dropbox files using a shared link via the URL import tab.",
+                action: "Use URL Import",
+              },
+              {
+                Icon: Building2, name: "OneDrive / SharePoint", status: "url_import",
+                desc: "Import OneDrive and SharePoint files using a shared link.",
+                action: "Use URL Import",
+              },
+            ].map(({ Icon, name, status, desc, action }) => (
+              <div key={name} className="flex items-start gap-3 p-3 rounded-md border border-border bg-card">
+                <Icon className="w-5 h-5 mt-0.5 shrink-0 text-muted-foreground" />
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 mb-0.5">
+                    <span className="text-sm font-medium">{name}</span>
+                    <Badge variant="outline" className="text-[10px] px-1.5 py-0">
+                      {status === "not_connected" ? "Not Connected" : "Via URL"}
+                    </Badge>
+                  </div>
+                  <p className="text-xs text-muted-foreground">{desc}</p>
+                </div>
+                <Button
+                  size="sm"
+                  variant={status === "not_connected" ? "default" : "outline"}
+                  className="text-xs shrink-0"
+                  onClick={() => {
+                    if (status === "url_import") setTab("url");
+                    else toast({ title: "Google Drive", description: "Open the Replit integrations panel and connect Google Drive to enable native file browsing.", duration: 6000 });
+                  }}
+                  data-testid={`button-connect-${name.toLowerCase().replace(/\s+/g, "-")}`}
+                >
+                  {action}
+                </Button>
+              </div>
+            ))}
+            <div className="mt-2 p-2.5 rounded-md bg-muted/30 border border-border">
+              <p className="text-xs text-muted-foreground">
+                <strong className="text-foreground">FTP / HTTP servers</strong> — Use the <button className="underline text-primary" onClick={() => setTab("url")}>URL import tab</button> to ingest files directly from any HTTP, HTTPS, or FTP URL.
+              </p>
+            </div>
+          </TabsContent>
+        </Tabs>
       </DialogContent>
     </Dialog>
   );

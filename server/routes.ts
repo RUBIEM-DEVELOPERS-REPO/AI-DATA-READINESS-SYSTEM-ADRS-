@@ -5,10 +5,13 @@ import {
   insertValidationTaskSchema, insertCdmEntitySchema, insertDatasetSchema
 } from "@shared/schema";
 import { createHash, randomUUID } from "crypto";
+import path from "path";
+import fs from "fs";
 import { normalizeExtractedFields, dedupAttributes, runQualityGates, computeTrustScore, type DedupResult } from "./services/normalization";
 import { buildArtifactContents, buildArtifactUris, checkPublishTrustThreshold, generateMlCsv, generateBundleZip } from "./services/publishing";
 import { inferParties, inferDocument } from "./services/party-inference";
 import { ADRS_CONFIG } from "./config";
+import { uploadMiddleware, computeFileHash, getMimeType, detectCloudSource, downloadFile, UPLOADS_DIR } from "./upload";
 
 function generateCode(prefix: string): string {
   const year = new Date().getFullYear();
@@ -54,11 +57,111 @@ export async function registerRoutes(httpServer: any, app: Express): Promise<any
 
   // ─── Evidence ──────────────────────────────────────────────────────────────
   app.get("/api/evidence", async (_req: any, res: any) => res.json(await storage.getEvidenceFiles()));
+
+  // Serve stored file for download/preview
+  app.get("/api/evidence/:id/file", async (req: any, res: any) => {
+    try {
+      const f = await storage.getEvidenceFile(req.params.id);
+      if (!f) return res.status(404).json({ error: "Not found" });
+      if (!f.storedUri.startsWith("local://")) return res.status(404).json({ error: "File not stored locally" });
+      const filePath = path.join(UPLOADS_DIR, f.storedUri.slice(8));
+      if (!fs.existsSync(filePath)) return res.status(404).json({ error: "File missing from disk" });
+      const ext = path.extname(f.fileName).slice(1).toLowerCase();
+      res.setHeader("Content-Type", getMimeType(ext));
+      res.setHeader("Content-Disposition", `inline; filename="${f.fileName}"`);
+      res.sendFile(filePath);
+    } catch { res.status(500).json({ error: "Failed to serve file" }); }
+  });
+
+  // Metadata-only ingest (legacy/fallback)
   app.get("/api/evidence/:id", async (req: any, res: any) => {
     const f = await storage.getEvidenceFile(req.params.id);
     if (!f) return res.status(404).json({ error: "Not found" });
     res.json(f);
   });
+
+  // Real file upload via multipart/form-data
+  app.post("/api/evidence/upload", (req: any, res: any) => {
+    uploadMiddleware(req, res, async (err: any) => {
+      if (err) return res.status(400).json({ error: err.message });
+      if (!req.file) return res.status(400).json({ error: "No file provided" });
+      try {
+        const ext = path.extname(req.file.originalname).slice(1).toLowerCase() || "bin";
+        const fileHash = computeFileHash(req.file.path);
+        const storedUri = `local://${req.file.filename}`;
+        const body = {
+          ...req.body,
+          fileName: req.file.originalname,
+          fileFormat: ext,
+          fileSizeBytes: req.file.size,
+          fileHash,
+          storedUri,
+          evidenceCode: generateCode("EVID"),
+          immutabilityStatus: "LOCKED",
+          mediaType: req.body.mediaType || (["mp3","wav","aac","flac","ogg","m4a"].includes(ext) ? "AUDIO" : ["mp4","mov","webm","avi","mkv","m4v"].includes(ext) ? "VIDEO" : ["png","tiff","jpeg","jpg","bmp","gif"].includes(ext) ? "IMAGE" : "DOCUMENT"),
+          durationSeconds: req.body.durationSeconds ? parseInt(req.body.durationSeconds) : undefined,
+          pageCount: req.body.pageCount ? parseInt(req.body.pageCount) : undefined,
+          batchId: req.body.batchId || undefined,
+        };
+        const parse = insertEvidenceSchema.safeParse(body);
+        if (!parse.success) {
+          fs.unlinkSync(req.file.path);
+          return res.status(400).json({ error: parse.error });
+        }
+        const file = await storage.createEvidenceFile(parse.data);
+        await storage.createAuditLog({ action: "EVIDENCE_INGESTED", resourceType: "EVIDENCE", resourceId: file.id, userId: file.uploadedBy, details: { file_name: file.fileName, hash: file.fileHash, method: "file_upload" }, tenantId: "TENANT-001" });
+        res.json(file);
+      } catch (e: any) {
+        if (req.file?.path && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
+        res.status(500).json({ error: e?.message ?? "Upload failed" });
+      }
+    });
+  });
+
+  // Import from URL (Google Drive shared links, Dropbox, OneDrive, HTTP)
+  app.post("/api/evidence/import-url", async (req: any, res: any) => {
+    const { url, uploadedBy, batchId, tags, durationSeconds } = req.body;
+    if (!url) return res.status(400).json({ error: "url is required" });
+    try {
+      const { source, downloadUrl, fileName: detectedName } = detectCloudSource(url);
+      const ext = path.extname(detectedName).slice(1).toLowerCase() || "bin";
+      const diskName = `${Date.now()}_${Math.random().toString(36).slice(2)}.${ext || "bin"}`;
+      const diskPath = path.join(UPLOADS_DIR, diskName);
+      await downloadFile(downloadUrl, diskPath);
+      const stats = fs.statSync(diskPath);
+      const fileHash = computeFileHash(diskPath);
+      const mediaType = ["mp3","wav","aac","flac","ogg","m4a"].includes(ext) ? "AUDIO"
+        : ["mp4","mov","webm","avi","mkv","m4v"].includes(ext) ? "VIDEO"
+        : ["png","tiff","jpeg","jpg","bmp","gif"].includes(ext) ? "IMAGE" : "DOCUMENT";
+      const body = {
+        fileName: detectedName,
+        fileFormat: ext,
+        fileSizeBytes: stats.size,
+        fileHash,
+        storedUri: `local://${diskName}`,
+        evidenceCode: generateCode("EVID"),
+        immutabilityStatus: "LOCKED",
+        sourceType: source,
+        sourceReference: url,
+        mediaType,
+        durationSeconds: durationSeconds ? parseInt(durationSeconds) : undefined,
+        uploadedBy: uploadedBy || "operator_001",
+        batchId: batchId || undefined,
+        tags: tags ? (Array.isArray(tags) ? tags : [tags]) : undefined,
+      };
+      const parse = insertEvidenceSchema.safeParse(body);
+      if (!parse.success) {
+        fs.unlinkSync(diskPath);
+        return res.status(400).json({ error: parse.error });
+      }
+      const file = await storage.createEvidenceFile(parse.data);
+      await storage.createAuditLog({ action: "EVIDENCE_INGESTED", resourceType: "EVIDENCE", resourceId: file.id, userId: file.uploadedBy, details: { file_name: file.fileName, hash: file.fileHash, method: "url_import", source_url: url }, tenantId: "TENANT-001" });
+      res.json(file);
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message ?? "Import failed" });
+    }
+  });
+
   app.post("/api/evidence", async (req: any, res: any) => {
     const body = { ...req.body, evidenceCode: generateCode("EVID"), fileHash: generateHash(req.body.fileName ?? "file"), storedUri: `s3://evidence/tenant-001/${new Date().getFullYear()}/${String(new Date().getMonth() + 1).padStart(2, "0")}/${randomUUID()}/original.${req.body.fileFormat ?? "pdf"}`, immutabilityStatus: "LOCKED" };
     const parse = insertEvidenceSchema.safeParse(body);

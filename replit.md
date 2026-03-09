@@ -45,7 +45,10 @@ PostgreSQL (Replit managed) via `DATABASE_URL` environment variable.
 | GET | `/api/config` | Read-only feature flags + thresholds |
 | GET | `/api/dashboard/stats` | Dashboard statistics |
 | GET/POST | `/api/batches` | Digitization batch management |
-| GET/POST | `/api/evidence` | Evidence file ingestion |
+| GET/POST | `/api/evidence` | Evidence file metadata-only ingest (legacy) |
+| POST | `/api/evidence/upload` | **Real file upload** via multipart/form-data (multer); computes real SHA-256; stores to `./uploads/` |
+| POST | `/api/evidence/import-url` | **Import from URL** — downloads file from HTTP/HTTPS/Google Drive/Dropbox/OneDrive link |
+| GET | `/api/evidence/:id/file` | **Serve stored file** — streams file from disk with correct MIME type |
 | GET/POST | `/api/extractions` | Extraction runs — `rawText` stripped by default; add `?include_text=true` to hydrate |
 | GET | `/api/extractions/:id/text` | Dedicated text endpoint returning extraction_texts record |
 | GET/POST/PATCH | `/api/validation` | HITL validation tasks |
@@ -91,7 +94,34 @@ PostgreSQL (Replit managed) via `DATABASE_URL` environment variable.
 `0.35×OCR + 0.25×Extraction + 0.15×Completeness + 0.15×Consistency + 0.10×DocQuality`
 Publishing blocks if dataset `qualityScore < 0.60` unless `override:true` + `overrideReason` is provided.
 
+## File Upload & Cloud Storage
+
+### Direct File Upload
+- Real multipart upload via `multer` (up to 500 MB per file)
+- Files stored in `./uploads/` directory with randomized filenames
+- Real SHA-256 hash computed from file bytes on upload
+- MIME type auto-detected from file extension
+- Media type (DOCUMENT/IMAGE/AUDIO/VIDEO) auto-detected from extension
+- `storedUri` set to `local://{filename}` for disk-stored files
+- Files served back via `GET /api/evidence/:id/file` with correct Content-Type
+
+### URL Import
+- Downloads files from any HTTP/HTTPS URL
+- Smart URL transformation for cloud providers:
+  - **Google Drive**: `drive.google.com/file/d/{id}/view` → direct download URL
+  - **Dropbox**: `?dl=0` → `?dl=1` for direct download
+  - **OneDrive/SharePoint**: shared links used directly
+- Follows up to 5 HTTP redirects
+- SHA-256 hash computed on downloaded bytes
+
+### Google Drive Native Browser (PENDING)
+- The Replit Google Drive integration connector (`connector:ccfg_google-drive_0F6D7EF5E22543468DB221F94F`) was proposed but dismissed by the user.
+- To enable native Google Drive file browsing, the user must authorize via the Replit integrations panel (Google Drive connector).
+- Once authorized, the `connection:conn_google_drive_...` ID can be used to call `addIntegration` + `proposeIntegration` to get OAuth tokens.
+- Placeholder "Connect Google Drive" button is in the Cloud Storage tab of the Ingest Evidence dialog.
+
 ## Dependencies
+- `multer` — Multipart file upload handling
 - `jszip` — Real ZIP bundle generation for multi-artifact downloads
 - `drizzle-orm`, `drizzle-zod`, `@neondatabase/serverless` — ORM + validation
 - `@tanstack/react-query` — Frontend data fetching
