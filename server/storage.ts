@@ -95,6 +95,15 @@ export class DatabaseStorage implements IStorage {
     const [updated] = await db.update(batches).set({ ...updates, updatedAt: new Date() }).where(eq(batches.id, id)).returning();
     return updated;
   }
+  async incrementBatchScannedDocuments(id: string): Promise<void> {
+    await db.update(batches)
+      .set({
+        scannedDocuments: sql`${batches.scannedDocuments} + 1`,
+        status: sql`CASE WHEN status = 'PENDING' THEN 'IN_PROGRESS' ELSE status END`,
+        updatedAt: new Date(),
+      })
+      .where(eq(batches.id, id));
+  }
 
   async getEvidenceFiles(): Promise<EvidenceFile[]> {
     return db.select().from(evidenceFiles).orderBy(desc(evidenceFiles.createdAt));

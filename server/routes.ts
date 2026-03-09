@@ -110,6 +110,7 @@ export async function registerRoutes(httpServer: any, app: Express): Promise<any
           return res.status(400).json({ error: parse.error });
         }
         const file = await storage.createEvidenceFile(parse.data);
+        if (file.batchId) await storage.incrementBatchScannedDocuments(file.batchId);
         await storage.createAuditLog({ action: "EVIDENCE_INGESTED", resourceType: "EVIDENCE", resourceId: file.id, userId: file.uploadedBy, details: { file_name: file.fileName, hash: file.fileHash, method: "file_upload" }, tenantId: "TENANT-001" });
         res.json(file);
       } catch (e: any) {
@@ -156,6 +157,7 @@ export async function registerRoutes(httpServer: any, app: Express): Promise<any
         return res.status(400).json({ error: parse.error });
       }
       const file = await storage.createEvidenceFile(parse.data);
+      if (file.batchId) await storage.incrementBatchScannedDocuments(file.batchId);
       await storage.createAuditLog({ action: "EVIDENCE_INGESTED", resourceType: "EVIDENCE", resourceId: file.id, userId: file.uploadedBy, details: { file_name: file.fileName, hash: file.fileHash, method: "url_import", source_url: url }, tenantId: "TENANT-001" });
       res.json(file);
     } catch (e: any) {

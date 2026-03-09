@@ -80,7 +80,7 @@ function EvidenceCard({ file }: { file: EvidenceFile }) {
   const isAV = derivedMediaType === "AUDIO" || derivedMediaType === "VIDEO";
 
   const extractMutation = useMutation({
-    mutationFn: () => apiRequest("POST", `/api/evidence/${file.id}/extract`, {}),
+    mutationFn: () => apiRequest("POST", `/api/evidence/${file.id}/extract`, {}).then(r => r.json()),
     onSuccess: (data: any) => {
       queryClient.invalidateQueries({ queryKey: ["/api/evidence"] });
       queryClient.invalidateQueries({ queryKey: ["/api/extractions"] });
@@ -304,6 +304,7 @@ function IngestFileDialog() {
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: ["/api/evidence"] });
     queryClient.invalidateQueries({ queryKey: ["/api/dashboard/stats"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/batches"] });
   };
 
   const resetAll = () => {
