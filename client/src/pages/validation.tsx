@@ -80,8 +80,8 @@ function ValidationCard({ task, extraction, evidence, onAction }: {
 
         {task.fieldsToValidate && task.fieldsToValidate.length > 0 && (
           <div className="flex flex-wrap gap-1">
-            {task.fieldsToValidate.slice(0, 3).map((f) => (
-              <Badge key={f} variant="outline" className="text-xs h-5">{f}</Badge>
+            {[...new Set(task.fieldsToValidate)].slice(0, 3).map((f, i) => (
+              <Badge key={`${i}-${f}`} variant="outline" className="text-xs h-5">{f}</Badge>
             ))}
             {task.fieldsToValidate.length > 3 && (
               <Badge variant="outline" className="text-xs h-5">+{task.fieldsToValidate.length - 3}</Badge>
@@ -339,6 +339,7 @@ export default function Validation() {
 
       {reviewTask && (
         <ReviewDialog
+          key={reviewTask.id}
           task={reviewTask}
           extraction={reviewExtraction}
           evidence={reviewEvidence}

@@ -5,7 +5,30 @@ import { UPLOADS_DIR } from "../upload";
 
 // ─── PDF Text Extraction ─────────────────────────────────────────────────────
 
-const PDFTOTEXT_BIN = "/nix/store/cyw93fls51n8b27z7a49jl40l3xdwdms-replit-runtime-path/bin/pdftotext";
+// Discover pdftotext at runtime (handles nix store hash changes)
+function findPdfToText(): string | null {
+  // 1. Try PATH first
+  try {
+    const bin = execSync("which pdftotext 2>/dev/null", { timeout: 3000 }).toString().trim();
+    if (bin && fs.existsSync(bin)) return bin;
+  } catch { /* not in PATH */ }
+  // 2. Try known Replit nix-store glob pattern
+  try {
+    const result = execSync(
+      "ls /nix/store/*/bin/pdftotext 2>/dev/null | head -1",
+      { timeout: 3000 }
+    ).toString().trim();
+    if (result && fs.existsSync(result)) return result;
+  } catch { /* not found */ }
+  return null;
+}
+
+let _pdfToTextBin: string | null | undefined = undefined; // cached per-process
+function getPdfToTextBin(): string | null {
+  if (_pdfToTextBin !== undefined) return _pdfToTextBin;
+  _pdfToTextBin = findPdfToText();
+  return _pdfToTextBin;
+}
 
 function isPdfValid(filePath: string): boolean {
   try {
@@ -21,12 +44,13 @@ function isPdfValid(filePath: string): boolean {
 
 function extractPdfText(filePath: string): string {
   if (!isPdfValid(filePath)) {
-    return "[PDF is not a valid PDF file or is corrupted]";
+    return "[PDF is not a valid PDF file or is corrupted — please re-upload the original]";
   }
   // Try pdftotext (poppler) first — most reliable for text-based PDFs
-  try {
-    if (fs.existsSync(PDFTOTEXT_BIN)) {
-      const text = execSync(`"${PDFTOTEXT_BIN}" -q "${filePath}" -`, {
+  const bin = getPdfToTextBin();
+  if (bin) {
+    try {
+      const text = execSync(`"${bin}" -q "${filePath}" -`, {
         timeout: 20000,
         maxBuffer: 10 * 1024 * 1024,
       })
@@ -35,9 +59,11 @@ function extractPdfText(filePath: string): string {
       if (text.length > 10) {
         return text.slice(0, 50000);
       }
+      // pdftotext returned empty — likely a scanned/image PDF
+      return "[No extractable text — PDF may be image-based or scanned]";
+    } catch (e: any) {
+      // pdftotext failed — fall through to regex parser
     }
-  } catch {
-    // fall through to regex parser
   }
   // Fallback: regex-based parser for simple uncompressed PDFs
   try {
@@ -67,33 +93,39 @@ function extractPdfText(filePath: string): string {
       }
     }
     const result = texts.join(" ").replace(/\s+/g, " ").trim();
-    return result.slice(0, 50000);
+    return result.length > 0 ? result.slice(0, 50000) : "[No extractable text in PDF]";
   } catch {
-    return "";
+    return "[PDF parsing failed]";
   }
 }
 
 // ─── Text Extraction ────────────────────────────────────────────────────────
 
 export async function extractTextFromFile(storedUri: string, fileFormat: string): Promise<string> {
-  if (!storedUri.startsWith("local://")) {
+  try {
+    if (!storedUri || !storedUri.startsWith("local://")) return "";
+    const filePath = path.join(UPLOADS_DIR, storedUri.slice(8));
+    if (!fs.existsSync(filePath)) return "[File not found on disk]";
+
+    const fmt = (fileFormat ?? "").toLowerCase();
+
+    if (["txt", "csv", "json", "md", "log", "xml", "html"].includes(fmt)) {
+      try {
+        return fs.readFileSync(filePath, "utf-8").slice(0, 50000);
+      } catch (e: any) {
+        return `[Failed to read file: ${e?.message ?? "unknown"}]`;
+      }
+    }
+
+    if (fmt === "pdf") {
+      return extractPdfText(filePath);
+    }
+
+    // For images, audio, video — return empty (simulated later)
     return "";
+  } catch (e: any) {
+    return `[Extraction error: ${e?.message ?? "unknown"}]`;
   }
-  const filePath = path.join(UPLOADS_DIR, storedUri.slice(8));
-  if (!fs.existsSync(filePath)) return "";
-
-  const fmt = fileFormat.toLowerCase();
-
-  if (["txt", "csv", "json", "md", "log", "xml", "html"].includes(fmt)) {
-    return fs.readFileSync(filePath, "utf-8").slice(0, 50000);
-  }
-
-  if (fmt === "pdf") {
-    return extractPdfText(filePath);
-  }
-
-  // For images, audio, video — return empty (simulated later)
-  return "";
 }
 
 // ─── Doc Type Detection ──────────────────────────────────────────────────────
@@ -172,8 +204,17 @@ function findAll(text: string, patterns: RegExp[]): string[] {
 }
 
 export function extractFieldsFromText(text: string, docType: string): Record<string, ExtractedField> {
+  try {
+    return _extractFieldsFromText(text, docType);
+  } catch {
+    return {};
+  }
+}
+
+function _extractFieldsFromText(text: string, docType: string): Record<string, ExtractedField> {
   const fields: Record<string, ExtractedField> = {};
-  if (!text) return fields;
+  // Skip extraction if text is an error message (starts with "[") or too short
+  if (!text || text.startsWith("[") || text.length < 20) return fields;
 
   // Dates
   const datePatterns = [
@@ -268,35 +309,44 @@ export function extractFieldsFromText(text: string, docType: string): Record<str
 // ─── Entity Extraction ───────────────────────────────────────────────────────
 
 export function extractEntitiesFromText(text: string, extractedFields: Record<string, ExtractedField>): Array<{ entity: string; value: string; confidence: number; evidence_pointer?: string }> {
+  if (!text) return [];
   const entities: Array<{ entity: string; value: string; confidence: number; evidence_pointer?: string }> = [];
 
-  const orgKeywords = [
-    "Limited", "Ltd", "Inc", "LLC", "Corp", "PLC", "Company", "Co.", "Group",
-    "Association", "Foundation", "Bank", "Services", "Solutions", "Technologies", "Institute",
-  ];
-  const orgPattern = new RegExp(`([A-Z][A-Za-z\\s]{1,40}(?:${orgKeywords.join("|")})(?:\\.)?(?:\\s+[A-Z][A-Za-z]{1,20})?)[\\s,]`, "g");
-  const orgMatches = [...text.matchAll(orgPattern)].slice(0, 5);
-  for (const m of orgMatches) {
-    const v = m[1].trim();
-    if (v.length > 3 && v.length < 80) {
-      entities.push({ entity: "ORGANIZATION", value: v, confidence: 0.75 });
+  try {
+    const orgKeywords = [
+      "Limited", "Ltd", "Inc", "LLC", "Corp", "PLC", "Company", "Co.", "Group",
+      "Association", "Foundation", "Bank", "Services", "Solutions", "Technologies", "Institute",
+    ];
+    const orgPattern = new RegExp(`([A-Z][A-Za-z\\s]{1,40}(?:${orgKeywords.join("|")})(?:\\.)?(?:\\s+[A-Z][A-Za-z]{1,20})?)[\\s,]`, "g");
+    // Slice text to prevent regex backtracking on very large inputs
+    const safeText = text.slice(0, 20000);
+    const orgMatches = [...safeText.matchAll(orgPattern)].slice(0, 5);
+    for (const m of orgMatches) {
+      const v = (m[1] ?? "").trim();
+      if (v.length > 3 && v.length < 80) {
+        entities.push({ entity: "ORGANIZATION", value: v, confidence: 0.75 });
+      }
     }
-  }
+  } catch { /* regex error on malformed input — skip */ }
 
-  // Monetary values
-  const moneyMatches = [...text.matchAll(/(?:[\$£€GH₦])\s*([\d,]+(?:\.\d{2})?)/g)].slice(0, 4);
-  for (const m of moneyMatches) {
-    entities.push({ entity: "MONEY", value: m[0].trim(), confidence: 0.85 });
-  }
+  try {
+    // Monetary values
+    const moneyMatches = [...text.slice(0, 20000).matchAll(/(?:[\$£€GH₦])\s*([\d,]+(?:\.\d{2})?)/g)].slice(0, 4);
+    for (const m of moneyMatches) {
+      entities.push({ entity: "MONEY", value: m[0].trim(), confidence: 0.85 });
+    }
+  } catch { /* skip */ }
 
-  // Dates
-  const dateMatches = [...text.matchAll(/\b\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4}\b/g)].slice(0, 3);
-  for (const m of dateMatches) {
-    entities.push({ entity: "DATE", value: m[0], confidence: 0.80 });
-  }
+  try {
+    // Dates
+    const dateMatches = [...text.slice(0, 20000).matchAll(/\b\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4}\b/g)].slice(0, 3);
+    for (const m of dateMatches) {
+      entities.push({ entity: "DATE", value: m[0], confidence: 0.80 });
+    }
+  } catch { /* skip */ }
 
-  // Emails
-  if (extractedFields.email) {
+  // Emails from already-extracted fields
+  if (extractedFields?.email?.value) {
     entities.push({ entity: "EMAIL", value: extractedFields.email.value, confidence: 0.95 });
   }
 

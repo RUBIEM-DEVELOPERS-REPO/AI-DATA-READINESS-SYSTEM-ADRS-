@@ -210,7 +210,13 @@ export async function registerRoutes(httpServer: any, app: Express): Promise<any
 
       // 6. Normalize + dedup (reuse existing pipeline)
       const plainFields: Record<string, string> = {};
-      for (const [k, v] of Object.entries(extractedFields)) plainFields[k] = v.value;
+      for (const [k, v] of Object.entries(extractedFields)) {
+        if (v && typeof v === "object" && "value" in v && v.value != null) {
+          plainFields[k] = String(v.value);
+        } else if (typeof v === "string" && v) {
+          plainFields[k] = v;
+        }
+      }
 
       const rawAttrs = normalizeExtractedFields(plainFields, extractedEntities.map(e => ({ entity: e.entity, value: e.value, confidence: e.confidence })));
       const { deduped: dedupedAttrs, conflictKeys } = dedupAttributes(rawAttrs);
