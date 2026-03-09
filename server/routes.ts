@@ -12,6 +12,7 @@ import { buildArtifactContents, buildArtifactUris, checkPublishTrustThreshold, g
 import { inferParties, inferDocument } from "./services/party-inference";
 import { ADRS_CONFIG } from "./config";
 import { uploadMiddleware, computeFileHash, getMimeType, detectCloudSource, downloadFile, UPLOADS_DIR } from "./upload";
+import { extractTextFromFile, detectDocType, extractFieldsFromText, extractEntitiesFromText, computeExtractionScores, simulateTranscript } from "./services/extraction";
 
 function generateCode(prefix: string): string {
   const year = new Date().getFullYear();
@@ -174,6 +175,123 @@ export async function registerRoutes(httpServer: any, app: Express): Promise<any
     const f = await storage.updateEvidenceFile(req.params.id, req.body);
     if (!f) return res.status(404).json({ error: "Not found" });
     res.json(f);
+  });
+
+  // ─── One-click file extraction ──────────────────────────────────────────────
+  app.post("/api/evidence/:id/extract", async (req: any, res: any) => {
+    const evidenceFile = await storage.getEvidenceFile(req.params.id);
+    if (!evidenceFile) return res.status(404).json({ error: "Evidence file not found" });
+
+    try {
+      // 1. Update status to PROCESSING
+      await storage.updateEvidenceFile(evidenceFile.id, { status: "PROCESSING" } as any);
+
+      const isAV = ["AUDIO", "VIDEO"].includes(evidenceFile.mediaType ?? "DOCUMENT");
+      const startTime = Date.now();
+
+      // 2. Extract text from file
+      let rawText = "";
+      if (isAV) {
+        rawText = simulateTranscript(evidenceFile.fileName, evidenceFile.durationSeconds ?? undefined);
+      } else {
+        rawText = await extractTextFromFile(evidenceFile.storedUri, evidenceFile.fileFormat);
+      }
+
+      // 3. Detect doc type
+      const { docType, confidence: docTypeConfidence } = detectDocType(rawText, evidenceFile.fileFormat, evidenceFile.mediaType ?? "DOCUMENT");
+
+      // 4. Extract fields & entities
+      const extractedFields = extractFieldsFromText(rawText, docType);
+      const extractedEntities = extractEntitiesFromText(rawText, extractedFields);
+      const fieldCount = Object.keys(extractedFields).length;
+
+      // 5. Compute scores
+      const scores = computeExtractionScores(rawText, fieldCount, docType, evidenceFile.mediaType ?? "DOCUMENT");
+
+      // 6. Normalize + dedup (reuse existing pipeline)
+      const plainFields: Record<string, string> = {};
+      for (const [k, v] of Object.entries(extractedFields)) plainFields[k] = v.value;
+
+      const rawAttrs = normalizeExtractedFields(plainFields, extractedEntities.map(e => ({ entity: e.entity, value: e.value, confidence: e.confidence })));
+      const { deduped: dedupedAttrs, conflictKeys } = dedupAttributes(rawAttrs);
+      const qgResult = runQualityGates(docType, dedupedAttrs, scores.ocrConfidence);
+      const trustScore = computeTrustScore(scores.ocrConfidence, scores.extractionConfidence, qgResult.completenessScore, scores.consistencyScore, scores.docQualityScore);
+
+      // 7. Build the extraction run payload
+      const runPayload = {
+        evidenceId: evidenceFile.id,
+        docType,
+        docTypeConfidence,
+        ocrConfidence: scores.ocrConfidence,
+        extractionConfidence: scores.extractionConfidence,
+        completenessScore: qgResult.completenessScore,
+        consistencyScore: scores.consistencyScore,
+        docQualityScore: scores.docQualityScore,
+        trustScore,
+        trustScoreBreakdown: { ocr: scores.ocrConfidence, extraction: scores.extractionConfidence, completeness: qgResult.completenessScore, consistency: scores.consistencyScore, doc_quality: scores.docQualityScore },
+        extractedFields: plainFields,
+        extractedEntities,
+        extractedAttributes: dedupedAttrs,
+        qualityGatesPassed: qgResult.passed,
+        qualityGatesReport: qgResult,
+        rawText: rawText || null,
+        modelVersion: "adrs-v1.0",
+        processingTimeMs: Date.now() - startTime,
+      };
+
+      const parse = insertExtractionRunSchema.safeParse(runPayload);
+      if (!parse.success) {
+        await storage.updateEvidenceFile(evidenceFile.id, { status: "FAILED" } as any);
+        return res.status(400).json({ error: parse.error });
+      }
+
+      const run = await storage.createExtractionRun(parse.data);
+
+      // 8. Store text
+      if (rawText) {
+        const etxt = await storage.createExtractionText({ evidenceId: run.evidenceId, extractionRunId: run.id, text: rawText, charCount: rawText.length });
+        await storage.updateExtractionRun(run.id, { extractionTextId: etxt.id } as any);
+      }
+
+      // 9. Audit + field events
+      await storage.createAuditLog({ action: "EXTRACTION_RUN_CREATED", resourceType: "EXTRACTION", resourceId: run.id, userId: req.body.operatorId || "system", details: { doc_type: docType, trust_score: trustScore, field_count: fieldCount, method: "auto_extract" }, tenantId: "TENANT-001" });
+      for (const attr of dedupedAttrs) {
+        await storage.createAuditLog({ action: attr.validation_state === "AUTO_APPROVED" ? "APPROVE_FIELD" : "REVIEW_FIELD", resourceType: "ATTRIBUTE", resourceId: run.id, userId: "system", details: { field_key: attr.field_key, policy_rule: attr.approval_policy_rule ?? "PASSED", confidence: attr.confidence_score }, tenantId: "TENANT-001" });
+      }
+
+      // 10. Auto-create validation tasks
+      if (ADRS_CONFIG.features.auto_validation_task_on_conflict && conflictKeys.length > 0) {
+        await storage.createValidationTask({ taskCode: generateCode("VAL"), extractionRunId: run.id, evidenceId: run.evidenceId, status: "PENDING_VALIDATION", fieldsToValidate: conflictKeys.map(k => k.split(":").slice(1).join(":")), trustScore, approvalStage: 1, maxApprovalStages: 1, approvalPolicyRule: "CONFLICT", approvalPolicyReason: `${conflictKeys.length} field(s) conflict.`, weakFields: conflictKeys });
+      }
+      if (ADRS_CONFIG.features.auto_validation_task_on_low_trust && trustScore < ADRS_CONFIG.thresholds.auto_validation_task) {
+        const pendingFields = dedupedAttrs.filter(a => a.validation_state === "PENDING").map(a => a.field_key);
+        await storage.createValidationTask({ taskCode: generateCode("VAL"), extractionRunId: run.id, evidenceId: run.evidenceId, status: "PENDING_VALIDATION", fieldsToValidate: pendingFields, trustScore, approvalStage: 1, maxApprovalStages: 1, approvalPolicyRule: "LOW_TRUST", approvalPolicyReason: `Trust score ${(trustScore * 100).toFixed(0)}% below threshold.` });
+      }
+
+      // 11. Party inference
+      if (ADRS_CONFIG.features.auto_party_creation) {
+        const inferredParties = inferParties(dedupedAttrs, run.evidenceId, docType, run.id);
+        const inferredDoc = inferDocument(dedupedAttrs, run.evidenceId, docType, run.id);
+        let docEntityCode: string | null = null;
+        if (inferredDoc) {
+          const docEntity = await storage.createCdmEntity(inferredDoc.entity);
+          docEntityCode = docEntity.entityCode;
+        }
+        for (const inf of inferredParties) {
+          if (docEntityCode) inf.entity.relationships = [{ target_entity_id: docEntityCode, relationship_type: "MENTIONED_IN", confidence: inf.entity.confidenceScore }];
+          const party = await storage.createCdmEntity(inf.entity);
+          await storage.createAuditLog({ action: "AUTO_PARTY_INFERRED", resourceType: "CDM", resourceId: party.entityCode, userId: "system", details: { display_name: party.displayName, evidence_id: run.evidenceId }, tenantId: "TENANT-001" });
+        }
+      }
+
+      // 12. Update evidence status to PROCESSED
+      await storage.updateEvidenceFile(evidenceFile.id, { status: "PROCESSED" } as any);
+
+      res.json({ run, trustScore, docType, fieldCount });
+    } catch (e: any) {
+      await storage.updateEvidenceFile(evidenceFile.id, { status: "FAILED" } as any).catch(() => {});
+      res.status(500).json({ error: e?.message ?? "Extraction failed" });
+    }
   });
 
   // ─── Extractions (include_text=true strips rawText by default) ─────────────

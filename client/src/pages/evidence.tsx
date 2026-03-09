@@ -71,12 +71,29 @@ const mediaTypeConfig: Record<string, { Icon: React.ComponentType<{ className?: 
 };
 
 function EvidenceCard({ file }: { file: EvidenceFile }) {
+  const { toast } = useToast();
   const derivedMediaType = (file.mediaType as string) ?? getMediaType(file.fileFormat);
   const mediaConfig = mediaTypeConfig[derivedMediaType] ?? mediaTypeConfig.DOCUMENT;
   const MediaIcon = mediaConfig.Icon;
   const Icon = sourceIcons[file.sourceType] ?? FileText;
   const sizeMb = (file.fileSizeBytes / 1024 / 1024).toFixed(2);
   const isAV = derivedMediaType === "AUDIO" || derivedMediaType === "VIDEO";
+
+  const extractMutation = useMutation({
+    mutationFn: () => apiRequest("POST", `/api/evidence/${file.id}/extract`, {}),
+    onSuccess: (data: any) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/evidence"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/extractions"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/dashboard/stats"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/validation"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/cdm"] });
+      toast({
+        title: "Extraction complete",
+        description: `${data.docType?.replace(/_/g, " ")} · Trust ${Math.round((data.trustScore ?? 0) * 100)}% · ${data.fieldCount ?? 0} fields extracted`,
+      });
+    },
+    onError: (e: any) => toast({ title: "Extraction failed", description: e?.message ?? "Could not process this file.", variant: "destructive" }),
+  });
 
   return (
     <Card data-testid={`card-evidence-${file.id}`} className="flex flex-col">
@@ -128,26 +145,42 @@ function EvidenceCard({ file }: { file: EvidenceFile }) {
           </div>
         </div>
 
-        <div className="flex items-center gap-2 pt-1 border-t border-border">
+        <div className="flex items-center gap-1.5 pt-1 border-t border-border flex-wrap">
           <Badge variant="outline" className="text-xs">{file.sourceType}</Badge>
           <Badge variant="outline" className="text-xs">{file.fileFormat.toUpperCase()}</Badge>
+          <span className="ml-auto text-xs text-muted-foreground flex items-center gap-1">
+            <Clock className="w-3 h-3" />
+            {formatDistanceToNow(new Date(file.createdAt), { addSuffix: true })}
+          </span>
+        </div>
+        <div className="flex items-center gap-2">
           {file.storedUri?.startsWith("local://") && (
             <a
               href={`/api/evidence/${file.id}/file`}
               target="_blank"
               rel="noopener noreferrer"
-              className="ml-auto"
               data-testid={`link-view-file-${file.id}`}
             >
-              <Button variant="ghost" size="sm" className="h-6 px-2 text-xs gap-1">
+              <Button variant="ghost" size="sm" className="h-7 px-2 text-xs gap-1">
                 <Eye className="w-3 h-3" /> View
               </Button>
             </a>
           )}
-          <span className={`${file.storedUri?.startsWith("local://") ? "" : "ml-auto"} text-xs text-muted-foreground flex items-center gap-1`}>
-            <Clock className="w-3 h-3" />
-            {formatDistanceToNow(new Date(file.createdAt), { addSuffix: true })}
-          </span>
+          <Button
+            size="sm"
+            variant={file.status === "PROCESSED" ? "outline" : "default"}
+            className="h-7 text-xs gap-1 ml-auto"
+            disabled={extractMutation.isPending || file.status === "PROCESSING"}
+            onClick={() => extractMutation.mutate()}
+            data-testid={`button-extract-${file.id}`}
+          >
+            {extractMutation.isPending || file.status === "PROCESSING"
+              ? <><RefreshCw className="w-3 h-3 animate-spin" /> Extracting...</>
+              : file.status === "PROCESSED"
+                ? <><RefreshCw className="w-3 h-3" /> Re-extract</>
+                : <><AlertCircle className="w-3 h-3" /> Run Extraction</>
+            }
+          </Button>
         </div>
       </CardContent>
     </Card>
