@@ -4,13 +4,15 @@ import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { ExtractionRun, EvidenceFile, NormalizedAttribute } from "@shared/schema";
-import { Brain, TrendingUp, Eye, Tag, Zap, Activity, CheckCircle2, AlertTriangle, Shield, ChevronRight } from "lucide-react";
+import { Brain, TrendingUp, Eye, Tag, Zap, Activity, CheckCircle2, AlertTriangle, Shield, ChevronRight, Mic, Video, Clock } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { useState } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
+
+const AV_DOC_TYPES = ["AUDIO_RECORDING", "VIDEO_RECORDING", "INTERVIEW", "MEETING_RECORDING"];
 
 const docTypeColors: Record<string, string> = {
   INVOICE: "bg-chart-1/15 text-chart-1 border-chart-1/30",
@@ -21,6 +23,10 @@ const docTypeColors: Record<string, string> = {
   FINANCIAL: "bg-primary/15 text-primary border-primary/30",
   CORRESPONDENCE: "bg-muted text-muted-foreground border-border",
   OTHER: "bg-muted text-muted-foreground border-border",
+  AUDIO_RECORDING: "bg-chart-5/15 text-chart-5 border-chart-5/30",
+  VIDEO_RECORDING: "bg-chart-2/15 text-chart-2 border-chart-2/30",
+  INTERVIEW: "bg-chart-4/15 text-chart-4 border-chart-4/30",
+  MEETING_RECORDING: "bg-chart-3/15 text-chart-3 border-chart-3/30",
 };
 
 function ScoreBar({ label, value, color }: { label: string; value: number; color: string }) {
@@ -100,6 +106,14 @@ function NormalizedAttributeRow({ attr }: { attr: NormalizedAttribute }) {
   );
 }
 
+interface TranscriptSegment {
+  start: number;
+  end: number;
+  speaker: string;
+  text: string;
+  confidence: number;
+}
+
 function ExtractionDetail({ run, evidenceFileName }: { run: ExtractionRun; evidenceFileName: string }) {
   const entities = (run.extractedEntities as ExtractedEntity[] | null) ?? [];
   const tables = (run.extractedTables as ExtractedTable[] | null) ?? [];
@@ -107,27 +121,35 @@ function ExtractionDetail({ run, evidenceFileName }: { run: ExtractionRun; evide
   const attrs = (run.extractedAttributes as NormalizedAttribute[] | null) ?? [];
   const qgReport = run.qualityGatesReport as any;
   const trustBreakdown = run.trustScoreBreakdown as Record<string, number> | null;
+  const isAV = AV_DOC_TYPES.includes(run.docType);
+  const transcript = (fields.transcript_segments as TranscriptSegment[] | undefined) ?? [];
 
   const pendingAttrs = attrs.filter(a => a.validation_state === "PENDING").length;
   const approvedAttrs = attrs.filter(a => a.validation_state === "AUTO_APPROVED" || a.validation_state === "APPROVED").length;
 
+  function formatTime(secs: number): string {
+    const m = Math.floor(secs / 60);
+    const s = Math.floor(secs % 60);
+    return `${m}:${String(s).padStart(2, "0")}`;
+  }
+
   return (
     <Tabs defaultValue="overview" className="w-full">
-      <TabsList className="w-full grid grid-cols-5 h-9">
+      <TabsList className={`w-full grid h-9 ${isAV ? "grid-cols-5" : "grid-cols-5"}`}>
         <TabsTrigger value="overview" className="text-xs">Overview</TabsTrigger>
         <TabsTrigger value="normalized" className="text-xs">
           Normalized {pendingAttrs > 0 && <span className="ml-1 px-1.5 rounded-full text-xs bg-chart-5/20 text-chart-5">{pendingAttrs}</span>}
         </TabsTrigger>
-        <TabsTrigger value="entities" className="text-xs">Entities ({entities.length})</TabsTrigger>
-        <TabsTrigger value="tables" className="text-xs">Tables ({tables.length})</TabsTrigger>
-        <TabsTrigger value="text" className="text-xs">Raw Text</TabsTrigger>
+        <TabsTrigger value="entities" className="text-xs">{isAV ? "Speakers" : `Entities (${entities.length})`}</TabsTrigger>
+        <TabsTrigger value="tables" className="text-xs">{isAV ? "Transcript" : `Tables (${tables.length})`}</TabsTrigger>
+        <TabsTrigger value="text" className="text-xs">{isAV ? "Raw Text" : "Raw Text"}</TabsTrigger>
       </TabsList>
 
       <TabsContent value="overview" className="space-y-4 mt-4">
         <div className="grid grid-cols-2 gap-4">
           <div className="space-y-3">
             <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Trust Score Breakdown</h4>
-            <ScoreBar label="OCR Confidence (×0.35)" value={run.ocrConfidence} color="text-chart-1" />
+            <ScoreBar label={isAV ? "Transcription Conf. (×0.35)" : "OCR Confidence (×0.35)"} value={run.ocrConfidence} color="text-chart-1" />
             <ScoreBar label="Extraction (×0.25)" value={run.extractionConfidence} color="text-chart-2" />
             <ScoreBar label="Completeness (×0.15)" value={run.completenessScore} color="text-chart-3" />
             <ScoreBar label="Consistency (×0.15)" value={run.consistencyScore} color="text-chart-4" />
@@ -219,58 +241,109 @@ function ExtractionDetail({ run, evidenceFileName }: { run: ExtractionRun; evide
       <TabsContent value="entities" className="mt-4">
         <ScrollArea className="h-72">
           <div className="space-y-2 pr-2">
-            {entities.length === 0 ? (
-              <p className="text-sm text-muted-foreground text-center py-8">No entities extracted</p>
-            ) : entities.map((e, i) => (
-              <div key={i} className="flex items-center gap-3 p-2.5 rounded-md border border-border" data-testid={`entity-item-${i}`}>
-                <Tag className="w-3.5 h-3.5 text-chart-2 flex-shrink-0" />
-                <div className="flex-1 min-w-0">
-                  <p className="text-xs font-medium text-foreground">{e.entity}</p>
-                  <p className="text-xs text-muted-foreground truncate">{e.value}</p>
+            {isAV ? (
+              entities.length === 0 ? (
+                <p className="text-sm text-muted-foreground text-center py-8">No speaker data extracted</p>
+              ) : (
+                <>
+                  <div className="flex items-center gap-2 p-2 rounded-md bg-muted text-xs mb-3">
+                    <Mic className="w-3.5 h-3.5 text-chart-5" />
+                    <span className="text-muted-foreground">{entities.filter(e => e.entity === "Speaker").length} speaker(s) detected</span>
+                    {fields.language && <Badge variant="outline" className="text-xs ml-auto">{fields.language}</Badge>}
+                  </div>
+                  {entities.map((e, i) => (
+                    <div key={i} className="flex items-center gap-3 p-2.5 rounded-md border border-border" data-testid={`entity-item-${i}`}>
+                      <Mic className="w-3.5 h-3.5 text-chart-5 flex-shrink-0" />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-xs font-medium text-foreground">{e.entity}</p>
+                        <p className="text-xs text-muted-foreground">{e.value}</p>
+                        {e.evidence_pointer && <p className="text-xs text-muted-foreground/60 font-mono">{e.evidence_pointer}</p>}
+                      </div>
+                      <Badge variant="outline" className="text-xs flex-shrink-0">{Math.round(e.confidence * 100)}%</Badge>
+                    </div>
+                  ))}
+                </>
+              )
+            ) : (
+              entities.length === 0 ? (
+                <p className="text-sm text-muted-foreground text-center py-8">No entities extracted</p>
+              ) : entities.map((e, i) => (
+                <div key={i} className="flex items-center gap-3 p-2.5 rounded-md border border-border" data-testid={`entity-item-${i}`}>
+                  <Tag className="w-3.5 h-3.5 text-chart-2 flex-shrink-0" />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs font-medium text-foreground">{e.entity}</p>
+                    <p className="text-xs text-muted-foreground truncate">{e.value}</p>
+                  </div>
+                  <Badge variant="outline" className="text-xs flex-shrink-0">{Math.round(e.confidence * 100)}%</Badge>
                 </div>
-                <Badge variant="outline" className="text-xs flex-shrink-0">
-                  {Math.round(e.confidence * 100)}%
-                </Badge>
-              </div>
-            ))}
+              ))
+            )}
           </div>
         </ScrollArea>
       </TabsContent>
 
       <TabsContent value="tables" className="mt-4">
         <ScrollArea className="h-72">
-          <div className="space-y-4 pr-2">
-            {tables.length === 0 ? (
-              <p className="text-sm text-muted-foreground text-center py-8">No tables extracted</p>
-            ) : tables.map((t, i) => (
-              <div key={i} className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-medium text-foreground">{t.table_id}</span>
-                  <Badge variant="outline" className="text-xs">{Math.round(t.confidence * 100)}% confidence</Badge>
-                </div>
-                <div className="overflow-x-auto rounded border border-border">
-                  <table className="w-full text-xs">
-                    <thead className="bg-muted">
-                      <tr>
-                        {(t.rows[0] ?? []).map((cell, ci) => (
-                          <th key={ci} className="px-2 py-1.5 text-left font-semibold text-foreground border-b border-border">{cell}</th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {t.rows.slice(1).map((row, ri) => (
-                        <tr key={ri} className="border-b border-border last:border-0">
-                          {row.map((cell, ci) => (
-                            <td key={ci} className="px-2 py-1.5 text-muted-foreground">{cell}</td>
+          {isAV ? (
+            <div className="space-y-2 pr-2">
+              {transcript.length === 0 ? (
+                <p className="text-sm text-muted-foreground text-center py-8">No transcript segments available</p>
+              ) : (
+                <>
+                  <div className="flex items-center gap-2 p-2 rounded-md bg-muted text-xs mb-3">
+                    <Clock className="w-3 h-3 text-muted-foreground" />
+                    <span className="text-muted-foreground">{transcript.length} segments</span>
+                    {fields.speaker_count && <span className="text-muted-foreground">· {fields.speaker_count} speakers</span>}
+                  </div>
+                  {transcript.map((seg, i) => (
+                    <div key={i} className="flex gap-3 p-2.5 rounded-md border border-border">
+                      <div className="flex-shrink-0 text-xs text-muted-foreground font-mono pt-0.5 w-14">
+                        {formatTime(seg.start)}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-xs font-semibold text-chart-4 mb-0.5">{seg.speaker}</p>
+                        <p className="text-xs text-foreground">{seg.text}</p>
+                      </div>
+                      <Badge variant="outline" className="text-xs flex-shrink-0 self-start">{Math.round(seg.confidence * 100)}%</Badge>
+                    </div>
+                  ))}
+                </>
+              )}
+            </div>
+          ) : (
+            <div className="space-y-4 pr-2">
+              {tables.length === 0 ? (
+                <p className="text-sm text-muted-foreground text-center py-8">No tables extracted</p>
+              ) : tables.map((t, i) => (
+                <div key={i} className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-medium text-foreground">{t.table_id}</span>
+                    <Badge variant="outline" className="text-xs">{Math.round(t.confidence * 100)}% confidence</Badge>
+                  </div>
+                  <div className="overflow-x-auto rounded border border-border">
+                    <table className="w-full text-xs">
+                      <thead className="bg-muted">
+                        <tr>
+                          {(t.rows[0] ?? []).map((cell, ci) => (
+                            <th key={ci} className="px-2 py-1.5 text-left font-semibold text-foreground border-b border-border">{cell}</th>
                           ))}
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                      </thead>
+                      <tbody>
+                        {t.rows.slice(1).map((row, ri) => (
+                          <tr key={ri} className="border-b border-border last:border-0">
+                            {row.map((cell, ci) => (
+                              <td key={ci} className="px-2 py-1.5 text-muted-foreground">{cell}</td>
+                            ))}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          )}
         </ScrollArea>
       </TabsContent>
 
@@ -289,18 +362,23 @@ function RunCard({ run, evidence }: { run: ExtractionRun; evidence?: EvidenceFil
   const [open, setOpen] = useState(false);
   const trustPct = Math.round(run.trustScore * 100);
   const trustColor = trustPct >= 75 ? "text-chart-3" : trustPct >= 50 ? "text-chart-5" : "text-destructive";
+  const isAV = AV_DOC_TYPES.includes(run.docType);
+  const AVIcon = run.docType === "VIDEO_RECORDING" || run.docType === "MEETING_RECORDING" ? Video : Mic;
 
   return (
     <>
       <Card data-testid={`card-extraction-${run.id}`} className="flex flex-col">
         <CardContent className="p-4 space-y-3">
           <div className="flex items-start justify-between gap-2">
-            <div className="min-w-0">
-              <p className="text-sm font-medium text-foreground truncate">{evidence?.fileName ?? "Unknown file"}</p>
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-1.5 min-w-0">
+                {isAV && <AVIcon className={`w-3.5 h-3.5 flex-shrink-0 ${run.docType === "VIDEO_RECORDING" || run.docType === "MEETING_RECORDING" ? "text-chart-2" : "text-chart-5"}`} />}
+                <p className="text-sm font-medium text-foreground truncate">{evidence?.fileName ?? "Unknown file"}</p>
+              </div>
               <p className="text-xs text-muted-foreground font-mono">{evidence?.evidenceCode ?? run.evidenceId.slice(0, 8)}</p>
             </div>
             <Badge variant="outline" className={`text-xs flex-shrink-0 ${docTypeColors[run.docType]}`}>
-              {run.docType}
+              {run.docType.replace(/_/g, " ")}
             </Badge>
           </div>
 
@@ -315,7 +393,7 @@ function RunCard({ run, evidence }: { run: ExtractionRun; evidence?: EvidenceFil
           <div className="grid grid-cols-3 gap-2 text-center">
             <div className="p-1.5 rounded bg-muted">
               <p className="text-xs font-semibold text-foreground">{Math.round(run.ocrConfidence * 100)}%</p>
-              <p className="text-xs text-muted-foreground">OCR</p>
+              <p className="text-xs text-muted-foreground">{isAV ? "Transcript" : "OCR"}</p>
             </div>
             <div className="p-1.5 rounded bg-muted">
               <p className="text-xs font-semibold text-foreground">{Math.round(run.extractionConfidence * 100)}%</p>

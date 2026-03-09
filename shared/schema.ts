@@ -84,6 +84,10 @@ export const evidenceFiles = pgTable("evidence_files", {
   tenantId: text("tenant_id").notNull().default("TENANT-001"),
   uploadedBy: text("uploaded_by").notNull(),
   tags: text("tags").array(),
+  // A/V support
+  mediaType: mediaTypeEnum("media_type").default("DOCUMENT"),
+  durationSeconds: integer("duration_seconds"),
+  mediaMetadata: jsonb("media_metadata"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });

@@ -183,13 +183,21 @@ export function normalizeValue(
 }
 
 function inferSubjectType(key: string, defaultType: NormalizedAttribute["subject_type"]): NormalizedAttribute["subject_type"] {
-  if (["name", "email", "phone", "address", "national_id", "person_name", "signature_name", "org_name", "organization", "company", "vendor", "supplier"].some(k => key.includes(k))) {
+  if (["name", "email", "phone", "address", "national_id", "person_name", "signature_name", "org_name", "organization", "company", "vendor", "supplier",
+       "speaker", "interviewer", "interviewee", "chairperson", "presenter"].some(k => key.includes(k))) {
     return "PARTY";
   }
-  if (["document_date", "title", "report_title", "doc_type", "classification", "document_number", "permit_number"].some(k => key.includes(k))) {
+  if (["document_date", "title", "report_title", "doc_type", "classification", "document_number", "permit_number",
+       "topic", "agenda", "meeting_title", "interview_date", "meeting_date", "language", "duration"].some(k => key.includes(k))) {
     return "DOCUMENT";
   }
   if (["amount", "total", "payment", "price", "salary", "cost", "transaction"].some(k => key.includes(k))) {
+    return "OBJECT";
+  }
+  if (["timestamp", "start_time", "end_time", "segment", "transcript"].some(k => key.includes(k))) {
+    return "EVENT";
+  }
+  if (["audio_quality", "video_resolution", "frame_rate", "bitrate", "sample_rate", "channel_count", "codec", "speaker_count"].some(k => key.includes(k))) {
     return "OBJECT";
   }
   return defaultType;
@@ -204,6 +212,8 @@ export function normalizeExtractedFields(
 
   for (const [key, value] of Object.entries(fields)) {
     if (value == null || value === "") continue;
+    // Skip complex nested objects/arrays (e.g. transcript_segments) — not normalizable as scalar
+    if (typeof value === "object") continue;
     attrs.push(normalizeValue(key, String(value), 0.85, undefined, "DOCUMENT"));
   }
 

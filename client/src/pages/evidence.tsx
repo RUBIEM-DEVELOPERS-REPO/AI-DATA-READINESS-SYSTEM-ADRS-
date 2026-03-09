@@ -14,7 +14,7 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import type { EvidenceFile, Batch } from "@shared/schema";
 import {
-  FileText, Upload, Search, Filter, Lock, Hash, HardDrive, Clock, FolderOpen, Plus, Eye, RefreshCw, CheckCircle2, XCircle, AlertCircle
+  FileText, Upload, Search, Filter, Lock, Hash, HardDrive, Clock, FolderOpen, Plus, Eye, RefreshCw, CheckCircle2, XCircle, AlertCircle, Mic, Video, Timer
 } from "lucide-react";
 import { formatDistanceToNow, format } from "date-fns";
 import { useForm } from "react-hook-form";
@@ -27,6 +27,27 @@ const statusColors: Record<string, string> = {
   FAILED: "bg-destructive/15 text-destructive border-destructive/30",
 };
 
+const AUDIO_FORMATS = ["mp3", "wav", "aac", "flac", "ogg", "m4a"];
+const VIDEO_FORMATS = ["mp4", "mov", "webm", "avi", "mkv", "m4v"];
+const IMAGE_FORMATS = ["png", "jpeg", "jpg", "tiff", "bmp", "gif"];
+
+function getMediaType(fmt: string): "AUDIO" | "VIDEO" | "IMAGE" | "DOCUMENT" {
+  const f = fmt.toLowerCase();
+  if (AUDIO_FORMATS.includes(f)) return "AUDIO";
+  if (VIDEO_FORMATS.includes(f)) return "VIDEO";
+  if (IMAGE_FORMATS.includes(f)) return "IMAGE";
+  return "DOCUMENT";
+}
+
+function formatDuration(secs: number): string {
+  const h = Math.floor(secs / 3600);
+  const m = Math.floor((secs % 3600) / 60);
+  const s = secs % 60;
+  if (h > 0) return `${h}h ${m}m`;
+  if (m > 0) return `${m}m ${s}s`;
+  return `${s}s`;
+}
+
 const sourceIcons: Record<string, React.ComponentType<{ className?: string }>> = {
   SCAN: FileText,
   SHAREPOINT: HardDrive,
@@ -35,19 +56,32 @@ const sourceIcons: Record<string, React.ComponentType<{ className?: string }>> =
   FTP: HardDrive,
   ERP: HardDrive,
   DATABASE: HardDrive,
+  RECORDING: Mic,
+  DEVICE: Video,
+};
+
+const mediaTypeConfig: Record<string, { Icon: React.ComponentType<{ className?: string }>; label: string; color: string }> = {
+  AUDIO: { Icon: Mic, label: "Audio", color: "text-chart-5" },
+  VIDEO: { Icon: Video, label: "Video", color: "text-chart-2" },
+  IMAGE: { Icon: FileText, label: "Image", color: "text-chart-1" },
+  DOCUMENT: { Icon: FileText, label: "Document", color: "text-muted-foreground" },
 };
 
 function EvidenceCard({ file }: { file: EvidenceFile }) {
+  const derivedMediaType = (file.mediaType as string) ?? getMediaType(file.fileFormat);
+  const mediaConfig = mediaTypeConfig[derivedMediaType] ?? mediaTypeConfig.DOCUMENT;
+  const MediaIcon = mediaConfig.Icon;
   const Icon = sourceIcons[file.sourceType] ?? FileText;
   const sizeMb = (file.fileSizeBytes / 1024 / 1024).toFixed(2);
+  const isAV = derivedMediaType === "AUDIO" || derivedMediaType === "VIDEO";
 
   return (
     <Card data-testid={`card-evidence-${file.id}`} className="flex flex-col">
       <CardContent className="p-4 flex flex-col gap-3 h-full">
         <div className="flex items-start justify-between gap-2">
           <div className="flex items-center gap-2 min-w-0">
-            <div className="w-8 h-8 rounded bg-muted flex items-center justify-center flex-shrink-0">
-              <Icon className="w-4 h-4 text-muted-foreground" />
+            <div className={`w-8 h-8 rounded flex items-center justify-center flex-shrink-0 ${isAV ? "bg-chart-2/10" : "bg-muted"}`}>
+              <MediaIcon className={`w-4 h-4 ${mediaConfig.color}`} />
             </div>
             <div className="min-w-0">
               <p className="text-sm font-medium text-foreground truncate">{file.fileName}</p>
@@ -59,6 +93,19 @@ function EvidenceCard({ file }: { file: EvidenceFile }) {
           </Badge>
         </div>
 
+        {isAV && (
+          <div className="flex items-center gap-2 flex-wrap">
+            <Badge variant="outline" className={`text-xs gap-1 ${derivedMediaType === "AUDIO" ? "border-chart-5/40 text-chart-5" : "border-chart-2/40 text-chart-2"}`}>
+              <MediaIcon className="w-2.5 h-2.5" />{mediaConfig.label}
+            </Badge>
+            {file.durationSeconds != null && (
+              <Badge variant="outline" className="text-xs gap-1 border-muted-foreground/30">
+                <Timer className="w-2.5 h-2.5" />{formatDuration(file.durationSeconds)}
+              </Badge>
+            )}
+          </div>
+        )}
+
         <div className="grid grid-cols-2 gap-2 text-xs">
           <div className="flex items-center gap-1.5 text-muted-foreground">
             <Hash className="w-3 h-3 flex-shrink-0" />
@@ -69,8 +116,8 @@ function EvidenceCard({ file }: { file: EvidenceFile }) {
             <span>{sizeMb} MB</span>
           </div>
           <div className="flex items-center gap-1.5 text-muted-foreground">
-            <FileText className="w-3 h-3 flex-shrink-0" />
-            <span>{file.pageCount} page{file.pageCount !== 1 ? "s" : ""}</span>
+            {isAV ? <Timer className="w-3 h-3 flex-shrink-0" /> : <FileText className="w-3 h-3 flex-shrink-0" />}
+            <span>{isAV ? (file.durationSeconds != null ? formatDuration(file.durationSeconds) : "—") : `${file.pageCount} page${file.pageCount !== 1 ? "s" : ""}`}</span>
           </div>
           <div className="flex items-center gap-1.5 text-muted-foreground">
             <Lock className="w-3 h-3 flex-shrink-0 text-chart-3" />
@@ -160,6 +207,11 @@ function NewBatchDialog() {
   );
 }
 
+const DOC_FORMATS = ["pdf", "docx", "xlsx", "txt", "csv"];
+const IMG_FORMATS = ["png", "tiff", "jpeg", "jpg", "bmp"];
+const AUD_FORMATS = ["mp3", "wav", "aac", "flac", "ogg", "m4a"];
+const VID_FORMATS = ["mp4", "mov", "webm", "avi", "mkv", "m4v"];
+
 function IngestFileDialog() {
   const { toast } = useToast();
   const [open, setOpen] = useState(false);
@@ -167,9 +219,13 @@ function IngestFileDialog() {
   const form = useForm({
     defaultValues: {
       fileName: "", fileFormat: "pdf", fileSizeBytes: "1024000", pageCount: "1",
-      sourceType: "SCAN", batchId: "", uploadedBy: "operator_001", sourceReference: ""
+      sourceType: "SCAN", batchId: "", uploadedBy: "operator_001", sourceReference: "",
+      durationSeconds: ""
     }
   });
+
+  const watchedFormat = form.watch("fileFormat");
+  const isAVForm = [...AUD_FORMATS, ...VID_FORMATS].includes(watchedFormat);
 
   const mutation = useMutation({
     mutationFn: (data: any) => apiRequest("POST", "/api/evidence", data),
@@ -195,16 +251,21 @@ function IngestFileDialog() {
           <DialogTitle>Ingest Evidence File</DialogTitle>
         </DialogHeader>
         <Form {...form}>
-          <form onSubmit={form.handleSubmit((d) => mutation.mutate({
-            ...d,
-            fileSizeBytes: parseInt(d.fileSizeBytes),
-            pageCount: parseInt(d.pageCount),
-            batchId: d.batchId || undefined,
-          }))} className="space-y-3">
+          <form onSubmit={form.handleSubmit((d) => {
+            const mediaType = getMediaType(d.fileFormat);
+            mutation.mutate({
+              ...d,
+              fileSizeBytes: parseInt(d.fileSizeBytes),
+              pageCount: parseInt(d.pageCount),
+              batchId: d.batchId || undefined,
+              mediaType,
+              durationSeconds: d.durationSeconds ? parseInt(d.durationSeconds) : undefined,
+            });
+          })} className="space-y-3">
             <FormField name="fileName" control={form.control} render={({ field }) => (
               <FormItem>
                 <FormLabel>File Name</FormLabel>
-                <FormControl><Input {...field} placeholder="invoice_2024_001.pdf" data-testid="input-file-name" /></FormControl>
+                <FormControl><Input {...field} placeholder="interview_2025_q4.mp3" data-testid="input-file-name" /></FormControl>
               </FormItem>
             )} />
             <div className="grid grid-cols-2 gap-3">
@@ -214,7 +275,14 @@ function IngestFileDialog() {
                   <Select onValueChange={field.onChange} defaultValue={field.value}>
                     <FormControl><SelectTrigger data-testid="select-file-format"><SelectValue /></SelectTrigger></FormControl>
                     <SelectContent>
-                      {["pdf", "png", "tiff", "jpeg", "docx", "xlsx"].map(f => <SelectItem key={f} value={f}>{f.toUpperCase()}</SelectItem>)}
+                      <div className="px-2 py-1 text-xs text-muted-foreground font-medium">Documents</div>
+                      {DOC_FORMATS.map(f => <SelectItem key={f} value={f}>{f.toUpperCase()}</SelectItem>)}
+                      <div className="px-2 py-1 text-xs text-muted-foreground font-medium border-t border-border mt-1 pt-1">Images</div>
+                      {IMG_FORMATS.map(f => <SelectItem key={f} value={f}>{f.toUpperCase()}</SelectItem>)}
+                      <div className="px-2 py-1 text-xs text-muted-foreground font-medium border-t border-border mt-1 pt-1 flex items-center gap-1"><Mic className="w-3 h-3" />Audio</div>
+                      {AUD_FORMATS.map(f => <SelectItem key={f} value={f}>{f.toUpperCase()}</SelectItem>)}
+                      <div className="px-2 py-1 text-xs text-muted-foreground font-medium border-t border-border mt-1 pt-1 flex items-center gap-1"><Video className="w-3 h-3" />Video</div>
+                      {VID_FORMATS.map(f => <SelectItem key={f} value={f}>{f.toUpperCase()}</SelectItem>)}
                     </SelectContent>
                   </Select>
                 </FormItem>
@@ -225,7 +293,9 @@ function IngestFileDialog() {
                   <Select onValueChange={field.onChange} defaultValue={field.value}>
                     <FormControl><SelectTrigger data-testid="select-source-type"><SelectValue /></SelectTrigger></FormControl>
                     <SelectContent>
-                      {["SCAN", "SHAREPOINT", "GOOGLE_DRIVE", "EMAIL", "FTP", "ERP", "DATABASE"].map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+                      {["SCAN", "SHAREPOINT", "GOOGLE_DRIVE", "EMAIL", "FTP", "ERP", "DATABASE", "RECORDING", "DEVICE"].map(s => (
+                        <SelectItem key={s} value={s}>{s}</SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
                 </FormItem>
@@ -238,13 +308,30 @@ function IngestFileDialog() {
                   <FormControl><Input {...field} type="number" data-testid="input-file-size" /></FormControl>
                 </FormItem>
               )} />
-              <FormField name="pageCount" control={form.control} render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Pages</FormLabel>
-                  <FormControl><Input {...field} type="number" min="1" data-testid="input-page-count" /></FormControl>
-                </FormItem>
-              )} />
+              {isAVForm ? (
+                <FormField name="durationSeconds" control={form.control} render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Duration (seconds)</FormLabel>
+                    <FormControl><Input {...field} type="number" min="1" placeholder="e.g. 2700" data-testid="input-duration" /></FormControl>
+                  </FormItem>
+                )} />
+              ) : (
+                <FormField name="pageCount" control={form.control} render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Pages</FormLabel>
+                    <FormControl><Input {...field} type="number" min="1" data-testid="input-page-count" /></FormControl>
+                  </FormItem>
+                )} />
+              )}
             </div>
+            {isAVForm && (
+              <div className="flex items-center gap-2 p-2.5 rounded-md bg-chart-2/5 border border-chart-2/20">
+                {AUD_FORMATS.includes(watchedFormat) ? <Mic className="w-3.5 h-3.5 text-chart-5 flex-shrink-0" /> : <Video className="w-3.5 h-3.5 text-chart-2 flex-shrink-0" />}
+                <p className="text-xs text-muted-foreground">
+                  {AUD_FORMATS.includes(watchedFormat) ? "Audio file — transcription pipeline will be used" : "Video file — transcription + frame extraction will be used"}
+                </p>
+              </div>
+            )}
             {batches && batches.length > 0 && (
               <FormField name="batchId" control={form.control} render={({ field }) => (
                 <FormItem>

@@ -2,7 +2,9 @@
 ## The AI Institute Africa
 
 ## Overview
-A comprehensive platform that transforms raw, unstructured evidence (PDFs, images, documents) into structured, high-quality datasets ready for supervised ML, Knowledge Graphs, and LLM/RAG pipelines. Implements a full pipeline: physical batch management → evidence ingestion → OCR/document intelligence → HITL trust validation → CDM mapping → multi-artifact dataset publishing.
+A comprehensive platform that transforms raw, unstructured evidence (PDFs, images, documents, audio recordings, and video recordings) into structured, high-quality datasets ready for supervised ML, Knowledge Graphs, and LLM/RAG pipelines. Implements a full pipeline: physical batch management → evidence ingestion → OCR/transcription/document intelligence → HITL trust validation → CDM mapping → multi-artifact dataset publishing.
+
+**Phase 3 (Audio/Video Support):** Evidence can now include audio (MP3, WAV, AAC, FLAC, OGG, M4A) and video (MP4, MOV, WEBM, AVI, MKV, M4V) files. New doc types: AUDIO_RECORDING, VIDEO_RECORDING, INTERVIEW, MEETING_RECORDING. New source types: RECORDING, DEVICE. Evidence cards show Audio/Video badges with duration. Intelligence page shows "Transcription" instead of "OCR" for A/V runs, with speaker labels and segmented transcript in the detail view.
 
 ## Architecture
 
