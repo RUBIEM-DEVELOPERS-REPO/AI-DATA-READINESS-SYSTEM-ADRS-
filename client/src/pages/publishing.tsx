@@ -186,6 +186,9 @@ function ArtifactCounts({ contents }: { contents: any }) {
 function DatasetCard({ dataset }: { dataset: PublishedDataset }) {
   const { toast } = useToast();
   const [showDetail, setShowDetail] = useState(false);
+  const [showOverride, setShowOverride] = useState(false);
+  const [overrideReason, setOverrideReason] = useState("");
+  const [trustBlockInfo, setTrustBlockInfo] = useState<{ blocked: boolean; avg_trust_score: number; threshold: number; reason: string } | null>(null);
   const qualityPct = Math.round(dataset.qualityScore * 100);
   const artifactUris = dataset.artifactUris as Record<string, string> | null;
   const artifactContents = dataset.artifactContents as any | null;
@@ -199,14 +202,42 @@ function DatasetCard({ dataset }: { dataset: PublishedDataset }) {
     rag_chunks: artifactContents?.rag_chunks?.length,
   };
 
+  const PUBLISH_THRESHOLD = 0.60;
+  const isBelowThreshold = dataset.qualityScore < PUBLISH_THRESHOLD;
+
   const publishMutation = useMutation({
-    mutationFn: () => apiRequest("POST", `/api/datasets/${dataset.id}/publish`, { publishedBy: "Wills" }).then(r => r.json()),
+    mutationFn: async (opts?: { override?: boolean; overrideReason?: string }) => {
+      const res = await fetch(`/api/datasets/${dataset.id}/publish`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          publishedBy: "Wills",
+          ...(opts?.override ? { override: true, overrideReason: opts.overrideReason } : {}),
+        }),
+        credentials: "include",
+      });
+      if (res.status === 422) {
+        const body = await res.json();
+        throw { blocked: true, ...body };
+      }
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.json();
+    },
     onSuccess: (data: any) => {
       queryClient.invalidateQueries({ queryKey: ["/api/datasets"] });
       queryClient.invalidateQueries({ queryKey: ["/api/dashboard/stats"] });
+      setTrustBlockInfo(null);
+      setShowOverride(false);
       toast({ title: "Dataset published", description: `Generated ${data.ml} ML rows, ${data.kg_entities} KG entities, ${data.rag_chunks} RAG chunks.` });
     },
-    onError: () => toast({ title: "Error", description: "Failed to publish dataset.", variant: "destructive" }),
+    onError: (err: any) => {
+      if (err?.blocked) {
+        setTrustBlockInfo(err);
+        setShowOverride(true);
+        return;
+      }
+      toast({ title: "Error", description: "Failed to publish dataset.", variant: "destructive" });
+    },
   });
 
   const archiveMutation = useMutation({
@@ -216,8 +247,69 @@ function DatasetCard({ dataset }: { dataset: PublishedDataset }) {
 
   return (
     <>
-      <Card data-testid={`card-dataset-${dataset.id}`} className={`flex flex-col ${dataset.status === "PUBLISHED" ? "border-chart-3/30" : ""}`}>
+      {/* Trust-block override dialog */}
+      <Dialog open={showOverride} onOpenChange={(v) => { setShowOverride(v); if (!v) setOverrideReason(""); }}>
+        <DialogContent className="max-w-sm" data-testid="dialog-publish-override">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-sm">
+              <Shield className="w-4 h-4 text-chart-5" />
+              Trust Score Below Threshold
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="p-3 rounded-md border border-chart-5/30 bg-chart-5/5 text-xs space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-muted-foreground">Avg. Trust Score</span>
+                <span className="font-semibold text-chart-5">{trustBlockInfo ? Math.round(trustBlockInfo.avg_trust_score * 100) : 0}%</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-muted-foreground">Minimum Required</span>
+                <span className="font-semibold text-foreground">{trustBlockInfo ? Math.round(trustBlockInfo.threshold * 100) : 60}%</span>
+              </div>
+              <p className="text-muted-foreground leading-relaxed pt-1 border-t border-border">{trustBlockInfo?.reason}</p>
+            </div>
+            <div className="space-y-1.5">
+              <p className="text-xs font-medium text-foreground">Override Reason <span className="text-destructive">*</span></p>
+              <Textarea
+                placeholder="Explain why this dataset should be published despite the low trust score..."
+                value={overrideReason}
+                onChange={(e) => setOverrideReason(e.target.value)}
+                rows={3}
+                className="text-xs resize-none"
+                data-testid="input-override-reason"
+              />
+              <p className="text-xs text-muted-foreground">This reason will be recorded in the audit log for compliance purposes.</p>
+            </div>
+            <div className="flex gap-2 justify-end">
+              <Button variant="outline" size="sm" onClick={() => { setShowOverride(false); setOverrideReason(""); }}>Cancel</Button>
+              <Button
+                size="sm"
+                variant="destructive"
+                disabled={overrideReason.trim().length < 10 || publishMutation.isPending}
+                onClick={() => publishMutation.mutate({ override: true, overrideReason })}
+                data-testid="button-confirm-override"
+              >
+                {publishMutation.isPending ? "Publishing..." : "Override & Publish"}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Card data-testid={`card-dataset-${dataset.id}`} className={`flex flex-col ${dataset.status === "PUBLISHED" ? "border-chart-3/30" : isBelowThreshold && dataset.status === "DRAFT" ? "border-chart-5/30" : ""}`}>
         <CardContent className="p-4 space-y-3 flex flex-col h-full">
+
+          {/* Trust-block warning banner (visible on DRAFT datasets below threshold) */}
+          {isBelowThreshold && dataset.status === "DRAFT" && (
+            <div className="flex items-start gap-2 p-2.5 rounded-md border border-chart-5/40 bg-chart-5/8 text-xs" data-testid="banner-trust-warning">
+              <AlertTriangle className="w-3.5 h-3.5 text-chart-5 flex-shrink-0 mt-0.5" />
+              <div>
+                <span className="font-semibold text-chart-5">Quality score {qualityPct}% — below publish threshold ({Math.round(PUBLISH_THRESHOLD * 100)}%)</span>
+                <span className="text-muted-foreground ml-1">Publishing will prompt for an override reason.</span>
+              </div>
+            </div>
+          )}
+
           <div className="flex items-start justify-between gap-2">
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2 flex-wrap">

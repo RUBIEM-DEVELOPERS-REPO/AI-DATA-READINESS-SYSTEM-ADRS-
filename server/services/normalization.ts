@@ -1,21 +1,13 @@
 import type { NormalizedAttribute } from "@shared/schema";
+import { ADRS_CONFIG } from "../config";
 
-// ─── Thresholds (configurable defaults) ──────────────────────────────────────
-export const AUTO_APPROVAL_THRESHOLDS: Record<string, number> = {
-  email: 0.90,
-  phone: 0.90,
-  date: 0.85,
-  reference_number: 0.88,
-  amount: 0.80,
-  name: 0.75,
-  address: 0.70,
-  default: 0.78,
-};
+// Re-export thresholds from config for backward compat
+export const AUTO_APPROVAL_THRESHOLDS = ADRS_CONFIG.thresholds.auto_approval;
 
 // Generic/weak values that should never be auto-approved
 const WEAK_VALUE_PATTERNS = [
-  /^(foundation|note|address|text|value|unknown|n\/a|na|none|null|undefined|tbd|placeholder)$/i,
-  /^[.\s-]+$/, // Only punctuation/whitespace
+  /^(foundation|note|address|text|value|unknown|n\/a|na|none|null|undefined|tbd|placeholder|sample|test|example|foo|bar|baz)$/i,
+  /^[.\s\-_]+$/, // Only punctuation/whitespace/underscore
 ];
 
 function isWeakValue(value: string): boolean {
@@ -29,6 +21,11 @@ function normalizeDate(raw: string): { normalized: string; type: "date" | "datet
   const clean = raw.trim();
   // ISO already
   if (/^\d{4}-\d{2}-\d{2}(T.*)?$/.test(clean)) {
+    // If has time component, normalize to UTC ISO datetime
+    if (clean.includes("T")) {
+      const dt = new Date(clean);
+      if (!isNaN(dt.getTime())) return { normalized: dt.toISOString(), type: "datetime", ok: true };
+    }
     return { normalized: clean.slice(0, 10), type: "date", ok: true };
   }
   // DD/MM/YYYY or MM/DD/YYYY heuristic
@@ -36,7 +33,7 @@ function normalizeDate(raw: string): { normalized: string; type: "date" | "datet
   if (slashMatch) {
     const [, a, b, year] = slashMatch;
     const month = parseInt(a) > 12 ? b.padStart(2, "0") : a.padStart(2, "0");
-    const day = parseInt(a) > 12 ? a.padStart(2, "0") : b.padStart(2, "0");
+    const day   = parseInt(a) > 12 ? a.padStart(2, "0") : b.padStart(2, "0");
     return { normalized: `${year}-${month}-${day}`, type: "date", ok: true };
   }
   // Month name: "15 January 2026" or "January 15, 2026"
@@ -54,27 +51,39 @@ function normalizeDate(raw: string): { normalized: string; type: "date" | "datet
   return { normalized: clean, type: "date", ok: false };
 }
 
-// ─── Phone normalization (basic E.164-style) ──────────────────────────────────
+// ─── Phone normalization (E.164) ───────────────────────────────────────────────
 function normalizePhone(raw: string): { normalized: string; ok: boolean } {
   const digits = raw.replace(/[^\d+]/g, "");
   if (!digits) return { normalized: raw, ok: false };
   if (digits.startsWith("+") && digits.length >= 10) return { normalized: digits, ok: true };
-  if (digits.length === 10) return { normalized: `+1${digits}`, ok: true }; // Assume US
+  if (digits.length === 10) return { normalized: `+1${digits}`, ok: true };    // US default
   if (digits.length === 12 && digits.startsWith("254")) return { normalized: `+${digits}`, ok: true }; // Kenya
+  if (digits.length === 12 && digits.startsWith("256")) return { normalized: `+${digits}`, ok: true }; // Uganda
+  if (digits.length === 12 && digits.startsWith("255")) return { normalized: `+${digits}`, ok: true }; // Tanzania
   if (digits.length === 11) return { normalized: `+${digits}`, ok: true };
   return { normalized: raw, ok: false };
 }
 
 // ─── Currency normalization ────────────────────────────────────────────────────
 function normalizeCurrency(raw: string): { normalized: string; numeric: number | null; currency: string | null; ok: boolean } {
-  const m = raw.match(/(KES|USD|EUR|GBP|KSH|UGX|TZS)?\s*([0-9,. ]+)\s*(KES|USD|EUR|GBP|KSH|UGX|TZS)?/i);
+  const m = raw.match(/(KES|USD|EUR|GBP|KSH|UGX|TZS|RWF|ETB|NGN)?\s*([0-9,. ]+)\s*(KES|USD|EUR|GBP|KSH|UGX|TZS|RWF|ETB|NGN)?/i);
   if (!m) return { normalized: raw, numeric: null, currency: null, ok: false };
   const currency = (m[1] || m[3] || "").toUpperCase() || null;
-  const numStr = m[2].replace(/[, ]/g, "");
-  const numeric = parseFloat(numStr);
+  const numStr   = m[2].replace(/[, ]/g, "");
+  const numeric  = parseFloat(numStr);
   if (isNaN(numeric)) return { normalized: raw, numeric: null, currency, ok: false };
   const normalized = currency ? `${currency} ${numeric.toFixed(2)}` : `${numeric.toFixed(2)}`;
   return { normalized, numeric, currency, ok: true };
+}
+
+// ─── Reference number pattern validation ─────────────────────────────────────
+function validateReferencePattern(fieldKey: string, value: string): { ok: boolean; error?: string } {
+  if (!ADRS_CONFIG.features.strict_reference_pattern) return { ok: true };
+  const pattern = ADRS_CONFIG.patterns[fieldKey] ?? ADRS_CONFIG.patterns.reference_number;
+  if (!pattern.test(value)) {
+    return { ok: false, error: `"${value}" does not match expected reference pattern ${pattern}` };
+  }
+  return { ok: true };
 }
 
 // ─── ValueNormalizationService ────────────────────────────────────────────────
@@ -99,22 +108,27 @@ export function normalizeValue(
       const result = normalizePhone(valueRaw);
       normalized = result.normalized;
       type = "phone";
-      if (!result.ok) { normStatus = "FAILED"; normError = "Could not parse to E.164"; }
+      if (!result.ok) { normStatus = "FAILED"; normError = "Could not parse to E.164 format"; }
     } else if (key.includes("date") || key.includes("_at") || key.endsWith("_on")) {
       const result = normalizeDate(valueRaw);
       normalized = result.normalized;
       type = result.type;
-      if (!result.ok) { normStatus = "FAILED"; normError = "Could not parse to ISO-8601"; }
-    } else if (key.includes("amount") || key.includes("value") || key.includes("price") || key.includes("total") || key.includes("cost") || key.includes("salary")) {
+      if (!result.ok) { normStatus = "FAILED"; normError = "Could not parse to ISO-8601 date"; }
+    } else if (key.includes("amount") || (key.includes("value") && !key.includes("normalized")) || key.includes("price") || key.includes("total") || key.includes("cost") || key.includes("salary")) {
       const result = normalizeCurrency(valueRaw);
       normalized = result.normalized;
       type = "currency";
       if (!result.ok) { normStatus = "FAILED"; normError = "Could not parse currency amount"; }
-    } else if (key === "reference_number" || key.includes("invoice_number") || key.includes("ref_no") || key.includes("contract_number")) {
-      normalized = valueRaw.trim().toUpperCase();
+    } else if (key === "reference_number" || key.includes("invoice_number") || key.includes("ref_no") || key.includes("contract_number") || key.includes("permit_number")) {
+      normalized = valueRaw.trim().toUpperCase().replace(/\s+/g, "-");
+      type = "string";
+      const patCheck = validateReferencePattern(key, normalized);
+      if (!patCheck.ok) { normStatus = "FAILED"; normError = patCheck.error; }
+    } else if (key.includes("name") || key.includes("address")) {
+      // Whitespace normalization only, preserve casing
+      normalized = valueRaw.replace(/\s+/g, " ").trim();
       type = "string";
     } else {
-      // Default: trim whitespace
       normalized = valueRaw.replace(/\s+/g, " ").trim();
       type = "string";
     }
@@ -125,7 +139,7 @@ export function normalizeValue(
   }
 
   // ─── AutoApprovalPolicy ──────────────────────────────────────────────────
-  const threshold = AUTO_APPROVAL_THRESHOLDS[key] ?? AUTO_APPROVAL_THRESHOLDS.default;
+  const threshold = ADRS_CONFIG.thresholds.auto_approval[key] ?? ADRS_CONFIG.thresholds.auto_approval.default;
   let validationState: NormalizedAttribute["validation_state"] = "AUTO_APPROVED";
   let policyRule: string | undefined;
   let policyReason: string | undefined;
@@ -141,15 +155,15 @@ export function normalizeValue(
   } else if (confidence < threshold) {
     validationState = "PENDING";
     policyRule = "LOW_CONFIDENCE";
-    policyReason = `Confidence ${(confidence * 100).toFixed(0)}% is below threshold ${(threshold * 100).toFixed(0)}% for field type "${key}".`;
+    policyReason = `Confidence ${(confidence * 100).toFixed(0)}% is below threshold ${(threshold * 100).toFixed(0)}% for field "${key}".`;
   } else if (type === "email" && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized)) {
     validationState = "PENDING";
     policyRule = "INVALID_EMAIL";
-    policyReason = "Email does not match expected format.";
+    policyReason = "Email does not match RFC-5322 basic format.";
   } else if (type === "phone" && normalized.length < 7) {
     validationState = "PENDING";
     policyRule = "INVALID_PHONE";
-    policyReason = "Phone number is too short.";
+    policyReason = "Phone number is too short to be valid.";
   }
 
   return {
@@ -169,10 +183,10 @@ export function normalizeValue(
 }
 
 function inferSubjectType(key: string, defaultType: NormalizedAttribute["subject_type"]): NormalizedAttribute["subject_type"] {
-  if (["name", "email", "phone", "address", "national_id", "person_name", "signature_name"].some(k => key.includes(k))) {
+  if (["name", "email", "phone", "address", "national_id", "person_name", "signature_name", "org_name", "organization", "company", "vendor", "supplier"].some(k => key.includes(k))) {
     return "PARTY";
   }
-  if (["document_date", "title", "doc_type", "classification", "document_number"].some(k => key.includes(k))) {
+  if (["document_date", "title", "report_title", "doc_type", "classification", "document_number", "permit_number"].some(k => key.includes(k))) {
     return "DOCUMENT";
   }
   if (["amount", "total", "payment", "price", "salary", "cost", "transaction"].some(k => key.includes(k))) {
@@ -188,28 +202,32 @@ export function normalizeExtractedFields(
 ): NormalizedAttribute[] {
   const attrs: NormalizedAttribute[] = [];
 
-  // Normalize structured fields
   for (const [key, value] of Object.entries(fields)) {
     if (value == null || value === "") continue;
     attrs.push(normalizeValue(key, String(value), 0.85, undefined, "DOCUMENT"));
   }
 
-  // Normalize entities (assign to PARTY or OBJECT based on type)
   for (const entity of entities) {
     const key = entity.entity.toLowerCase().replace(/\s+/g, "_");
     const subjectType: NormalizedAttribute["subject_type"] =
       ["person", "name", "email", "phone"].includes(key) ? "PARTY" :
-        ["organization", "company", "vendor", "supplier", "merchant"].includes(key) ? "PARTY" : "OBJECT";
+      ["organization", "company", "vendor", "supplier", "merchant"].includes(key) ? "PARTY" : "OBJECT";
     attrs.push(normalizeValue(key, entity.value, entity.confidence, entity.evidence_pointer, subjectType));
   }
 
   return attrs;
 }
 
-// ─── Dedup attributes (same subject + key, keep highest confidence) ───────────
-export function dedupAttributes(attrs: NormalizedAttribute[]): NormalizedAttribute[] {
+// ─── Dedup — returns { deduped, conflicts } ───────────────────────────────────
+export interface DedupResult {
+  deduped: NormalizedAttribute[];
+  /** Keys where conflicting normalized values were found */
+  conflictKeys: string[];
+}
+
+export function dedupAttributes(attrs: NormalizedAttribute[]): DedupResult {
   const map = new Map<string, NormalizedAttribute>();
-  const conflicts: string[] = [];
+  const conflictKeys: string[] = [];
 
   for (const attr of attrs) {
     const mapKey = `${attr.subject_type}:${attr.field_key}`;
@@ -218,23 +236,30 @@ export function dedupAttributes(attrs: NormalizedAttribute[]): NormalizedAttribu
       map.set(mapKey, attr);
     } else {
       if (existing.value_normalized === attr.value_normalized) {
-        // Same value — keep higher confidence
-        if (attr.confidence_score > existing.confidence_score) {
-          map.set(mapKey, attr);
-        }
+        if (attr.confidence_score > existing.confidence_score) map.set(mapKey, attr);
       } else {
-        // Conflicting — keep both and mark as PENDING
-        conflicts.push(mapKey);
-        const conflictAttr = { ...attr, validation_state: "PENDING" as const, approval_policy_rule: "CONFLICT", approval_policy_reason: `Conflicting value "${attr.value_normalized}" vs existing "${existing.value_normalized}".` };
+        // Conflicting values — keep both, mark PENDING, record conflict
+        if (!conflictKeys.includes(mapKey)) conflictKeys.push(mapKey);
+        const conflictAttr: NormalizedAttribute = {
+          ...attr,
+          validation_state: "PENDING",
+          approval_policy_rule: "CONFLICT",
+          approval_policy_reason: `Conflicting value "${attr.value_normalized}" vs existing "${existing.value_normalized}". Manual dedup required.`,
+        };
         map.set(`${mapKey}:conflict`, conflictAttr);
         if (existing.validation_state === "AUTO_APPROVED") {
-          map.set(mapKey, { ...existing, validation_state: "PENDING", approval_policy_rule: "CONFLICT", approval_policy_reason: `Conflicting value detected.` });
+          map.set(mapKey, {
+            ...existing,
+            validation_state: "PENDING",
+            approval_policy_rule: "CONFLICT",
+            approval_policy_reason: `Conflicting value detected — original value "${existing.value_normalized}" requires review.`,
+          });
         }
       }
     }
   }
 
-  return Array.from(map.values());
+  return { deduped: Array.from(map.values()), conflictKeys };
 }
 
 // ─── Quality gate checks ──────────────────────────────────────────────────────
@@ -246,14 +271,6 @@ export interface QualityGateResult {
   completenessScore: number;
 }
 
-const REQUIRED_FIELDS_BY_DOC_TYPE: Record<string, string[]> = {
-  INVOICE: ["invoice_number", "amount", "date", "supplier_name"],
-  CONTRACT: ["contract_number", "parties", "value", "start_date"],
-  REPORT: ["report_title", "organization"],
-  IDENTITY: ["name", "national_id"],
-  FINANCIAL: ["amount", "date"],
-};
-
 export function runQualityGates(
   docType: string,
   attrs: NormalizedAttribute[],
@@ -262,25 +279,36 @@ export function runQualityGates(
   const checks: QualityGateResult["checks"] = [];
   const attrKeys = new Set(attrs.map(a => a.field_key.toLowerCase()));
 
-  // 1. OCR quality
   checks.push({ rule: "OCR_QUALITY", passed: ocrConfidence >= 0.70, detail: `OCR confidence: ${(ocrConfidence * 100).toFixed(0)}% (min 70%)` });
 
-  // 2. Completeness for doc type
-  const required = REQUIRED_FIELDS_BY_DOC_TYPE[docType] ?? [];
+  const required = ADRS_CONFIG.required_fields_by_doc_type[docType] ?? [];
   const missing = required.filter(f => !attrKeys.has(f));
   checks.push({ rule: "COMPLETENESS", passed: missing.length === 0, detail: missing.length === 0 ? "All required fields present" : `Missing: ${missing.join(", ")}` });
 
-  // 3. No all-pending (can't publish with all unvalidated)
-  const pendingCount = attrs.filter(a => a.validation_state === "PENDING").length;
-  const approvedCount = attrs.filter(a => a.validation_state === "AUTO_APPROVED" || a.validation_state === "APPROVED").length;
+  const pendingCount   = attrs.filter(a => a.validation_state === "PENDING").length;
+  const approvedCount  = attrs.filter(a => a.validation_state === "AUTO_APPROVED" || a.validation_state === "APPROVED").length;
   checks.push({ rule: "MIN_APPROVED", passed: approvedCount > 0, detail: `${approvedCount} approved, ${pendingCount} pending` });
 
-  // 4. No normalization failures on key fields
-  const keyFails = attrs.filter(a => a.normalization_status === "FAILED" && ["date", "email", "phone", "amount"].includes(a.normalized_value_type));
-  checks.push({ rule: "NORMALIZATION", passed: keyFails.length === 0, detail: keyFails.length === 0 ? "All key fields normalized" : `${keyFails.length} key fields failed normalization` });
+  const keyFails = attrs.filter(a => a.normalization_status === "FAILED" && ["date", "email", "phone", "currency"].includes(a.normalized_value_type));
+  checks.push({ rule: "NORMALIZATION", passed: keyFails.length === 0, detail: keyFails.length === 0 ? "All key fields normalized" : `${keyFails.length} key field(s) failed normalization` });
+
+  const conflictCount = attrs.filter(a => a.approval_policy_rule === "CONFLICT").length;
+  checks.push({ rule: "NO_CONFLICTS", passed: conflictCount === 0, detail: conflictCount === 0 ? "No conflicting field values" : `${conflictCount} conflicting attribute(s) pending dedup` });
 
   const passed = checks.every(c => c.passed);
   const completenessScore = required.length === 0 ? 1.0 : (required.length - missing.length) / required.length;
 
   return { passed, checks, pendingCount, approvedCount, completenessScore };
+}
+
+// ─── Compute trust score ──────────────────────────────────────────────────────
+export function computeTrustScore(
+  ocrConfidence: number,
+  extractionConfidence: number,
+  completenessScore: number,
+  consistencyScore: number,
+  docQualityScore: number
+): number {
+  const w = ADRS_CONFIG.trust_weights;
+  return w.ocr * ocrConfidence + w.extraction * extractionConfidence + w.completeness * completenessScore + w.consistency * consistencyScore + w.doc_quality * docQualityScore;
 }

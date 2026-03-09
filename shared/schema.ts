@@ -31,6 +31,17 @@ export const docTypeEnum = pgEnum("doc_type", [
   "INVOICE", "CONTRACT", "REPORT", "PERMIT", "IDENTITY", "FINANCIAL", "CORRESPONDENCE", "OTHER"
 ]);
 
+// ─── ExtractionText — deduplicated text store, one row per extraction run ─────
+export const extractionTexts = pgTable("extraction_texts", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  evidenceId: varchar("evidence_id").notNull(),
+  extractionRunId: varchar("extraction_run_id").notNull(),
+  pageNumber: integer("page_number"),
+  text: text("text").notNull(),
+  charCount: integer("char_count").notNull().default(0),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
 export const users = pgTable("users", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   username: text("username").notNull().unique(),
@@ -94,6 +105,8 @@ export const extractionRuns = pgTable("extraction_runs", {
   // NEW: quality gate results
   qualityGatesPassed: boolean("quality_gates_passed").notNull().default(true),
   qualityGatesReport: jsonb("quality_gates_report"),
+  // Reference to deduplicated text store — use ?include_text=true to hydrate rawText
+  extractionTextId: varchar("extraction_text_id"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
@@ -177,6 +190,7 @@ export const auditLogs = pgTable("audit_logs", {
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
+export const insertExtractionTextSchema = createInsertSchema(extractionTexts).omit({ id: true, createdAt: true });
 export const insertBatchSchema = createInsertSchema(batches).omit({ id: true, createdAt: true, updatedAt: true });
 export const insertEvidenceSchema = createInsertSchema(evidenceFiles).omit({ id: true, createdAt: true, updatedAt: true });
 export const insertExtractionRunSchema = createInsertSchema(extractionRuns).omit({ id: true, createdAt: true });
@@ -186,6 +200,8 @@ export const insertDatasetSchema = createInsertSchema(publishedDatasets).omit({ 
 export const insertAuditLogSchema = createInsertSchema(auditLogs).omit({ id: true, createdAt: true });
 export const insertUserSchema = createInsertSchema(users).pick({ username: true, password: true });
 
+export type ExtractionText = typeof extractionTexts.$inferSelect;
+export type InsertExtractionText = z.infer<typeof insertExtractionTextSchema>;
 export type InsertUser = z.infer<typeof insertUserSchema>;
 export type User = typeof users.$inferSelect;
 export type Batch = typeof batches.$inferSelect;
