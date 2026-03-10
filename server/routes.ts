@@ -12,7 +12,10 @@ import { buildArtifactContents, buildArtifactUris, checkPublishTrustThreshold, g
 import { inferParties, inferDocument } from "./services/party-inference";
 import { ADRS_CONFIG } from "./config";
 import { uploadMiddleware, computeFileHash, getMimeType, detectCloudSource, downloadFile, UPLOADS_DIR } from "./upload";
-import { extractTextFromFile, detectDocType, extractFieldsFromText, extractEntitiesFromText, computeExtractionScores, simulateTranscript } from "./services/extraction";
+import { extractTextFromFile, detectDocType } from "./services/extraction";
+import { aiExtractDocumentFields, aiTranscribeAudio, scoreAiExtraction } from "./services/ai-extraction";
+import unzipper from "unzipper";
+import multer from "multer";
 
 function generateCode(prefix: string): string {
   const year = new Date().getFullYear();
@@ -165,6 +168,91 @@ export async function registerRoutes(httpServer: any, app: Express): Promise<any
     }
   });
 
+  // ─── ZIP Batch Upload ──────────────────────────────────────────────────────
+  // Accepts a single .zip, extracts all files, ingests each as an evidence item
+  const zipUploadMiddleware = multer({
+    storage: multer.diskStorage({
+      destination: UPLOADS_DIR,
+      filename: (_req: any, file: any, cb: any) => {
+        cb(null, `zip_${Date.now()}_${Math.random().toString(36).slice(2)}.zip`);
+      },
+    }),
+    limits: { fileSize: 500 * 1024 * 1024 },
+    fileFilter: (_req: any, file: any, cb: any) => {
+      const ext = path.extname(file.originalname).toLowerCase();
+      if (ext === ".zip" || file.mimetype === "application/zip" || file.mimetype === "application/x-zip-compressed") {
+        cb(null, true);
+      } else {
+        cb(new Error("Only .zip files are accepted on this endpoint"));
+      }
+    },
+  }).single("file");
+
+  app.post("/api/evidence/upload-zip", (req: any, res: any) => {
+    zipUploadMiddleware(req, res, async (err: any) => {
+      if (err) return res.status(400).json({ error: err.message });
+      if (!req.file) return res.status(400).json({ error: "No ZIP file provided" });
+
+      const { uploadedBy = "operator_001", batchId, tags } = req.body;
+      const zipPath = req.file.path;
+      const results: any[] = [];
+      const errors: string[] = [];
+
+      try {
+        const entries: any[] = [];
+        const directory = await unzipper.Open.file(zipPath);
+        for (const entry of directory.files) {
+          if (entry.type === "Directory") continue;
+          const baseName = path.basename(entry.path);
+          if (baseName.startsWith(".") || baseName.startsWith("__MACOSX") || baseName === "Thumbs.db") continue;
+          entries.push(entry);
+        }
+
+        for (const entry of entries) {
+          try {
+            const baseName = path.basename(entry.path);
+            const ext = path.extname(baseName).slice(1).toLowerCase() || "bin";
+            const diskName = `${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`;
+            const diskPath = path.join(UPLOADS_DIR, diskName);
+            const buffer = await entry.buffer();
+            fs.writeFileSync(diskPath, buffer);
+            const fileHash = computeFileHash(diskPath);
+            const mediaType = ["mp3","wav","aac","flac","ogg","m4a"].includes(ext) ? "AUDIO"
+              : ["mp4","mov","webm","avi","mkv","m4v"].includes(ext) ? "VIDEO"
+              : ["png","tiff","jpeg","jpg","bmp","gif"].includes(ext) ? "IMAGE" : "DOCUMENT";
+            const body = {
+              fileName: baseName,
+              fileFormat: ext,
+              fileSizeBytes: buffer.length,
+              fileHash,
+              storedUri: `local://${diskName}`,
+              evidenceCode: generateCode("EVID"),
+              immutabilityStatus: "LOCKED",
+              mediaType,
+              uploadedBy,
+              batchId: batchId || undefined,
+              tags: tags ? (Array.isArray(tags) ? tags : [tags]) : undefined,
+              sourceType: "ZIP_UPLOAD",
+              sourceReference: req.file.originalname,
+            };
+            const parse = insertEvidenceSchema.safeParse(body);
+            if (!parse.success) { errors.push(`${baseName}: schema error`); continue; }
+            const file = await storage.createEvidenceFile(parse.data);
+            if (file.batchId) await storage.incrementBatchScannedDocuments(file.batchId);
+            await storage.createAuditLog({ action: "EVIDENCE_INGESTED", resourceType: "EVIDENCE", resourceId: file.id, userId: uploadedBy, details: { file_name: file.fileName, hash: file.fileHash, method: "zip_upload", source_zip: req.file.originalname }, tenantId: "TENANT-001" });
+            results.push(file);
+          } catch (entryErr: any) {
+            errors.push(`${path.basename(entry.path)}: ${entryErr?.message ?? "failed"}`);
+          }
+        }
+      } finally {
+        if (fs.existsSync(zipPath)) fs.unlinkSync(zipPath);
+      }
+
+      res.json({ ingested: results.length, errors: errors.length, files: results, errorDetails: errors });
+    });
+  });
+
   app.post("/api/evidence", async (req: any, res: any) => {
     const body = { ...req.body, evidenceCode: generateCode("EVID"), fileHash: generateHash(req.body.fileName ?? "file"), storedUri: `s3://evidence/tenant-001/${new Date().getFullYear()}/${String(new Date().getMonth() + 1).padStart(2, "0")}/${randomUUID()}/original.${req.body.fileFormat ?? "pdf"}`, immutabilityStatus: "LOCKED" };
     const parse = insertEvidenceSchema.safeParse(body);
@@ -191,36 +279,33 @@ export async function registerRoutes(httpServer: any, app: Express): Promise<any
       const isAV = ["AUDIO", "VIDEO"].includes(evidenceFile.mediaType ?? "DOCUMENT");
       const startTime = Date.now();
 
-      // 2. Extract text from file
+      // 2. Extract raw text (PDF/text) or transcribe audio with AI
       let rawText = "";
       if (isAV) {
-        rawText = simulateTranscript(evidenceFile.fileName, evidenceFile.durationSeconds ?? undefined);
+        rawText = await aiTranscribeAudio(evidenceFile.storedUri, evidenceFile.fileName);
       } else {
         rawText = await extractTextFromFile(evidenceFile.storedUri, evidenceFile.fileFormat);
       }
 
-      // 3. Detect doc type
-      const { docType, confidence: docTypeConfidence } = detectDocType(rawText, evidenceFile.fileFormat, evidenceFile.mediaType ?? "DOCUMENT");
+      // 3. AI-powered document intelligence: doc type + all fields + entities
+      const aiResult = await aiExtractDocumentFields(rawText, evidenceFile.fileName);
+      const docType = aiResult.docType;
+      const docTypeConfidence = aiResult.docTypeConfidence;
+      const fieldCount = Object.keys(aiResult.fields).length;
 
-      // 4. Extract fields & entities
-      const extractedFields = extractFieldsFromText(rawText, docType);
-      const extractedEntities = extractEntitiesFromText(rawText, extractedFields);
-      const fieldCount = Object.keys(extractedFields).length;
+      // 4. AI-based scores (deterministic from field coverage)
+      const scores = scoreAiExtraction(fieldCount, docType);
 
-      // 5. Compute scores
-      const scores = computeExtractionScores(rawText, fieldCount, docType, evidenceFile.mediaType ?? "DOCUMENT");
-
-      // 6. Normalize + dedup (reuse existing pipeline)
+      // 5. Convert AI fields to plain string map for normalization pipeline
       const plainFields: Record<string, string> = {};
-      for (const [k, v] of Object.entries(extractedFields)) {
-        if (v && typeof v === "object" && "value" in v && v.value != null) {
-          plainFields[k] = String(v.value);
-        } else if (typeof v === "string" && v) {
-          plainFields[k] = v;
+      for (const [k, v] of Object.entries(aiResult.fields)) {
+        if (v?.value != null && String(v.value).trim() !== "") {
+          plainFields[k] = String(v.value).trim();
         }
       }
 
-      const rawAttrs = normalizeExtractedFields(plainFields, extractedEntities.map(e => ({ entity: e.entity, value: e.value, confidence: e.confidence })));
+      // 6. Normalize + dedup (existing pipeline, now fed with AI-extracted data)
+      const rawAttrs = normalizeExtractedFields(plainFields, aiResult.entities);
       const { deduped: dedupedAttrs, conflictKeys } = dedupAttributes(rawAttrs);
       const qgResult = runQualityGates(docType, dedupedAttrs, scores.ocrConfidence);
       const trustScore = computeTrustScore(scores.ocrConfidence, scores.extractionConfidence, qgResult.completenessScore, scores.consistencyScore, scores.docQualityScore);
@@ -238,12 +323,12 @@ export async function registerRoutes(httpServer: any, app: Express): Promise<any
         trustScore,
         trustScoreBreakdown: { ocr: scores.ocrConfidence, extraction: scores.extractionConfidence, completeness: qgResult.completenessScore, consistency: scores.consistencyScore, doc_quality: scores.docQualityScore },
         extractedFields: plainFields,
-        extractedEntities,
+        extractedEntities: aiResult.entities,
         extractedAttributes: dedupedAttrs,
         qualityGatesPassed: qgResult.passed,
         qualityGatesReport: qgResult,
         rawText: rawText || null,
-        modelVersion: "adrs-v1.0",
+        modelVersion: "adrs-ai-v2.0",
         processingTimeMs: Date.now() - startTime,
       };
 

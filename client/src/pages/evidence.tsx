@@ -16,7 +16,7 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import type { EvidenceFile, Batch } from "@shared/schema";
 import {
   FileText, Upload, Search, Filter, Lock, Hash, HardDrive, Clock, FolderOpen, Plus, Eye, RefreshCw, CheckCircle2, XCircle, AlertCircle, Mic, Video, Timer,
-  Link2, CloudDownload, FolderInput, HardDriveUpload, Globe, Building2
+  Link2, CloudDownload, FolderInput, HardDriveUpload, Globe, Building2, Archive, PackageCheck, PackageX
 } from "lucide-react";
 import { SiGoogledrive, SiDropbox } from "react-icons/si";
 import { formatDistanceToNow, format } from "date-fns";
@@ -301,6 +301,14 @@ function IngestFileDialog() {
   const [importBatch, setImportBatch] = useState("");
   const [importDuration, setImportDuration] = useState("");
 
+  const [zipFile, setZipFile] = useState<File | null>(null);
+  const [zipBatch, setZipBatch] = useState("");
+  const [zipOperator, setZipOperator] = useState("operator_001");
+  const [zipUploading, setZipUploading] = useState(false);
+  const [zipResult, setZipResult] = useState<{ ingested: number; errors: number; errorDetails: string[] } | null>(null);
+  const [zipDragOver, setZipDragOver] = useState(false);
+  const zipInputRef = useRef<HTMLInputElement>(null);
+
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: ["/api/evidence"] });
     queryClient.invalidateQueries({ queryKey: ["/api/dashboard/stats"] });
@@ -315,6 +323,35 @@ function IngestFileDialog() {
     setImportDuration("");
     setImportBatch("");
     setDragOver(false);
+    setZipFile(null);
+    setZipResult(null);
+    setZipBatch("");
+  };
+
+  const handleZipUpload = async () => {
+    if (!zipFile) return;
+    setZipUploading(true);
+    setZipResult(null);
+    try {
+      const formData = new FormData();
+      formData.append("file", zipFile);
+      formData.append("uploadedBy", zipOperator);
+      if (zipBatch) formData.append("batchId", zipBatch);
+      const resp = await fetch("/api/evidence/upload-zip", { method: "POST", body: formData });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.error ?? "ZIP upload failed");
+      setZipResult({ ingested: data.ingested, errors: data.errors, errorDetails: data.errorDetails ?? [] });
+      invalidate();
+      toast({
+        title: `ZIP ingested — ${data.ingested} file${data.ingested !== 1 ? "s" : ""} added`,
+        description: data.errors > 0 ? `${data.errors} file(s) had errors.` : "All files ingested successfully.",
+      });
+      if (data.errors === 0) { setZipFile(null); }
+    } catch (err: any) {
+      toast({ title: "ZIP upload failed", description: err.message, variant: "destructive" });
+    } finally {
+      setZipUploading(false);
+    }
   };
 
   const onDrop = useCallback((e: React.DragEvent) => {
@@ -393,15 +430,18 @@ function IngestFileDialog() {
         </DialogHeader>
 
         <Tabs value={tab} onValueChange={setTab} className="mt-1">
-          <TabsList className="w-full grid grid-cols-3">
+          <TabsList className="w-full grid grid-cols-4">
             <TabsTrigger value="upload" data-testid="tab-upload" className="gap-1.5 text-xs">
               <HardDriveUpload className="w-3.5 h-3.5" /> Upload File
+            </TabsTrigger>
+            <TabsTrigger value="zip" data-testid="tab-zip" className="gap-1.5 text-xs">
+              <Archive className="w-3.5 h-3.5" /> ZIP Batch
             </TabsTrigger>
             <TabsTrigger value="url" data-testid="tab-url" className="gap-1.5 text-xs">
               <Link2 className="w-3.5 h-3.5" /> From URL
             </TabsTrigger>
             <TabsTrigger value="cloud" data-testid="tab-cloud" className="gap-1.5 text-xs">
-              <CloudDownload className="w-3.5 h-3.5" /> Cloud Storage
+              <CloudDownload className="w-3.5 h-3.5" /> Cloud
             </TabsTrigger>
           </TabsList>
 
@@ -488,6 +528,110 @@ function IngestFileDialog() {
                 {uploading ? <><RefreshCw className="w-3.5 h-3.5 mr-1.5 animate-spin" /> Uploading...</> : <><Upload className="w-3.5 h-3.5 mr-1.5" /> Upload &amp; Ingest</>}
               </Button>
             </div>
+          </TabsContent>
+
+          {/* ── ZIP Batch Tab ── */}
+          <TabsContent value="zip" className="space-y-3 mt-3">
+            <div className="text-xs text-muted-foreground p-3 rounded-md bg-muted/40 border border-border/50">
+              Upload a <strong>.zip</strong> archive containing multiple evidence files. Each file will be extracted and ingested as a separate evidence record linked to the selected batch.
+            </div>
+
+            <div
+              data-testid="drop-zone-zip"
+              onDragOver={(e) => { e.preventDefault(); setZipDragOver(true); }}
+              onDragLeave={() => setZipDragOver(false)}
+              onDrop={(e) => { e.preventDefault(); setZipDragOver(false); const f = e.dataTransfer.files[0]; if (f) { setZipFile(f); setZipResult(null); } }}
+              onClick={() => zipInputRef.current?.click()}
+              className={`border-2 border-dashed rounded-lg p-6 text-center cursor-pointer transition-colors ${zipDragOver ? "border-primary bg-primary/5" : "border-border hover:border-primary/50 hover:bg-muted/30"}`}
+            >
+              {zipFile ? (
+                <div className="space-y-1">
+                  <div className="flex items-center justify-center gap-2">
+                    <Archive className="w-7 h-7 text-primary" />
+                    <div className="text-left">
+                      <p className="font-medium text-sm text-foreground truncate max-w-xs">{zipFile.name}</p>
+                      <p className="text-xs text-muted-foreground">ZIP · {(zipFile.size / 1024 / 1024).toFixed(2)} MB</p>
+                    </div>
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-1">Click to choose a different ZIP</p>
+                </div>
+              ) : (
+                <>
+                  <Archive className="w-10 h-10 text-muted-foreground/50 mx-auto mb-2" />
+                  <p className="text-sm font-medium text-foreground">Drag &amp; drop your ZIP here</p>
+                  <p className="text-xs text-muted-foreground mt-1">or click to browse</p>
+                  <p className="text-xs text-muted-foreground/70 mt-2">All file types supported inside ZIP · up to 500 MB</p>
+                </>
+              )}
+              <input
+                ref={zipInputRef}
+                type="file"
+                accept=".zip,application/zip,application/x-zip-compressed"
+                className="hidden"
+                onChange={(e) => { const f = e.target.files?.[0]; if (f) { setZipFile(f); setZipResult(null); } }}
+                data-testid="input-zip-picker"
+              />
+            </div>
+
+            {zipResult && (
+              <div className={`rounded-md border p-3 space-y-1 ${zipResult.errors === 0 ? "bg-chart-3/5 border-chart-3/30" : "bg-destructive/5 border-destructive/30"}`}>
+                <div className="flex items-center gap-2">
+                  {zipResult.errors === 0
+                    ? <PackageCheck className="w-4 h-4 text-chart-3" />
+                    : <PackageX className="w-4 h-4 text-destructive" />}
+                  <span className="text-sm font-medium">
+                    {zipResult.ingested} file{zipResult.ingested !== 1 ? "s" : ""} ingested
+                    {zipResult.errors > 0 ? `, ${zipResult.errors} error${zipResult.errors !== 1 ? "s" : ""}` : ""}
+                  </span>
+                </div>
+                {zipResult.errorDetails.length > 0 && (
+                  <ul className="text-xs text-destructive space-y-0.5 pl-6 list-disc">
+                    {zipResult.errorDetails.map((e, i) => <li key={i}>{e}</li>)}
+                  </ul>
+                )}
+              </div>
+            )}
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label className="text-xs mb-1 block">Operator</Label>
+                <Select value={zipOperator} onValueChange={setZipOperator}>
+                  <SelectTrigger data-testid="select-zip-operator" className="h-8 text-xs">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="operator_001">operator_001</SelectItem>
+                    <SelectItem value="operator_002">operator_002</SelectItem>
+                    <SelectItem value="admin_001">admin_001</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label className="text-xs mb-1 block">Assign to Batch</Label>
+                <Select value={zipBatch} onValueChange={setZipBatch}>
+                  <SelectTrigger data-testid="select-zip-batch" className="h-8 text-xs">
+                    <SelectValue placeholder="None" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">None</SelectItem>
+                    {batches?.map(b => (
+                      <SelectItem key={b.id} value={b.id}>{b.batchCode} — {b.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            <Button
+              data-testid="button-zip-upload"
+              className="w-full h-9 text-sm"
+              disabled={!zipFile || zipUploading}
+              onClick={handleZipUpload}
+            >
+              {zipUploading
+                ? <><RefreshCw className="w-3.5 h-3.5 mr-1.5 animate-spin" /> Processing ZIP...</>
+                : <><Archive className="w-3.5 h-3.5 mr-1.5" /> Extract &amp; Ingest All Files</>}
+            </Button>
           </TabsContent>
 
           {/* ── From URL Tab ── */}

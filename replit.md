@@ -19,6 +19,7 @@ A comprehensive platform that transforms raw, unstructured evidence (PDFs, image
 - PostgreSQL database via Drizzle ORM
 - Seed data auto-loads on first run (checks `evidence_files` count; skips if data exists)
 - `server/config.ts` — Centralised feature flags, per-field thresholds, reference patterns, trust weights
+- `server/services/ai-extraction.ts` — **AI document intelligence** using GPT-5-mini (gpt-5-mini) for structured field/entity extraction + Whisper (gpt-4o-mini-transcribe) for real audio transcription; uses `AI_INTEGRATIONS_OPENAI_API_KEY` + `AI_INTEGRATIONS_OPENAI_BASE_URL` from Replit AI Integration (no personal key); model version: `adrs-ai-v2.0`
 - `server/services/normalization.ts` — ValueNormalizationService + AutoApprovalPolicy + DedupService + QualityGates (imports ADRS_CONFIG)
 - `server/services/publishing.ts` — Multi-artifact generator (ML CSV, KG JSONL, RAG JSONL, Dataset Card JSON, Bundle ZIP via jszip)
 - `server/services/party-inference.ts` — Auto-PARTY + Identifier + Document CDM entity inference from normalized attributes
@@ -47,6 +48,7 @@ PostgreSQL (Replit managed) via `DATABASE_URL` environment variable.
 | GET/POST | `/api/batches` | Digitization batch management |
 | GET/POST | `/api/evidence` | Evidence file metadata-only ingest (legacy) |
 | POST | `/api/evidence/upload` | **Real file upload** via multipart/form-data (multer); computes real SHA-256; stores to `./uploads/` |
+| POST | `/api/evidence/upload-zip` | **ZIP batch upload** — extracts all files from a .zip, ingests each as separate evidence with SHA-256 hash |
 | POST | `/api/evidence/import-url` | **Import from URL** — downloads file from HTTP/HTTPS/Google Drive/Dropbox/OneDrive link |
 | GET | `/api/evidence/:id/file` | **Serve stored file** — streams file from disk with correct MIME type |
 | GET/POST | `/api/extractions` | Extraction runs — `rawText` stripped by default; add `?include_text=true` to hydrate |
