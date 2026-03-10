@@ -32,6 +32,37 @@ function stripText<T extends { rawText?: string | null }>(run: T): T {
   return rest as T;
 }
 
+/**
+ * Throws a structured error if the batch cannot accept `slotsNeeded` more files.
+ * Returns silently (no-op) when batchId is falsy or expectedDocuments is 0 (unlimited).
+ */
+async function assertBatchCapacity(batchId: string | undefined | null, slotsNeeded = 1): Promise<void> {
+  if (!batchId) return;
+  const batch = await storage.getBatch(batchId);
+  if (!batch) throw Object.assign(new Error(`Batch ${batchId} not found`), { status: 404 });
+  if (batch.status === "COMPLETED") {
+    throw Object.assign(new Error(`Batch ${batch.batchCode} is already completed and cannot accept new files`), { status: 409 });
+  }
+  if (batch.status === "CANCELLED") {
+    throw Object.assign(new Error(`Batch ${batch.batchCode} has been cancelled and cannot accept new files`), { status: 409 });
+  }
+  if (batch.expectedDocuments > 0) {
+    const remaining = batch.expectedDocuments - batch.scannedDocuments;
+    if (remaining <= 0) {
+      throw Object.assign(
+        new Error(`Batch ${batch.batchCode} is full (${batch.scannedDocuments}/${batch.expectedDocuments} files). Increase the expected document count or create a new batch.`),
+        { status: 409 }
+      );
+    }
+    if (slotsNeeded > remaining) {
+      throw Object.assign(
+        new Error(`Batch ${batch.batchCode} only has room for ${remaining} more file${remaining !== 1 ? "s" : ""}, but ${slotsNeeded} were requested. Increase the expected document count or split the upload.`),
+        { status: 409 }
+      );
+    }
+  }
+}
+
 export async function registerRoutes(httpServer: any, app: Express): Promise<any> {
 
   // ─── Config endpoint (read-only feature flags) ─────────────────────────────
@@ -112,13 +143,15 @@ export async function registerRoutes(httpServer: any, app: Express): Promise<any
           fs.unlinkSync(req.file.path);
           return res.status(400).json({ error: parse.error });
         }
+        await assertBatchCapacity(parse.data.batchId);
         const file = await storage.createEvidenceFile(parse.data);
         if (file.batchId) await storage.incrementBatchScannedDocuments(file.batchId);
         await storage.createAuditLog({ action: "EVIDENCE_INGESTED", resourceType: "EVIDENCE", resourceId: file.id, userId: file.uploadedBy, details: { file_name: file.fileName, hash: file.fileHash, method: "file_upload" }, tenantId: "TENANT-001" });
         res.json(file);
       } catch (e: any) {
         if (req.file?.path && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
-        res.status(500).json({ error: e?.message ?? "Upload failed" });
+        const status = (e as any)?.status ?? 500;
+        res.status(status).json({ error: e?.message ?? "Upload failed" });
       }
     });
   });
@@ -128,6 +161,7 @@ export async function registerRoutes(httpServer: any, app: Express): Promise<any
     const { url, uploadedBy, batchId, tags, durationSeconds } = req.body;
     if (!url) return res.status(400).json({ error: "url is required" });
     try {
+      await assertBatchCapacity(batchId || undefined);
       const { source, downloadUrl, fileName: detectedName } = detectCloudSource(url);
       const ext = path.extname(detectedName).slice(1).toLowerCase() || "bin";
       const diskName = `${Date.now()}_${Math.random().toString(36).slice(2)}.${ext || "bin"}`;
@@ -164,7 +198,8 @@ export async function registerRoutes(httpServer: any, app: Express): Promise<any
       await storage.createAuditLog({ action: "EVIDENCE_INGESTED", resourceType: "EVIDENCE", resourceId: file.id, userId: file.uploadedBy, details: { file_name: file.fileName, hash: file.fileHash, method: "url_import", source_url: url }, tenantId: "TENANT-001" });
       res.json(file);
     } catch (e: any) {
-      res.status(500).json({ error: e?.message ?? "Import failed" });
+      const status = (e as any)?.status ?? 500;
+      res.status(status).json({ error: e?.message ?? "Import failed" });
     }
   });
 
@@ -206,6 +241,14 @@ export async function registerRoutes(httpServer: any, app: Express): Promise<any
           const baseName = path.basename(entry.path);
           if (baseName.startsWith(".") || baseName.startsWith("__MACOSX") || baseName === "Thumbs.db") continue;
           entries.push(entry);
+        }
+
+        // Check batch capacity for ALL files in the ZIP before extracting any
+        try {
+          await assertBatchCapacity(batchId || undefined, entries.length);
+        } catch (capErr: any) {
+          if (fs.existsSync(zipPath)) fs.unlinkSync(zipPath);
+          return res.status(capErr?.status ?? 409).json({ error: capErr.message });
         }
 
         for (const entry of entries) {
