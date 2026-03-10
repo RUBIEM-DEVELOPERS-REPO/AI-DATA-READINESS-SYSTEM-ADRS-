@@ -57,8 +57,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const logoutMutation = useMutation({
     mutationFn: () => apiRequest("POST", "/api/auth/logout", {}),
     onSuccess: () => {
+      // Set auth state to null synchronously (no loading flicker)
       queryClient.setQueryData(["/api/auth/me"], null);
-      queryClient.clear();
+      // Hard redirect so all React state is fully reset
+      window.location.href = "/auth";
+    },
+    onError: () => {
+      // Force redirect even on error — session may already be gone
+      queryClient.setQueryData(["/api/auth/me"], null);
+      window.location.href = "/auth";
     },
   });
 

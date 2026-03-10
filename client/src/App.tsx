@@ -16,16 +16,13 @@ import Publishing from "@/pages/publishing";
 import AuditLog from "@/pages/audit";
 import AuthPage from "@/pages/auth";
 import { useEffect, useState } from "react";
-import { Moon, Sun, LogOut, ChevronDown, UserCircle, Shield } from "lucide-react";
+import { Moon, Sun, LogOut, ChevronDown, Shield } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem,
   DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger
 } from "@/components/ui/dropdown-menu";
-import { useMutation } from "@tanstack/react-query";
-import { apiRequest } from "@/lib/queryClient";
-import { useToast } from "@/hooks/use-toast";
 
 function ThemeToggle() {
   const [dark, setDark] = useState(() => {
@@ -62,21 +59,20 @@ const ROLE_COLORS: Record<string, string> = {
 
 function UserMenu() {
   const { user, logout } = useAuth();
-  const { toast } = useToast();
-  const [, navigate] = useLocation();
-
-  const logoutMutation = useMutation({
-    mutationFn: () => apiRequest("POST", "/api/auth/logout", {}),
-    onSuccess: () => {
-      queryClient.clear();
-      navigate("/auth");
-      toast({ title: "Signed out", description: "You have been signed out successfully." });
-    },
-  });
+  const [signingOut, setSigningOut] = useState(false);
 
   if (!user) return null;
 
   const initials = `${user.firstName[0] ?? ""}${user.lastName[0] ?? ""}`.toUpperCase() || user.username.slice(0, 2).toUpperCase();
+
+  const handleLogout = async () => {
+    setSigningOut(true);
+    try {
+      await logout();
+    } catch {
+      // logout() always redirects even on error, so nothing to handle here
+    }
+  };
 
   return (
     <DropdownMenu>
@@ -107,13 +103,13 @@ function UserMenu() {
         </DropdownMenuItem>
         <DropdownMenuSeparator />
         <DropdownMenuItem
-          onClick={() => logoutMutation.mutate()}
+          onClick={handleLogout}
           className="text-destructive focus:text-destructive cursor-pointer"
           data-testid="button-logout"
-          disabled={logoutMutation.isPending}
+          disabled={signingOut}
         >
           <LogOut className="w-4 h-4 mr-2" />
-          {logoutMutation.isPending ? "Signing out…" : "Sign out"}
+          {signingOut ? "Signing out…" : "Sign out"}
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
