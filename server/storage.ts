@@ -25,6 +25,7 @@ export interface IStorage {
 
   getEvidenceFiles(): Promise<EvidenceFile[]>;
   getEvidenceFile(id: string): Promise<EvidenceFile | undefined>;
+  getEvidenceFileByHash(hash: string): Promise<EvidenceFile | undefined>;
   createEvidenceFile(file: InsertEvidenceFile): Promise<EvidenceFile>;
   updateEvidenceFile(id: string, updates: Partial<InsertEvidenceFile>): Promise<EvidenceFile | undefined>;
 
@@ -110,6 +111,10 @@ export class DatabaseStorage implements IStorage {
   }
   async getEvidenceFile(id: string): Promise<EvidenceFile | undefined> {
     const [file] = await db.select().from(evidenceFiles).where(eq(evidenceFiles.id, id));
+    return file;
+  }
+  async getEvidenceFileByHash(hash: string): Promise<EvidenceFile | undefined> {
+    const [file] = await db.select().from(evidenceFiles).where(eq(evidenceFiles.fileHash, hash));
     return file;
   }
   async createEvidenceFile(file: InsertEvidenceFile): Promise<EvidenceFile> {

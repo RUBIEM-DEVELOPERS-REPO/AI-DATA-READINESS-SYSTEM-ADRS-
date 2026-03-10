@@ -70,7 +70,7 @@ const mediaTypeConfig: Record<string, { Icon: React.ComponentType<{ className?: 
   DOCUMENT: { Icon: FileText, label: "Document", color: "text-muted-foreground" },
 };
 
-function EvidenceCard({ file }: { file: EvidenceFile }) {
+function EvidenceCard({ file, isDuplicate }: { file: EvidenceFile; isDuplicate?: boolean }) {
   const { toast } = useToast();
   const derivedMediaType = (file.mediaType as string) ?? getMediaType(file.fileFormat);
   const mediaConfig = mediaTypeConfig[derivedMediaType] ?? mediaTypeConfig.DOCUMENT;
@@ -108,9 +108,16 @@ function EvidenceCard({ file }: { file: EvidenceFile }) {
               <p className="text-xs text-muted-foreground">{file.evidenceCode}</p>
             </div>
           </div>
-          <Badge variant="outline" className={`text-xs flex-shrink-0 ${statusColors[file.status]}`}>
-            {file.status}
-          </Badge>
+          <div className="flex flex-col items-end gap-1 flex-shrink-0">
+            <Badge variant="outline" className={`text-xs ${statusColors[file.status]}`}>
+              {file.status}
+            </Badge>
+            {isDuplicate && (
+              <Badge variant="outline" className="text-xs gap-1 border-destructive/50 text-destructive bg-destructive/5" data-testid={`badge-duplicate-${file.id}`}>
+                <AlertCircle className="w-2.5 h-2.5" /> DUPLICATE
+              </Badge>
+            )}
+          </div>
         </div>
 
         {isAV && (
@@ -782,6 +789,18 @@ export default function Evidence() {
     failed: files?.filter(f => f.status === "FAILED").length ?? 0,
   };
 
+  // Compute which hashes appear more than once so we can flag duplicates
+  const duplicateHashes = new Set<string>(
+    Object.entries(
+      (files ?? []).reduce<Record<string, number>>((acc, f) => {
+        acc[f.fileHash] = (acc[f.fileHash] ?? 0) + 1;
+        return acc;
+      }, {})
+    )
+      .filter(([, count]) => count > 1)
+      .map(([hash]) => hash)
+  );
+
   return (
     <div className="p-6 space-y-6 max-w-7xl mx-auto">
       <div className="flex items-center justify-between gap-4 flex-wrap">
@@ -897,7 +916,7 @@ export default function Evidence() {
         </Card>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {filtered.map((file) => <EvidenceCard key={file.id} file={file} />)}
+          {filtered.map((file) => <EvidenceCard key={file.id} file={file} isDuplicate={duplicateHashes.has(file.fileHash)} />)}
         </div>
       )}
     </div>

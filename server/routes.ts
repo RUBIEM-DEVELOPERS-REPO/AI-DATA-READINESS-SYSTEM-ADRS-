@@ -123,6 +123,11 @@ export async function registerRoutes(httpServer: any, app: Express): Promise<any
       try {
         const ext = path.extname(req.file.originalname).slice(1).toLowerCase() || "bin";
         const fileHash = computeFileHash(req.file.path);
+        const existingByHash = await storage.getEvidenceFileByHash(fileHash);
+        if (existingByHash) {
+          if (fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
+          return res.status(409).json({ error: `Duplicate evidence: this file already exists as "${existingByHash.fileName}" (${existingByHash.evidenceCode}).`, duplicate: true, existingFile: { id: existingByHash.id, fileName: existingByHash.fileName, evidenceCode: existingByHash.evidenceCode } });
+        }
         const storedUri = `local://${req.file.filename}`;
         const body = {
           ...req.body,
@@ -169,6 +174,11 @@ export async function registerRoutes(httpServer: any, app: Express): Promise<any
       await downloadFile(downloadUrl, diskPath);
       const stats = fs.statSync(diskPath);
       const fileHash = computeFileHash(diskPath);
+      const existingByHash = await storage.getEvidenceFileByHash(fileHash);
+      if (existingByHash) {
+        fs.unlinkSync(diskPath);
+        return res.status(409).json({ error: `Duplicate evidence: this file already exists as "${existingByHash.fileName}" (${existingByHash.evidenceCode}).`, duplicate: true, existingFile: { id: existingByHash.id, fileName: existingByHash.fileName, evidenceCode: existingByHash.evidenceCode } });
+      }
       const mediaType = ["mp3","wav","aac","flac","ogg","m4a"].includes(ext) ? "AUDIO"
         : ["mp4","mov","webm","avi","mkv","m4v"].includes(ext) ? "VIDEO"
         : ["png","tiff","jpeg","jpg","bmp","gif"].includes(ext) ? "IMAGE" : "DOCUMENT";
@@ -260,6 +270,12 @@ export async function registerRoutes(httpServer: any, app: Express): Promise<any
             const buffer = await entry.buffer();
             fs.writeFileSync(diskPath, buffer);
             const fileHash = computeFileHash(diskPath);
+            const existingByHash = await storage.getEvidenceFileByHash(fileHash);
+            if (existingByHash) {
+              if (fs.existsSync(diskPath)) fs.unlinkSync(diskPath);
+              errors.push(`${baseName}: DUPLICATE — already ingested as "${existingByHash.fileName}" (${existingByHash.evidenceCode})`);
+              continue;
+            }
             const mediaType = ["mp3","wav","aac","flac","ogg","m4a"].includes(ext) ? "AUDIO"
               : ["mp4","mov","webm","avi","mkv","m4v"].includes(ext) ? "VIDEO"
               : ["png","tiff","jpeg","jpg","bmp","gif"].includes(ext) ? "IMAGE" : "DOCUMENT";

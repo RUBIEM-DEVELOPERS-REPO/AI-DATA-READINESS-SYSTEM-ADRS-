@@ -13,6 +13,43 @@ export interface InferredDocument {
   sourceAttrKeys: string[];
 }
 
+// ─── Raw entity-type keys that come from extractedEntities mapping (not party roles).
+// These are already captured in prefixed party fields (vendor_email, etc.) so skip them.
+const SKIP_RAW_ENTITY_PREFIXES = new Set([
+  "email", "phone", "address", "location", "money", "date",
+  "reference", "organization", "person", "asset", "document",
+  "url", "id", "name",
+]);
+
+// ─── Maps field-key prefixes to CDM entity types ──────────────────────────────
+const PARTY_PREFIX_TYPES: Record<string, "PERSON" | "ORGANIZATION"> = {
+  vendor:      "ORGANIZATION",
+  supplier:    "ORGANIZATION",
+  customer:    "ORGANIZATION",
+  client:      "ORGANIZATION",
+  buyer:       "ORGANIZATION",
+  company:     "ORGANIZATION",
+  contractor:  "ORGANIZATION",
+  employer:    "ORGANIZATION",
+  bank:        "ORGANIZATION",
+  institution: "ORGANIZATION",
+  lender:      "ORGANIZATION",
+  payee:       "ORGANIZATION",
+  payer:       "ORGANIZATION",
+  issuer:      "ORGANIZATION",
+  borrower:    "PERSON",
+  signatory:   "PERSON",
+  person:      "PERSON",
+  employee:    "PERSON",
+  director:    "PERSON",
+  officer:     "PERSON",
+  guarantor:   "PERSON",
+  surety:      "PERSON",
+  witness:     "PERSON",
+  agent:       "PERSON",
+  recipient:   "PERSON",
+};
+
 // ─── Party inference from normalized attributes ───────────────────────────────
 export function inferParties(
   attrs: NormalizedAttribute[],
@@ -23,89 +60,110 @@ export function inferParties(
   if (!ADRS_CONFIG.features.auto_party_creation) return [];
 
   const threshold = ADRS_CONFIG.thresholds.party_creation_confidence;
-  const parties: InferredParty[] = [];
 
-  // Group PARTY attributes by potential "person cluster" vs "org cluster"
-  const partyAttrs = attrs.filter(
-    a => a.subject_type === "PARTY" &&
+  const approvedPartyAttrs = attrs.filter(
+    a =>
+      a.subject_type === "PARTY" &&
       (a.validation_state === "AUTO_APPROVED" || a.validation_state === "APPROVED") &&
       a.confidence_score >= threshold
   );
 
-  if (partyAttrs.length === 0) return [];
+  if (approvedPartyAttrs.length === 0) return [];
 
-  // Build a single inferred party per extraction run (merge all PARTY fields into one entity)
-  // Determine PERSON vs ORGANIZATION by field keys
-  const nameAttr      = partyAttrs.find(a => a.field_key.includes("person_name") || a.field_key === "name");
-  const orgNameAttr   = partyAttrs.find(a => a.field_key.includes("organization") || a.field_key.includes("company") || a.field_key.includes("vendor") || a.field_key.includes("supplier"));
-  const emailAttr     = partyAttrs.find(a => a.field_key.includes("email"));
-  const phoneAttr     = partyAttrs.find(a => a.field_key.includes("phone") || a.field_key.includes("mobile"));
-  const addressAttr   = partyAttrs.find(a => a.field_key.includes("address"));
-  const nationalIdAttr = partyAttrs.find(a => a.field_key.includes("national_id") || a.field_key.includes("id_number"));
+  // ── Group attributes by their field-key prefix ──────────────────────────────
+  // e.g. "vendor_name" → prefix "vendor"; "signatory_name" → prefix "signatory"
+  // Unprefixed attrs (no underscore) get their full key as a single-attr group.
+  const groups = new Map<string, NormalizedAttribute[]>();
 
-  // Only create a party if we have at least a name, email, or phone
-  if (!nameAttr && !orgNameAttr && !emailAttr && !phoneAttr) return [];
-
-  const isOrg = !!orgNameAttr && !nameAttr;
-  const entityType = isOrg ? "ORGANIZATION" : "PERSON";
-  const primaryNameAttr = orgNameAttr ?? nameAttr;
-  const displayName = primaryNameAttr?.value_normalized
-    ?? emailAttr?.value_normalized
-    ?? phoneAttr?.value_normalized
-    ?? `${entityType}-${runId.slice(0, 8).toUpperCase()}`;
-  const entityCode  = `AUTO-${entityType.slice(0, 3)}-${runId.slice(0, 8).toUpperCase()}`;
-
-  const canonicalFields: Record<string, any> = {};
-  if (nameAttr)     canonicalFields.name    = nameAttr.value_normalized;
-  if (orgNameAttr)  canonicalFields.org_name = orgNameAttr.value_normalized;
-  if (emailAttr)    canonicalFields.email   = emailAttr.value_normalized;
-  if (phoneAttr)    canonicalFields.phone   = phoneAttr.value_normalized;
-  if (addressAttr)  canonicalFields.address = addressAttr.value_normalized;
-  if (nationalIdAttr) canonicalFields.national_id = nationalIdAttr.value_normalized;
-
-  const identifiers: InferredParty["identifiers"] = [];
-  if (emailAttr) {
-    identifiers.push({
-      id_type_label: "Email",
-      id_value: emailAttr.value_normalized,
-      is_verified: emailAttr.validation_state === "APPROVED",
-    });
-  }
-  if (phoneAttr) {
-    identifiers.push({
-      id_type_label: "Phone",
-      id_value: phoneAttr.value_normalized,
-      is_verified: phoneAttr.validation_state === "APPROVED",
-    });
-  }
-  if (nationalIdAttr) {
-    identifiers.push({
-      id_type_label: "National ID",
-      id_value: nationalIdAttr.value_normalized,
-      is_verified: nationalIdAttr.validation_state === "APPROVED",
-    });
+  for (const attr of approvedPartyAttrs) {
+    const underscoreIdx = attr.field_key.indexOf("_");
+    const prefix = underscoreIdx > 0 ? attr.field_key.slice(0, underscoreIdx) : attr.field_key;
+    if (!groups.has(prefix)) groups.set(prefix, []);
+    groups.get(prefix)!.push(attr);
   }
 
-  const sourceAttrKeys = partyAttrs.map(a => a.field_key);
+  const parties: InferredParty[] = [];
+  let partyIndex = 0;
 
-  // Will add MENTIONED_IN relationship to document entity at route level (once doc entity is known)
-  const relationships: InferredParty["relationships"] = [];
+  for (const [prefix, groupAttrs] of groups) {
+    // Skip raw entity-type keys (e.g. "email", "phone", "address") — these are not party roles
+    if (SKIP_RAW_ENTITY_PREFIXES.has(prefix)) continue;
 
-  const entity: InsertCdmEntity = {
-    entityCode,
-    entityType,
-    displayName,
-    canonicalFields,
-    identifiers,
-    relationships,
-    sourceEvidenceIds: [evidenceId],
-    isGoldenRecord: false,
-    confidenceScore: Math.max(...partyAttrs.map(a => a.confidence_score)),
-    schemaVersion: "1.0",
-    tenantId: "TENANT-001",
-  };
+    // Determine entity type from prefix map; unknown prefixes → ORGANIZATION
+    const entityType: "PERSON" | "ORGANIZATION" = PARTY_PREFIX_TYPES[prefix] ?? "ORGANIZATION";
 
-  parties.push({ entity, sourceAttrKeys, identifiers, relationships });
+    // Find the primary name field for this cluster
+    const nameAttr    = groupAttrs.find(a => a.field_key === `${prefix}_name` || a.field_key === "name");
+    const emailAttr   = groupAttrs.find(a => a.field_key.includes("email"));
+    const phoneAttr   = groupAttrs.find(a => a.field_key.includes("phone") || a.field_key.includes("mobile"));
+    const addressAttr = groupAttrs.find(a => a.field_key.includes("address"));
+    const nationalIdAttr = groupAttrs.find(
+      a => a.field_key.includes("national_id") || a.field_key.includes("id_number")
+    );
+
+    // Skip clusters with no identifying signal at all
+    if (!nameAttr && !emailAttr && !phoneAttr) continue;
+
+    const displayName =
+      nameAttr?.value_normalized ??
+      emailAttr?.value_normalized ??
+      phoneAttr?.value_normalized ??
+      `${entityType}-${runId.slice(0, 8).toUpperCase()}-${partyIndex}`;
+
+    const entityCode = `AUTO-${entityType.slice(0, 3)}-${runId.slice(0, 8).toUpperCase()}-${partyIndex}`;
+
+    // Build canonical fields from ALL attrs in this cluster
+    const canonicalFields: Record<string, any> = {};
+    for (const attr of groupAttrs) {
+      // Strip the common prefix so the field reads naturally (e.g. vendor_name → name)
+      const shortKey = attr.field_key.startsWith(`${prefix}_`)
+        ? attr.field_key.slice(prefix.length + 1)
+        : attr.field_key;
+      canonicalFields[shortKey] = attr.value_normalized;
+    }
+
+    // Build identifiers
+    const identifiers: InferredParty["identifiers"] = [];
+    if (emailAttr) {
+      identifiers.push({
+        id_type_label: "Email",
+        id_value: emailAttr.value_normalized,
+        is_verified: emailAttr.validation_state === "APPROVED",
+      });
+    }
+    if (phoneAttr) {
+      identifiers.push({
+        id_type_label: "Phone",
+        id_value: phoneAttr.value_normalized,
+        is_verified: phoneAttr.validation_state === "APPROVED",
+      });
+    }
+    if (nationalIdAttr) {
+      identifiers.push({
+        id_type_label: "National ID",
+        id_value: nationalIdAttr.value_normalized,
+        is_verified: nationalIdAttr.validation_state === "APPROVED",
+      });
+    }
+
+    const entity: InsertCdmEntity = {
+      entityCode,
+      entityType,
+      displayName,
+      canonicalFields,
+      identifiers,
+      relationships: [],
+      sourceEvidenceIds: [evidenceId],
+      isGoldenRecord: false,
+      confidenceScore: Math.max(...groupAttrs.map(a => a.confidence_score)),
+      schemaVersion: "1.0",
+      tenantId: "TENANT-001",
+    };
+
+    parties.push({ entity, sourceAttrKeys: groupAttrs.map(a => a.field_key), identifiers, relationships: [] });
+    partyIndex++;
+  }
+
   return parties;
 }
 
@@ -119,14 +177,14 @@ export function inferDocument(
   if (!ADRS_CONFIG.features.auto_party_creation) return null;
 
   const docAttrs = attrs.filter(
-    a => a.subject_type === "DOCUMENT" &&
+    a =>
+      a.subject_type === "DOCUMENT" &&
       (a.validation_state === "AUTO_APPROVED" || a.validation_state === "APPROVED")
   );
   if (docAttrs.length === 0) return null;
 
   const titleAttr  = docAttrs.find(a => a.field_key.includes("title") || a.field_key.includes("report_title"));
   const numberAttr = docAttrs.find(a => a.field_key.includes("number") || a.field_key.includes("ref") || a.field_key.includes("code"));
-  const dateAttr   = docAttrs.find(a => a.field_key.includes("date"));
 
   const displayName = titleAttr?.value_normalized ?? numberAttr?.value_normalized ?? `${docType}-${runId.slice(0, 8)}`;
   const entityCode  = `AUTO-DOC-${runId.slice(0, 8).toUpperCase()}`;
@@ -145,7 +203,10 @@ export function inferDocument(
     relationships: [],
     sourceEvidenceIds: [evidenceId],
     isGoldenRecord: false,
-    confidenceScore: docAttrs.length ? docAttrs.reduce((s, a) => s + a.confidence_score, 0) / docAttrs.length : 0,
+    confidenceScore:
+      docAttrs.length
+        ? docAttrs.reduce((s, a) => s + a.confidence_score, 0) / docAttrs.length
+        : 0,
     schemaVersion: "1.0",
     tenantId: "TENANT-001",
   };
