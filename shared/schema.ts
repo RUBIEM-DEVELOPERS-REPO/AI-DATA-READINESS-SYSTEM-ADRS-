@@ -181,6 +181,9 @@ export const publishedDatasets = pgTable("published_datasets", {
   artifactContents: jsonb("artifact_contents"),
   // NEW: quality gates applied before publishing
   qualityGates: jsonb("quality_gates"),
+  // Batch scope: SINGLE_BATCH (one or more specific batches) | CROSS_BATCH (all batches)
+  scope: text("scope").notNull().default("CROSS_BATCH"),
+  sourceBatchIds: text("source_batch_ids").array(),
   publishedBy: text("published_by"),
   tenantId: text("tenant_id").notNull().default("TENANT-001"),
   publishedAt: timestamp("published_at"),

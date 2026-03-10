@@ -8,6 +8,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
@@ -333,6 +334,19 @@ function DatasetCard({ dataset }: { dataset: PublishedDataset }) {
             <p className="text-xs text-muted-foreground line-clamp-2">{dataset.description}</p>
           )}
 
+          {/* Scope badge */}
+          <div className="flex items-center gap-1.5 flex-wrap">
+            {(dataset as any).scope === "CROSS_BATCH" ? (
+              <Badge variant="outline" className="text-xs gap-1 border-chart-2/40 text-chart-2 bg-chart-2/5" data-testid={`badge-scope-${dataset.id}`}>
+                <Network className="w-2.5 h-2.5" /> All Batches (Cross-Batch KG)
+              </Badge>
+            ) : (
+              <Badge variant="outline" className="text-xs gap-1 border-primary/40 text-primary bg-primary/5" data-testid={`badge-scope-${dataset.id}`}>
+                <Layers className="w-2.5 h-2.5" /> Single Batch
+              </Badge>
+            )}
+          </div>
+
           <div className="space-y-1.5">
             <div className="flex items-center justify-between text-xs">
               <span className="text-muted-foreground">Quality Score</span>
@@ -532,9 +546,13 @@ function DatasetCard({ dataset }: { dataset: PublishedDataset }) {
 function NewDatasetDialog() {
   const { toast } = useToast();
   const [open, setOpen] = useState(false);
+  const [scope, setScope] = useState<"SINGLE_BATCH" | "CROSS_BATCH">("SINGLE_BATCH");
+  const [selectedBatchId, setSelectedBatchId] = useState<string>("__all__");
   const form = useForm({
     defaultValues: { name: "", description: "", version: "1.0.0", recordCount: "100", qualityScore: "0.85" }
   });
+
+  const { data: batches } = useQuery<any[]>({ queryKey: ["/api/batches"] });
 
   const mutation = useMutation({
     mutationFn: (data: any) => apiRequest("POST", "/api/datasets", data),
@@ -543,9 +561,25 @@ function NewDatasetDialog() {
       toast({ title: "Dataset created", description: "Draft created. Click Publish to generate all 3 artifacts." });
       setOpen(false);
       form.reset();
+      setScope("SINGLE_BATCH");
+      setSelectedBatchId("__all__");
     },
     onError: () => toast({ title: "Error", description: "Failed to create dataset.", variant: "destructive" }),
   });
+
+  const handleSubmit = (d: any) => {
+    const finalScope = scope === "SINGLE_BATCH" && selectedBatchId !== "__all__" ? "SINGLE_BATCH" : "CROSS_BATCH";
+    const sourceBatchIds = finalScope === "SINGLE_BATCH" && selectedBatchId !== "__all__" ? [selectedBatchId] : [];
+    mutation.mutate({
+      ...d,
+      recordCount: parseInt(d.recordCount),
+      qualityScore: parseFloat(d.qualityScore),
+      formats: ["ML_FEATURES", "KG_ENTITIES", "KG_EDGES", "RAG_CHUNKS"],
+      entityTypes: ["PERSON", "ORGANIZATION", "DOCUMENT"],
+      scope: finalScope,
+      sourceBatchIds,
+    });
+  };
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
@@ -559,11 +593,7 @@ function NewDatasetDialog() {
           <DialogTitle>Create Dataset</DialogTitle>
         </DialogHeader>
         <Form {...form}>
-          <form onSubmit={form.handleSubmit((d) => mutation.mutate({
-            ...d, recordCount: parseInt(d.recordCount), qualityScore: parseFloat(d.qualityScore),
-            formats: ["ML_FEATURES", "KG_ENTITIES", "KG_EDGES", "RAG_CHUNKS"],
-            entityTypes: ["PERSON", "ORGANIZATION", "DOCUMENT"],
-          }))} className="space-y-4">
+          <form onSubmit={form.handleSubmit(handleSubmit)} className="space-y-4">
             <FormField name="name" control={form.control} render={({ field }) => (
               <FormItem><FormLabel>Dataset Name</FormLabel><FormControl><Input {...field} placeholder="Ministry Records 2025" data-testid="input-dataset-name" /></FormControl></FormItem>
             )} />
@@ -581,6 +611,54 @@ function NewDatasetDialog() {
             <FormField name="qualityScore" control={form.control} render={({ field }) => (
               <FormItem><FormLabel>Quality Score (0–1)</FormLabel><FormControl><Input {...field} type="number" min="0" max="1" step="0.01" data-testid="input-quality-score" /></FormControl></FormItem>
             )} />
+
+            {/* ── Batch scope selector ── */}
+            <div className="space-y-2">
+              <p className="text-sm font-medium">Data Scope</p>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setScope("SINGLE_BATCH")}
+                  data-testid="scope-single-batch"
+                  className={`p-3 rounded-md border text-left text-xs transition-colors ${scope === "SINGLE_BATCH" ? "border-primary bg-primary/5 text-foreground" : "border-border text-muted-foreground hover:border-primary/50"}`}
+                >
+                  <div className="font-semibold mb-0.5 flex items-center gap-1"><Layers className="w-3 h-3" /> Single Batch</div>
+                  <div className="text-muted-foreground leading-tight">ML / RAG datasets — use one batch for clean, focused training data</div>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setScope("CROSS_BATCH")}
+                  data-testid="scope-cross-batch"
+                  className={`p-3 rounded-md border text-left text-xs transition-colors ${scope === "CROSS_BATCH" ? "border-chart-2 bg-chart-2/5 text-foreground" : "border-border text-muted-foreground hover:border-chart-2/50"}`}
+                >
+                  <div className="font-semibold mb-0.5 flex items-center gap-1"><Network className="w-3 h-3" /> All Batches</div>
+                  <div className="text-muted-foreground leading-tight">Knowledge Graph — combine all batches for a unified entity graph</div>
+                </button>
+              </div>
+            </div>
+
+            {scope === "SINGLE_BATCH" && (
+              <div className="space-y-1.5">
+                <p className="text-sm font-medium">Select Batch</p>
+                <Select value={selectedBatchId} onValueChange={setSelectedBatchId}>
+                  <SelectTrigger className="h-9 text-xs" data-testid="select-batch">
+                    <SelectValue placeholder="Choose a batch..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__all__">All batches (cross-batch)</SelectItem>
+                    {(batches ?? []).map((b: any) => (
+                      <SelectItem key={b.id} value={b.id}>
+                        {b.name ?? b.batchCode} — {b.scannedDocuments} doc{b.scannedDocuments !== 1 ? "s" : ""}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {selectedBatchId === "__all__" && (
+                  <p className="text-xs text-chart-5">Selecting "All batches" will set scope to Cross-Batch automatically.</p>
+                )}
+              </div>
+            )}
+
             <p className="text-xs text-muted-foreground">Publishing will automatically generate ML features, KG entities/edges, and RAG chunks as separate artifacts.</p>
             <div className="flex justify-end gap-2">
               <Button type="button" variant="outline" size="sm" onClick={() => setOpen(false)}>Cancel</Button>

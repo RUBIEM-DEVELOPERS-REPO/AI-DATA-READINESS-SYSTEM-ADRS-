@@ -659,9 +659,29 @@ export async function registerRoutes(httpServer: any, app: Express): Promise<any
     const dataset = await storage.getPublishedDataset(req.params.id);
     if (!dataset) return res.status(404).json({ error: "Not found" });
 
-    const entities     = await storage.getCdmEntities();
-    const extractions  = await storage.getExtractionRuns();
-    const evidenceFiles = await storage.getEvidenceFiles();
+    const allEntities     = await storage.getCdmEntities();
+    const allExtractions  = await storage.getExtractionRuns();
+    const allEvidenceFiles = await storage.getEvidenceFiles();
+
+    // ─── Batch-scope filtering ──────────────────────────────────────────────
+    // SINGLE_BATCH: only include evidence from the selected batch(es)
+    // CROSS_BATCH:  include everything (the default, ideal for KG)
+    const scope = (dataset as any).scope ?? "CROSS_BATCH";
+    const sourceBatchIds: string[] = (dataset as any).sourceBatchIds ?? [];
+
+    const scopedEvidence = scope === "SINGLE_BATCH" && sourceBatchIds.length > 0
+      ? allEvidenceFiles.filter(e => e.batchId && sourceBatchIds.includes(e.batchId))
+      : allEvidenceFiles;
+
+    const scopedEvidenceIds = new Set(scopedEvidence.map(e => e.id));
+    const scopedExtractions = allExtractions.filter(r => scopedEvidenceIds.has(r.evidenceId));
+    const scopedEntities    = allEntities.filter(e =>
+      (e.sourceEvidenceIds ?? []).some(id => scopedEvidenceIds.has(id))
+    );
+
+    const entities     = scopedEntities;
+    const extractions  = scopedExtractions;
+    const evidenceFiles = scopedEvidence;
     const evidenceMap  = new Map(evidenceFiles.map(e => [e.id, e]));
 
     // Trust-score blocking check (uses dataset.qualityScore which reflects all evidence linked to this dataset)
