@@ -48,10 +48,28 @@ export const extractionTexts = pgTable("extraction_texts", {
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
+// ─── RBAC Role Enum ────────────────────────────────────────────────────────
+export const userRoleEnum = pgEnum("user_role", [
+  "SUPER_ADMIN",    // Full system access + user management
+  "ADMIN",          // Tenant-level admin, manage users/batches
+  "ANALYST",        // Upload evidence, run extraction, publish datasets
+  "REVIEWER",       // HITL validation only
+  "VIEWER",         // Read-only access to published datasets
+]);
+
 export const users = pgTable("users", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   username: text("username").notNull().unique(),
+  email: text("email").notNull().unique(),
   password: text("password").notNull(),
+  firstName: text("first_name").notNull().default(""),
+  lastName: text("last_name").notNull().default(""),
+  role: userRoleEnum("role").notNull().default("VIEWER"),
+  tenantId: text("tenant_id").notNull().default("TENANT-001"),
+  isActive: boolean("is_active").notNull().default(true),
+  lastLoginAt: timestamp("last_login_at"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 
 export const batches = pgTable("batches", {
@@ -211,7 +229,26 @@ export const insertValidationTaskSchema = createInsertSchema(validationTasks).om
 export const insertCdmEntitySchema = createInsertSchema(cdmEntities).omit({ id: true, createdAt: true, updatedAt: true });
 export const insertDatasetSchema = createInsertSchema(publishedDatasets).omit({ id: true, createdAt: true, updatedAt: true });
 export const insertAuditLogSchema = createInsertSchema(auditLogs).omit({ id: true, createdAt: true });
-export const insertUserSchema = createInsertSchema(users).pick({ username: true, password: true });
+export const insertUserSchema = createInsertSchema(users).omit({ id: true, createdAt: true, updatedAt: true, lastLoginAt: true });
+
+// Zod schema for registration form (client-side validation)
+export const registerSchema = z.object({
+  username: z.string().min(3, "Username must be at least 3 characters").max(50).regex(/^[a-z0-9_]+$/, "Lowercase letters, numbers, underscores only"),
+  email: z.string().email("Invalid email address"),
+  password: z.string().min(8, "Password must be at least 8 characters")
+    .regex(/[A-Z]/, "Must contain an uppercase letter")
+    .regex(/[0-9]/, "Must contain a number")
+    .regex(/[^a-zA-Z0-9]/, "Must contain a special character"),
+  confirmPassword: z.string(),
+  firstName: z.string().min(1, "First name is required").max(100),
+  lastName: z.string().min(1, "Last name is required").max(100),
+  role: z.enum(["SUPER_ADMIN", "ADMIN", "ANALYST", "REVIEWER", "VIEWER"]).default("ANALYST"),
+}).refine(d => d.password === d.confirmPassword, { message: "Passwords do not match", path: ["confirmPassword"] });
+
+export const loginSchema = z.object({
+  username: z.string().min(1, "Username is required"),
+  password: z.string().min(1, "Password is required"),
+});
 
 export type ExtractionText = typeof extractionTexts.$inferSelect;
 export type InsertExtractionText = z.infer<typeof insertExtractionTextSchema>;

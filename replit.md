@@ -8,11 +8,22 @@ A comprehensive platform that transforms raw, unstructured evidence (PDFs, image
 
 ## Architecture
 
+### Authentication & RBAC
+- Session-based auth using Passport.js (local strategy) + express-session + connect-pg-simple (Postgres session store)
+- Passwords hashed with bcryptjs (12 rounds)
+- 5 roles: SUPER_ADMIN → ADMIN → ANALYST → REVIEWER → VIEWER (hierarchical)
+- Default admin seeded on first run: `username=admin` / `password=Admin@12345!`
+- Auth routes: POST /api/auth/login, POST /api/auth/register, POST /api/auth/logout, GET /api/auth/me
+- RBAC middleware: `requireAuth` and `requireRole(...roles)` in `server/auth.ts`
+- Frontend: `client/src/context/auth.tsx` (AuthProvider + useAuth hook), `client/src/pages/auth.tsx`
+- All app routes are protected; unauthenticated users redirect to /auth
+
 ### Frontend (React + TypeScript)
 - Single Page Application with Wouter routing
 - Shadcn/ui components with Tailwind CSS
 - TanStack Query for data fetching
 - Light/Dark mode support
+- AuthProvider wraps entire app; ProtectedApp component guards all routes
 
 ### Backend (Express + TypeScript)
 - REST API on port 5000

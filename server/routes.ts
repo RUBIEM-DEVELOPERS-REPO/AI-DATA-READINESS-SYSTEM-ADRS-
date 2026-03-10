@@ -1,12 +1,15 @@
 import type { Express } from "express";
+import type { Server } from "http";
 import { storage } from "./storage";
 import {
   insertBatchSchema, insertEvidenceSchema, insertExtractionRunSchema,
-  insertValidationTaskSchema, insertCdmEntitySchema, insertDatasetSchema
+  insertValidationTaskSchema, insertCdmEntitySchema, insertDatasetSchema,
+  registerSchema, loginSchema
 } from "@shared/schema";
 import { createHash, randomUUID } from "crypto";
 import path from "path";
 import fs from "fs";
+import { passport, hashPassword, requireAuth, requireRole } from "./auth";
 import { normalizeExtractedFields, dedupAttributes, runQualityGates, computeTrustScore, type DedupResult } from "./services/normalization";
 import { buildArtifactContents, buildArtifactUris, checkPublishTrustThreshold, generateMlCsv, generateBundleZip } from "./services/publishing";
 import { inferParties, inferDocument } from "./services/party-inference";
@@ -63,7 +66,102 @@ async function assertBatchCapacity(batchId: string | undefined | null, slotsNeed
   }
 }
 
+// ─── Seed default admin user ────────────────────────────────────────────────
+async function seedAdminUser() {
+  const existing = await storage.getUserByUsername("admin");
+  if (existing) return;
+  const hashed = await hashPassword("Admin@12345!");
+  await storage.createUser({
+    username: "admin",
+    email: "admin@aiinstituteafrica.org",
+    password: hashed,
+    firstName: "System",
+    lastName: "Admin",
+    role: "SUPER_ADMIN",
+    tenantId: "TENANT-001",
+    isActive: true,
+  });
+  console.log("[ADRS] Default admin user created — username: admin, password: Admin@12345!");
+}
+
 export async function registerRoutes(httpServer: any, app: Express): Promise<any> {
+
+  await seedAdminUser();
+
+  // ─── Auth routes ────────────────────────────────────────────────────────────
+  app.post("/api/auth/login", (req: any, res: any, next: any) => {
+    const parse = loginSchema.safeParse(req.body);
+    if (!parse.success) return res.status(400).json({ error: "Invalid input", issues: parse.error.issues });
+
+    passport.authenticate("local", (err: any, user: any, info: any) => {
+      if (err) return next(err);
+      if (!user) return res.status(401).json({ error: info?.message ?? "Invalid credentials" });
+      req.logIn(user, (loginErr: any) => {
+        if (loginErr) return next(loginErr);
+        const { password: _, ...safeUser } = user;
+        return res.json({ user: safeUser, message: "Login successful" });
+      });
+    })(req, res, next);
+  });
+
+  app.post("/api/auth/register", async (req: any, res: any) => {
+    const parse = registerSchema.safeParse(req.body);
+    if (!parse.success) return res.status(400).json({ error: "Validation failed", issues: parse.error.issues });
+
+    const { confirmPassword, ...data } = parse.data;
+
+    const [existingUsername, existingEmail] = await Promise.all([
+      storage.getUserByUsername(data.username),
+      storage.getUserByEmail(data.email),
+    ]);
+    if (existingUsername) return res.status(409).json({ error: "Username already taken", field: "username" });
+    if (existingEmail) return res.status(409).json({ error: "Email already registered", field: "email" });
+
+    const hashed = await hashPassword(data.password);
+    const user = await storage.createUser({ ...data, password: hashed, tenantId: "TENANT-001" });
+
+    await storage.createAuditLog({
+      action: "USER_REGISTERED",
+      resourceType: "USER",
+      resourceId: user.id,
+      userId: user.id,
+      details: { username: user.username, role: user.role },
+      tenantId: "TENANT-001",
+    });
+
+    const { password: _, ...safeUser } = user;
+    return res.status(201).json({ user: safeUser, message: "Account created successfully" });
+  });
+
+  app.post("/api/auth/logout", (req: any, res: any, next: any) => {
+    req.logout((err: any) => {
+      if (err) return next(err);
+      req.session.destroy((destroyErr: any) => {
+        if (destroyErr) console.error("Session destroy error:", destroyErr);
+        res.clearCookie("adrs.sid");
+        res.json({ message: "Logged out successfully" });
+      });
+    });
+  });
+
+  app.get("/api/auth/me", (req: any, res: any) => {
+    if (!req.isAuthenticated()) return res.status(401).json({ error: "Not authenticated", code: "UNAUTHENTICATED" });
+    res.json({ user: req.user });
+  });
+
+  app.get("/api/auth/users", requireAuth, requireRole("ADMIN"), async (_req: any, res: any) => {
+    const users = await storage.listUsers();
+    res.json(users.map(({ password: _, ...u }) => u));
+  });
+
+  app.patch("/api/auth/users/:id", requireAuth, requireRole("ADMIN"), async (req: any, res: any) => {
+    const allowed = ["isActive", "role", "firstName", "lastName"];
+    const updates = Object.fromEntries(Object.entries(req.body).filter(([k]) => allowed.includes(k)));
+    const user = await storage.updateUser(req.params.id, updates as any);
+    if (!user) return res.status(404).json({ error: "User not found" });
+    const { password: _, ...safeUser } = user;
+    res.json(safeUser);
+  });
 
   // ─── Config endpoint (read-only feature flags) ─────────────────────────────
   app.get("/api/config", (_req: any, res: any) => {
