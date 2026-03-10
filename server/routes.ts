@@ -12,8 +12,8 @@ import { buildArtifactContents, buildArtifactUris, checkPublishTrustThreshold, g
 import { inferParties, inferDocument } from "./services/party-inference";
 import { ADRS_CONFIG } from "./config";
 import { uploadMiddleware, computeFileHash, getMimeType, detectCloudSource, downloadFile, UPLOADS_DIR } from "./upload";
-import { extractTextFromFile, detectDocType } from "./services/extraction";
-import { aiExtractDocumentFields, aiTranscribeAudio, scoreAiExtraction } from "./services/ai-extraction";
+import { extractTextFromFile, detectDocType, isTextExtractionFailure } from "./services/extraction";
+import { aiExtractDocumentFields, aiTranscribeAudio, aiExtractWithVision, scoreAiExtraction } from "./services/ai-extraction";
 import unzipper from "unzipper";
 import multer from "multer";
 
@@ -337,7 +337,12 @@ export async function registerRoutes(httpServer: any, app: Express): Promise<any
       }
 
       // 3. AI-powered document intelligence: doc type + all fields + entities
-      const aiResult = await aiExtractDocumentFields(rawText, evidenceFile.fileName);
+      //    If text extraction failed (scanned PDF or image), fall back to GPT-4o Vision
+      const VISION_FORMATS = ["pdf", "png", "jpg", "jpeg", "tiff", "tif", "bmp", "gif", "webp"];
+      const useVision = !isAV && isTextExtractionFailure(rawText) && VISION_FORMATS.includes(evidenceFile.fileFormat.toLowerCase());
+      const aiResult = useVision
+        ? await aiExtractWithVision(evidenceFile.storedUri, evidenceFile.fileName, evidenceFile.fileFormat)
+        : await aiExtractDocumentFields(rawText, evidenceFile.fileName);
       const docType = aiResult.docType;
       const docTypeConfidence = aiResult.docTypeConfidence;
       const fieldCount = Object.keys(aiResult.fields).length;
@@ -376,8 +381,8 @@ export async function registerRoutes(httpServer: any, app: Express): Promise<any
         extractedAttributes: dedupedAttrs,
         qualityGatesPassed: qgResult.passed,
         qualityGatesReport: qgResult,
-        rawText: rawText || null,
-        modelVersion: "adrs-ai-v2.0",
+        rawText: useVision ? `[Vision extraction used — ${aiResult.summary}]` : (rawText || null),
+        modelVersion: useVision ? "adrs-vision-v1.0" : "adrs-ai-v2.0",
         processingTimeMs: Date.now() - startTime,
       };
 
@@ -396,7 +401,7 @@ export async function registerRoutes(httpServer: any, app: Express): Promise<any
       }
 
       // 9. Audit + field events
-      await storage.createAuditLog({ action: "EXTRACTION_RUN_CREATED", resourceType: "EXTRACTION", resourceId: run.id, userId: req.body.operatorId || "system", details: { doc_type: docType, trust_score: trustScore, field_count: fieldCount, method: "auto_extract" }, tenantId: "TENANT-001" });
+      await storage.createAuditLog({ action: "EXTRACTION_RUN_CREATED", resourceType: "EXTRACTION", resourceId: run.id, userId: req.body?.operatorId || "system", details: { doc_type: docType, trust_score: trustScore, field_count: fieldCount, method: "auto_extract" }, tenantId: "TENANT-001" });
       for (const attr of dedupedAttrs) {
         await storage.createAuditLog({ action: attr.validation_state === "AUTO_APPROVED" ? "APPROVE_FIELD" : "REVIEW_FIELD", resourceType: "ATTRIBUTE", resourceId: run.id, userId: "system", details: { field_key: attr.field_key, policy_rule: attr.approval_policy_rule ?? "PASSED", confidence: attr.confidence_score }, tenantId: "TENANT-001" });
       }

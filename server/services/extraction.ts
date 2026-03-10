@@ -2,6 +2,7 @@ import fs from "fs";
 import path from "path";
 import { execSync } from "child_process";
 import { UPLOADS_DIR } from "../upload";
+import * as XLSX from "xlsx";
 
 // ─── PDF Text Extraction ─────────────────────────────────────────────────────
 
@@ -121,11 +122,82 @@ export async function extractTextFromFile(storedUri: string, fileFormat: string)
       return extractPdfText(filePath);
     }
 
-    // For images, audio, video — return empty (simulated later)
+    if (["xlsx", "xls", "xlsm", "xlsb"].includes(fmt)) {
+      return extractXlsxText(filePath);
+    }
+
+    if (["docx", "doc"].includes(fmt)) {
+      return extractDocxText(filePath);
+    }
+
+    // For images, audio, video — return empty (handled by vision/transcription)
     return "";
   } catch (e: any) {
     return `[Extraction error: ${e?.message ?? "unknown"}]`;
   }
+}
+
+function extractXlsxText(filePath: string): string {
+  try {
+    const workbook = XLSX.readFile(filePath, { type: "file", dense: true });
+    const lines: string[] = [];
+    for (const sheetName of workbook.SheetNames) {
+      lines.push(`--- Sheet: ${sheetName} ---`);
+      const sheet = workbook.Sheets[sheetName];
+      const rows: string[][] = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: false, defval: "" }) as string[][];
+      for (const row of rows) {
+        const cells = (row as any[]).map((c: any) => (c == null ? "" : String(c).trim()));
+        const line = cells.filter(Boolean).join(" | ");
+        if (line) lines.push(line);
+      }
+    }
+    const text = lines.join("\n").trim();
+    return text.length > 10 ? text.slice(0, 50000) : "[XLSX has no readable content]";
+  } catch (e: any) {
+    return `[XLSX parsing failed: ${e?.message ?? "unknown"}]`;
+  }
+}
+
+function extractDocxText(filePath: string): string {
+  try {
+    // Read raw XML from docx (it's a zip)
+    const zip = XLSX.utils.book_new();
+    const raw = fs.readFileSync(filePath);
+    const textMatches = raw.toString("utf-8").match(/<w:t[^>]*>([^<]+)<\/w:t>/g) ?? [];
+    const text = textMatches
+      .map((m) => m.replace(/<[^>]+>/g, ""))
+      .join(" ")
+      .replace(/\s+/g, " ")
+      .trim();
+    return text.length > 10 ? text.slice(0, 50000) : "[DOCX has no readable text content]";
+  } catch (e: any) {
+    return `[DOCX parsing failed: ${e?.message ?? "unknown"}]`;
+  }
+}
+
+/**
+ * Returns true when extracted text is a failure/placeholder, meaning
+ * the file needs vision-based extraction instead.
+ */
+export function isTextExtractionFailure(text: string): boolean {
+  if (!text || text.length < 10) return true;
+  if (text.startsWith("[")) return true;
+  return false;
+}
+
+/**
+ * Find the pdftoppm binary in the Replit nix store.
+ */
+export function findPdftoppm(): string | null {
+  try {
+    const bin = execSync("which pdftoppm 2>/dev/null", { timeout: 3000 }).toString().trim();
+    if (bin && fs.existsSync(bin)) return bin;
+  } catch { /* not in PATH */ }
+  try {
+    const result = execSync("ls /nix/store/*/bin/pdftoppm 2>/dev/null | head -1", { timeout: 3000 }).toString().trim();
+    if (result && fs.existsSync(result)) return result;
+  } catch { /* not found */ }
+  return null;
 }
 
 // ─── Doc Type Detection ──────────────────────────────────────────────────────
