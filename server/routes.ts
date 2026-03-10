@@ -275,11 +275,17 @@ export async function registerRoutes(httpServer: any, app: Express): Promise<any
               uploadedBy,
               batchId: batchId || undefined,
               tags: tags ? (Array.isArray(tags) ? tags : [tags]) : undefined,
-              sourceType: "ZIP_UPLOAD",
-              sourceReference: req.file.originalname,
+              sourceType: "SCAN",
+              sourceReference: `ZIP:${req.file.originalname}`,
             };
             const parse = insertEvidenceSchema.safeParse(body);
-            if (!parse.success) { errors.push(`${baseName}: schema error`); continue; }
+            if (!parse.success) {
+              const firstIssue = parse.error.issues?.[0];
+              const detail = firstIssue ? `${firstIssue.path.join(".")}: ${firstIssue.message}` : "validation failed";
+              console.error(`[ZIP Upload] Schema error for ${baseName}:`, parse.error.issues);
+              errors.push(`${baseName}: ${detail}`);
+              continue;
+            }
             const file = await storage.createEvidenceFile(parse.data);
             if (file.batchId) await storage.incrementBatchScannedDocuments(file.batchId);
             await storage.createAuditLog({ action: "EVIDENCE_INGESTED", resourceType: "EVIDENCE", resourceId: file.id, userId: uploadedBy, details: { file_name: file.fileName, hash: file.fileHash, method: "zip_upload", source_zip: req.file.originalname }, tenantId: "TENANT-001" });
