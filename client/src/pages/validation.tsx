@@ -284,8 +284,8 @@ export default function Validation() {
         <div className="space-y-0.5">
           <p className="text-sm font-semibold text-foreground">Automated triage — only low-trust files require human review</p>
           <p className="text-xs text-muted-foreground">
-            Files extracted with a trust score of <strong className="text-foreground">70% or above</strong> are automatically accepted and promoted to the CDM.
-            Only files scoring <strong className="text-foreground">below 70%</strong>, or those with conflicting field values, are queued here for a human validator.
+            Files extracted with a trust score of <strong className="text-foreground">70% or above</strong> are automatically accepted and promoted to the CDM — no human review needed.
+            Only files scoring <strong className="text-foreground">below 70%</strong> are queued here for human validation, regardless of whether field conflicts are present.
           </p>
         </div>
         <div className="shrink-0 flex flex-col items-center text-center ml-auto pl-3 border-l border-chart-2/20">

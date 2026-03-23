@@ -531,13 +531,16 @@ export async function registerRoutes(httpServer: any, app: Express): Promise<any
         await storage.createAuditLog({ action: attr.validation_state === "AUTO_APPROVED" ? "APPROVE_FIELD" : "REVIEW_FIELD", resourceType: "ATTRIBUTE", resourceId: run.id, userId: "system", details: { field_key: attr.field_key, policy_rule: attr.approval_policy_rule ?? "PASSED", confidence: attr.confidence_score }, tenantId: "TENANT-001" });
       }
 
-      // 10. Auto-create validation tasks
-      if (ADRS_CONFIG.features.auto_validation_task_on_conflict && conflictKeys.length > 0) {
-        await storage.createValidationTask({ taskCode: generateCode("VAL"), extractionRunId: run.id, evidenceId: run.evidenceId, status: "PENDING_VALIDATION", fieldsToValidate: conflictKeys.map(k => k.split(":").slice(1).join(":")), trustScore, approvalStage: 1, maxApprovalStages: 1, approvalPolicyRule: "CONFLICT", approvalPolicyReason: `${conflictKeys.length} field(s) conflict.`, weakFields: conflictKeys });
-      }
-      if (ADRS_CONFIG.features.auto_validation_task_on_low_trust && trustScore < ADRS_CONFIG.thresholds.auto_validation_task) {
-        const pendingFields = dedupedAttrs.filter(a => a.validation_state === "PENDING").map(a => a.field_key);
-        await storage.createValidationTask({ taskCode: generateCode("VAL"), extractionRunId: run.id, evidenceId: run.evidenceId, status: "PENDING_VALIDATION", fieldsToValidate: pendingFields, trustScore, approvalStage: 1, maxApprovalStages: 1, approvalPolicyRule: "LOW_TRUST", approvalPolicyReason: `Trust score ${(trustScore * 100).toFixed(0)}% below threshold.` });
+      // 10. Auto-create ONE validation task — only when trust score < 70%
+      if (trustScore < ADRS_CONFIG.thresholds.auto_validation_task) {
+        const conflictFieldKeys = conflictKeys.map(k => k.split(":").slice(1).join(":"));
+        const pendingFieldKeys  = dedupedAttrs.filter(a => a.validation_state === "PENDING").map(a => a.field_key);
+        const allFields = [...new Set([...conflictFieldKeys, ...pendingFieldKeys])];
+        const reasons: string[] = [`trust score ${(trustScore * 100).toFixed(0)}% is below the ${(ADRS_CONFIG.thresholds.auto_validation_task * 100).toFixed(0)}% threshold`];
+        if (conflictKeys.length > 0) reasons.push(`${conflictKeys.length} field conflict(s) detected`);
+        const rule = conflictKeys.length > 0 ? "CONFLICT" : "LOW_TRUST";
+        await storage.createValidationTask({ taskCode: generateCode("VAL"), extractionRunId: run.id, evidenceId: run.evidenceId, status: "PENDING_VALIDATION", fieldsToValidate: allFields, trustScore, approvalStage: 1, maxApprovalStages: 1, approvalPolicyRule: rule, approvalPolicyReason: `Requires human review: ${reasons.join("; ")}.`, weakFields: conflictKeys.length > 0 ? conflictKeys : undefined });
+        await storage.createAuditLog({ action: "VALIDATION_TASK_AUTO_CREATED", resourceType: "VALIDATION", resourceId: run.id, userId: "system", details: { reason: rule, trust_score: trustScore, threshold: ADRS_CONFIG.thresholds.auto_validation_task }, tenantId: "TENANT-001" });
       }
 
       // 11. Party inference — field-based + raw-entity-based
@@ -634,17 +637,16 @@ export async function registerRoutes(httpServer: any, app: Express): Promise<any
       await storage.createAuditLog({ action: attr.validation_state === "AUTO_APPROVED" ? "APPROVE_FIELD" : "REVIEW_FIELD", resourceType: "ATTRIBUTE", resourceId: run.id, userId: "system", details: { field_key: attr.field_key, policy_rule: attr.approval_policy_rule ?? "PASSED", value_normalized: attr.value_normalized, confidence: attr.confidence_score }, tenantId: "TENANT-001" });
     }
 
-    // 5. Auto-create ValidationTask for conflicts
-    if (ADRS_CONFIG.features.auto_validation_task_on_conflict && conflictKeys.length > 0) {
-      await storage.createValidationTask({ taskCode: generateCode("VAL"), extractionRunId: run.id, evidenceId: run.evidenceId, status: "PENDING_VALIDATION", fieldsToValidate: conflictKeys.map(k => k.split(":").slice(1).join(":")), trustScore, approvalStage: 1, maxApprovalStages: 1, approvalPolicyRule: "CONFLICT", approvalPolicyReason: `${conflictKeys.length} field(s) have conflicting extracted values requiring manual deduplication: ${conflictKeys.join(", ")}.`, weakFields: conflictKeys });
-      await storage.createAuditLog({ action: "VALIDATION_TASK_AUTO_CREATED", resourceType: "VALIDATION", resourceId: run.id, userId: "system", details: { reason: "CONFLICT", conflict_keys: conflictKeys }, tenantId: "TENANT-001" });
-    }
-
-    // 6. Auto-create ValidationTask for low trust
-    if (ADRS_CONFIG.features.auto_validation_task_on_low_trust && trustScore < ADRS_CONFIG.thresholds.auto_validation_task) {
-      const pendingFields = dedupedAttrs.filter(a => a.validation_state === "PENDING").map(a => a.field_key);
-      await storage.createValidationTask({ taskCode: generateCode("VAL"), extractionRunId: run.id, evidenceId: run.evidenceId, status: "PENDING_VALIDATION", fieldsToValidate: pendingFields, trustScore, approvalStage: 1, maxApprovalStages: 1, approvalPolicyRule: "LOW_TRUST", approvalPolicyReason: `Trust score ${(trustScore * 100).toFixed(0)}% is below threshold ${(ADRS_CONFIG.thresholds.auto_validation_task * 100).toFixed(0)}%.` });
-      await storage.createAuditLog({ action: "VALIDATION_TASK_AUTO_CREATED", resourceType: "VALIDATION", resourceId: run.id, userId: "system", details: { reason: "LOW_TRUST", trust_score: trustScore }, tenantId: "TENANT-001" });
+    // 5 & 6. Auto-create ONE validation task — only when trust score < 70%
+    if (trustScore < ADRS_CONFIG.thresholds.auto_validation_task) {
+      const conflictFieldKeys = conflictKeys.map(k => k.split(":").slice(1).join(":"));
+      const pendingFieldKeys  = dedupedAttrs.filter(a => a.validation_state === "PENDING").map(a => a.field_key);
+      const allFields = [...new Set([...conflictFieldKeys, ...pendingFieldKeys])];
+      const reasons: string[] = [`trust score ${(trustScore * 100).toFixed(0)}% is below the ${(ADRS_CONFIG.thresholds.auto_validation_task * 100).toFixed(0)}% threshold`];
+      if (conflictKeys.length > 0) reasons.push(`${conflictKeys.length} field conflict(s) detected`);
+      const rule = conflictKeys.length > 0 ? "CONFLICT" : "LOW_TRUST";
+      await storage.createValidationTask({ taskCode: generateCode("VAL"), extractionRunId: run.id, evidenceId: run.evidenceId, status: "PENDING_VALIDATION", fieldsToValidate: allFields, trustScore, approvalStage: 1, maxApprovalStages: 1, approvalPolicyRule: rule, approvalPolicyReason: `Requires human review: ${reasons.join("; ")}.`, weakFields: conflictKeys.length > 0 ? conflictKeys : undefined });
+      await storage.createAuditLog({ action: "VALIDATION_TASK_AUTO_CREATED", resourceType: "VALIDATION", resourceId: run.id, userId: "system", details: { reason: rule, trust_score: trustScore, threshold: ADRS_CONFIG.thresholds.auto_validation_task }, tenantId: "TENANT-001" });
     }
 
     // 7. Party inference — field-based + raw-entity-based
