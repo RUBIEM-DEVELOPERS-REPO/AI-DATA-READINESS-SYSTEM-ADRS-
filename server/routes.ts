@@ -16,7 +16,8 @@ import { inferParties, inferDocument } from "./services/party-inference";
 import { ADRS_CONFIG } from "./config";
 import { uploadMiddleware, computeFileHash, getMimeType, detectCloudSource, downloadFile, UPLOADS_DIR } from "./upload";
 import { extractTextFromFile, detectDocType, isTextExtractionFailure } from "./services/extraction";
-import { aiExtractDocumentFields, aiTranscribeAudio, aiExtractWithVision, scoreAiExtraction } from "./services/ai-extraction";
+import { aiExtractDocumentFields, aiTranscribeAudio, aiExtractWithVision, scoreAiExtraction, aiReclassifyDocType, aiClassifyEntityType } from "./services/ai-extraction";
+import { groupEntitiesForMerge } from "./services/golden-records";
 import unzipper from "unzipper";
 import multer from "multer";
 
@@ -686,6 +687,19 @@ export async function registerRoutes(httpServer: any, app: Express): Promise<any
 
   // ─── CDM ───────────────────────────────────────────────────────────────────
   app.get("/api/cdm", async (_req: any, res: any) => res.json(await storage.getCdmEntities()));
+  // Golden-records summary — must be BEFORE /api/cdm/:id to avoid param capture
+  app.get("/api/cdm/golden-records", requireAuth, async (_req: any, res: any) => {
+    const entities = await storage.getCdmEntities();
+    const golden   = entities.filter(e => e.isGoldenRecord);
+    const summary  = golden.map(g => ({
+      ...g,
+      absorbedCount: entities.filter(e => e.goldenRecordId === g.id).length,
+      absorbed: entities.filter(e => e.goldenRecordId === g.id).map(e => ({
+        id: e.id, displayName: e.displayName, entityCode: e.entityCode, entityType: e.entityType,
+      })),
+    }));
+    res.json(summary);
+  });
   app.get("/api/cdm/:id", async (req: any, res: any) => {
     const e = await storage.getCdmEntity(req.params.id);
     if (!e) return res.status(404).json({ error: "Not found" });
@@ -703,6 +717,137 @@ export async function registerRoutes(httpServer: any, app: Express): Promise<any
     const entity = await storage.updateCdmEntity(req.params.id, req.body);
     if (!entity) return res.status(404).json({ error: "Not found" });
     res.json(entity);
+  });
+
+  // ─── CDM: AI-powered reclassification ─────────────────────────────────────
+  // Fixes two problems in one pass:
+  //   1. PERSON/ORGANIZATION mismatches on existing CDM entities
+  //   2. Extraction runs whose doc_type is "OTHER"
+  app.post("/api/cdm/reclassify", requireAuth, async (_req: any, res: any) => {
+    const results = {
+      entitiesScanned: 0,
+      entitiesReclassified: 0,
+      docTypesScanned: 0,
+      docTypesReclassified: 0,
+      details: [] as Array<{ id: string; field: string; from: string; to: string }>,
+    };
+
+    // ── 1. Fix entity type mismatches (PERSON ↔ ORGANIZATION) ───────────────
+    const entities = await storage.getCdmEntities();
+    const partyEntities = entities.filter(
+      e => e.entityType === "PERSON" || e.entityType === "ORGANIZATION"
+    );
+    results.entitiesScanned = partyEntities.length;
+
+    for (const entity of partyEntities) {
+      const fields = entity.canonicalFields as Record<string, any>;
+      const { entityType: aiType, confidence } = await aiClassifyEntityType(
+        entity.displayName,
+        fields
+      );
+      if (aiType !== entity.entityType && confidence >= 0.75) {
+        await storage.updateCdmEntity(entity.id, { entityType: aiType } as any);
+        await storage.createAuditLog({
+          action: "ENTITY_RECLASSIFIED",
+          resourceType: "CDM",
+          resourceId: entity.entityCode,
+          userId: "system",
+          details: { from: entity.entityType, to: aiType, confidence, display_name: entity.displayName },
+          tenantId: "TENANT-001",
+        });
+        results.entitiesReclassified++;
+        results.details.push({ id: entity.id, field: "entityType", from: entity.entityType, to: aiType });
+      }
+    }
+
+    // ── 2. Fix doc_type = "OTHER" on extraction runs ────────────────────────
+    const runs = await storage.getExtractionRuns();
+    const otherRuns = runs.filter(r => r.docType === "OTHER");
+    results.docTypesScanned = otherRuns.length;
+
+    for (const run of otherRuns) {
+      let text = run.rawText ?? "";
+      if (!text && run.extractionTextId) {
+        const etxt = await storage.getExtractionText(run.extractionTextId);
+        if (etxt) text = etxt.text;
+      }
+      // Use evidence file name as context
+      const evid = await storage.getEvidenceFile(run.evidenceId);
+      const fileName = evid?.fileName ?? "document";
+      const { docType: newType, confidence } = await aiReclassifyDocType(text, fileName);
+      if (newType !== "OTHER" && confidence >= 0.65) {
+        await storage.updateExtractionRun(run.id, { docType: newType } as any);
+        // Also update the DOCUMENT CDM entity linked to this run if present
+        const linkedDoc = entities.find(
+          e => e.entityType === "DOCUMENT" && e.sourceEvidenceIds?.includes(run.evidenceId)
+        );
+        if (linkedDoc) {
+          const updatedFields = { ...(linkedDoc.canonicalFields as Record<string, any>), doc_type: newType };
+          await storage.updateCdmEntity(linkedDoc.id, { canonicalFields: updatedFields } as any);
+        }
+        await storage.createAuditLog({
+          action: "DOC_TYPE_RECLASSIFIED",
+          resourceType: "EXTRACTION",
+          resourceId: run.id,
+          userId: "system",
+          details: { from: "OTHER", to: newType, confidence, file_name: fileName },
+          tenantId: "TENANT-001",
+        });
+        results.docTypesReclassified++;
+        results.details.push({ id: run.id, field: "docType", from: "OTHER", to: newType });
+      }
+    }
+
+    res.json(results);
+  });
+
+  // ─── CDM: Golden records — deterministic entity resolution ────────────────
+  // Groups entities that share name / email / phone and designates the highest-
+  // confidence record as the golden record.  Zero hallucination: only existing
+  // field values are compared; the AI is not asked to invent anything.
+  app.post("/api/cdm/golden-records/compute", requireAuth, async (_req: any, res: any) => {
+    const entities = await storage.getCdmEntities();
+    const groups   = groupEntitiesForMerge(entities);
+
+    let promoted  = 0;
+    let merged    = 0;
+    const detail: Array<{ golden: string; absorbed: string[]; reasons: string[] }> = [];
+
+    for (const group of groups) {
+      // Promote golden record
+      await storage.updateCdmEntity(group.goldenEntityId, {
+        isGoldenRecord: true,
+        goldenRecordId: null,
+      } as any);
+      promoted++;
+
+      // Point absorbed entities to the golden record
+      for (const absorbedId of group.mergedEntityIds) {
+        await storage.updateCdmEntity(absorbedId, {
+          isGoldenRecord: false,
+          goldenRecordId: group.goldenEntityId,
+        } as any);
+        merged++;
+      }
+
+      await storage.createAuditLog({
+        action: "GOLDEN_RECORD_COMPUTED",
+        resourceType: "CDM",
+        resourceId: group.goldenEntityId,
+        userId: "system",
+        details: {
+          golden_name:    group.goldenDisplayName,
+          merged_count:   group.mergedEntityIds.length,
+          match_reasons:  group.matchReasons,
+          confidence:     group.confidence,
+        },
+        tenantId: "TENANT-001",
+      });
+
+      detail.push({ golden: group.goldenDisplayName, absorbed: group.mergedEntityIds, reasons: group.matchReasons });
+    }
+
+    res.json({ goldenGroupsFound: groups.length, entitiesPromoted: promoted, entitiesMerged: merged, detail });
   });
 
   // ─── Datasets ──────────────────────────────────────────────────────────────

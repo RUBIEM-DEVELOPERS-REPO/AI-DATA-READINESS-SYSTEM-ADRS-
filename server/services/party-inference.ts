@@ -21,6 +21,36 @@ const SKIP_RAW_ENTITY_PREFIXES = new Set([
   "url", "id", "name",
 ]);
 
+// ─── Organisation-indicator tokens ───────────────────────────────────────────
+// If any of these tokens appear in an entity name it is very likely an organisation.
+const ORG_INDICATORS = new Set([
+  "ltd", "limited", "inc", "incorporated", "corp", "corporation", "co", "llc", "plc",
+  "gmbh", "bv", "pty", "pvt", "ngo", "npo", "cbo", "sacco",
+  "foundation", "institute", "association", "trust", "fund",
+  "bank", "authority", "ministry", "department", "council", "board", "agency",
+  "group", "holdings", "enterprises", "solutions", "services", "industries",
+  "technologies", "tech", "international", "africa", "global",
+  "school", "college", "university", "hospital", "clinic", "government",
+  "municipality", "commission", "bureau", "office",
+]);
+
+/**
+ * Returns true when a name looks like an individual human name rather than an
+ * organisation — used to correct prefix-map misclassifications.
+ *
+ * Decision rules (applied in order):
+ *  1. If ANY org-indicator token appears → not a person.
+ *  2. If the name is 2–4 space-separated tokens (title/first/middle/last) → person.
+ *  3. Otherwise → ambiguous, leave as-is (caller keeps the prefix-map value).
+ */
+function looksLikePersonName(name: string): boolean {
+  if (!name || name.trim().length === 0) return false;
+  const lower = name.toLowerCase();
+  const tokens = lower.split(/[\s,.\-&/]+/).filter(Boolean);
+  if (tokens.some(t => ORG_INDICATORS.has(t))) return false;
+  return tokens.length >= 2 && tokens.length <= 4;
+}
+
 // ─── Maps field-key prefixes to CDM entity types ──────────────────────────────
 const PARTY_PREFIX_TYPES: Record<string, "PERSON" | "ORGANIZATION"> = {
   vendor:      "ORGANIZATION",
@@ -89,10 +119,7 @@ export function inferParties(
     // Skip raw entity-type keys (e.g. "email", "phone", "address") — these are not party roles
     if (SKIP_RAW_ENTITY_PREFIXES.has(prefix)) continue;
 
-    // Determine entity type from prefix map; unknown prefixes → ORGANIZATION
-    const entityType: "PERSON" | "ORGANIZATION" = PARTY_PREFIX_TYPES[prefix] ?? "ORGANIZATION";
-
-    // Find the primary name field for this cluster
+    // Find the primary name field for this cluster (needed for heuristic below)
     const nameAttr    = groupAttrs.find(a => a.field_key === `${prefix}_name` || a.field_key === "name");
     const emailAttr   = groupAttrs.find(a => a.field_key.includes("email"));
     const phoneAttr   = groupAttrs.find(a => a.field_key.includes("phone") || a.field_key.includes("mobile"));
@@ -103,6 +130,16 @@ export function inferParties(
 
     // Skip clusters with no identifying signal at all
     if (!nameAttr && !emailAttr && !phoneAttr) continue;
+
+    // Determine entity type from prefix map; unknown prefixes → ORGANIZATION
+    let entityType: "PERSON" | "ORGANIZATION" = PARTY_PREFIX_TYPES[prefix] ?? "ORGANIZATION";
+
+    // Heuristic override: if prefix says ORGANIZATION but the primary name
+    // looks like a human name (2–4 tokens, no org-indicator words), reclassify
+    // to PERSON so "John Doe" is not stored as an organisation.
+    if (entityType === "ORGANIZATION" && nameAttr && looksLikePersonName(nameAttr.value_normalized)) {
+      entityType = "PERSON";
+    }
 
     const displayName =
       nameAttr?.value_normalized ??

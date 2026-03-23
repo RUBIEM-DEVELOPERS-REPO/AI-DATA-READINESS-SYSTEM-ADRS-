@@ -33,7 +33,8 @@ A comprehensive platform that transforms raw, unstructured evidence (PDFs, image
 - `server/services/ai-extraction.ts` — **AI document intelligence** using GPT-5-mini (gpt-5-mini) for structured field/entity extraction + Whisper (gpt-4o-mini-transcribe) for real audio transcription; uses `AI_INTEGRATIONS_OPENAI_API_KEY` + `AI_INTEGRATIONS_OPENAI_BASE_URL` from Replit AI Integration (no personal key); model version: `adrs-ai-v2.0`
 - `server/services/normalization.ts` — ValueNormalizationService + AutoApprovalPolicy + DedupService + QualityGates (imports ADRS_CONFIG)
 - `server/services/publishing.ts` — Multi-artifact generator (ML CSV, KG JSONL, RAG JSONL, Dataset Card JSON, Bundle ZIP via jszip)
-- `server/services/party-inference.ts` — Auto-PARTY + Identifier + Document CDM entity inference from normalized attributes
+- `server/services/party-inference.ts` — Auto-PARTY + Identifier + Document CDM entity inference; `looksLikePersonName()` heuristic prevents human names (e.g. "John Doe") from being wrongly stored as ORGANIZATION
+- `server/services/golden-records.ts` — Deterministic entity resolution: groups PERSON/ORGANIZATION entities by normalised name + email + phone; selects highest-confidence as golden record; zero hallucination (no AI invention)
 
 ### Database
 PostgreSQL (Replit managed) via `DATABASE_URL` environment variable.
@@ -66,6 +67,9 @@ PostgreSQL (Replit managed) via `DATABASE_URL` environment variable.
 | GET | `/api/extractions/:id/text` | Dedicated text endpoint returning extraction_texts record |
 | GET/POST/PATCH | `/api/validation` | HITL validation tasks |
 | GET/POST/PATCH | `/api/cdm` | CDM entities |
+| GET | `/api/cdm/golden-records` | List all golden records with absorbed duplicates |
+| POST | `/api/cdm/reclassify` | AI-powered fix: corrects PERSON/ORGANIZATION mismatches + reclassifies doc_type=OTHER runs |
+| POST | `/api/cdm/golden-records/compute` | Deterministic entity resolution — groups by name/email/phone, promotes golden records |
 | GET/POST/PATCH | `/api/datasets` | Published datasets |
 | POST | `/api/datasets/:id/publish` | Publish with multi-artifact generation; returns 422 if qualityScore < 0.60 (unless `override:true` + `overrideReason` provided) |
 | GET | `/api/datasets/:code/artifact` | Download artifact: `type=ml` (CSV), `type=kg_entities/kg_edges/kg_identifiers/rag_chunks` (JSONL), `type=bundle` (ZIP) |

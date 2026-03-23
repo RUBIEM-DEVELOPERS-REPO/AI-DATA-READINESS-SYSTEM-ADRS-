@@ -189,6 +189,104 @@ export async function aiExtractDocumentFields(
   }
 }
 
+// ─── AI Doc-Type Reclassification ─────────────────────────────────────────────
+/**
+ * Re-classifies the document type from existing OCR/summary text.
+ * Used for documents currently stored as "OTHER".
+ * Returns the normalised doc_type and a confidence score.
+ * Zero hallucination: output is constrained to a fixed enum; no new data invented.
+ */
+export async function aiReclassifyDocType(
+  text: string,
+  fileName: string
+): Promise<{ docType: string; confidence: number }> {
+  const truncated = (text ?? "").slice(0, 6000).trim();
+  if (truncated.length < 20) {
+    return { docType: "OTHER", confidence: 0.4 };
+  }
+  try {
+    const response = await openai.chat.completions.create({
+      model: "gpt-5-mini",
+      messages: [
+        {
+          role: "system",
+          content:
+            "You are a document classifier for an African financial data platform. " +
+            "Classify the document type from its text content. " +
+            "Return ONLY a valid JSON object — no markdown, no preamble:\n" +
+            '{"doc_type":"INVOICE|RECEIPT|CONTRACT|REPORT|PERMIT|IDENTITY|FINANCIAL|CORRESPONDENCE|OTHER","confidence":0.0-1.0}\n' +
+            "RULES:\n" +
+            "- Quotations and purchase orders → INVOICE\n" +
+            "- Receipts and payment confirmations → FINANCIAL\n" +
+            "- Only use OTHER if truly ambiguous after reading the text\n" +
+            "- confidence must reflect how certain you are from the actual content",
+        },
+        {
+          role: "user",
+          content: `Classify this document.\n\nFilename: ${fileName}\n\nContent:\n${truncated}`,
+        },
+      ],
+      response_format: { type: "json_object" },
+      max_completion_tokens: 80,
+    });
+    const parsed = JSON.parse(response.choices[0]?.message?.content ?? "{}");
+    return {
+      docType: normalizeDocType(parsed.doc_type ?? "OTHER"),
+      confidence: Math.min(1, Math.max(0.4, Number(parsed.confidence) || 0.6)),
+    };
+  } catch (err: any) {
+    console.error("[AI Reclassify DocType]", err?.message ?? err);
+    return { docType: "OTHER", confidence: 0.4 };
+  }
+}
+
+// ─── AI Entity-Type Classification ────────────────────────────────────────────
+/**
+ * Determines whether a CDM entity is a PERSON or ORGANIZATION using AI.
+ * The model only looks at name + canonical field context already in the DB —
+ * it never invents data, so hallucination risk is zero.
+ */
+export async function aiClassifyEntityType(
+  displayName: string,
+  canonicalFields: Record<string, any>
+): Promise<{ entityType: "PERSON" | "ORGANIZATION"; confidence: number }> {
+  const context = Object.entries(canonicalFields)
+    .slice(0, 8)
+    .map(([k, v]) => `${k}: ${String(v).slice(0, 80)}`)
+    .join("; ");
+  try {
+    const response = await openai.chat.completions.create({
+      model: "gpt-5-mini",
+      messages: [
+        {
+          role: "system",
+          content:
+            "You are an entity classifier. Classify the entity as PERSON (individual human) or " +
+            "ORGANIZATION (company, institution, NGO, bank, government body, association, etc.).\n" +
+            "Return ONLY valid JSON — no markdown:\n" +
+            '{"entity_type":"PERSON|ORGANIZATION","confidence":0.0-1.0}',
+        },
+        {
+          role: "user",
+          content: `Name: ${displayName}\nContext: ${context}`,
+        },
+      ],
+      response_format: { type: "json_object" },
+      max_completion_tokens: 50,
+    });
+    const parsed = JSON.parse(response.choices[0]?.message?.content ?? "{}");
+    const entityType: "PERSON" | "ORGANIZATION" =
+      String(parsed.entity_type ?? "").toUpperCase() === "PERSON" ? "PERSON" : "ORGANIZATION";
+    return {
+      entityType,
+      confidence: Math.min(1, Math.max(0.5, Number(parsed.confidence) || 0.7)),
+    };
+  } catch (err: any) {
+    console.error("[AI Classify EntityType]", err?.message ?? err);
+    return { entityType: "ORGANIZATION", confidence: 0.5 };
+  }
+}
+
 // ─── AI Audio Transcription ─────────────────────────────────────────────────
 
 export async function aiTranscribeAudio(storedUri: string, fileName: string): Promise<string> {
