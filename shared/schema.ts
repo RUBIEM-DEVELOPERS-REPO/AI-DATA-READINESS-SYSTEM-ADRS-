@@ -160,6 +160,7 @@ export const validationTasks = pgTable("validation_tasks", {
   approvalPolicyRule: text("approval_policy_rule"),
   approvalPolicyReason: text("approval_policy_reason"),
   weakFields: jsonb("weak_fields"),
+  conflictDetails: jsonb("conflict_details"),
   validatedAt: timestamp("validated_at"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
@@ -411,4 +412,28 @@ export interface DatasetCard {
   };
   quality_gates?: ArtifactQualityGates;
   approvals?: Array<{ role: string; user: string; timestamp: string }>;
+}
+
+// ─── Conflict detail structures (shared between server and client) ────────────
+export interface ConflictOption {
+  value: string;
+  confidence: number;
+  source_field: string;
+}
+
+export interface ConflictDetail {
+  field_key: string;
+  options: ConflictOption[];
+  chosen_value: string;       // auto-selected (highest confidence)
+  resolved?: boolean;
+  resolved_value?: string;
+  resolved_source?: "option_a" | "option_b" | "custom";
+  resolved_by?: string;
+  resolved_at?: string;
+}
+
+export interface ConflictResolution {
+  field_key: string;
+  chosen_value: string;
+  source: "option_a" | "option_b" | "custom";
 }

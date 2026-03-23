@@ -1,19 +1,22 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { useState } from "react";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { useState, useEffect } from "react";
+import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
+import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Separator } from "@/components/ui/separator";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import type { ValidationTask, ExtractionRun, EvidenceFile } from "@shared/schema";
+import type { ValidationTask, ExtractionRun, EvidenceFile, ConflictDetail, ConflictResolution } from "@shared/schema";
 import {
-  CheckSquare, CheckCircle2, XCircle, AlertTriangle, Clock, User, ArrowUpRight, Eye, Shield, ScanLine, Info
+  CheckSquare, CheckCircle2, XCircle, AlertTriangle, Clock, User, ArrowUpRight,
+  Eye, Shield, ScanLine, Info, GitMerge, CheckCheck, ChevronDown, ChevronUp, Pencil
 } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 
@@ -78,6 +81,21 @@ function ValidationCard({ task, extraction, evidence, onAction }: {
           </div>
         </div>
 
+        {/* Conflict indicator */}
+        {Array.isArray(task.conflictDetails) && (task.conflictDetails as ConflictDetail[]).length > 0 && (() => {
+          const conflicts = task.conflictDetails as ConflictDetail[];
+          const unresolved = conflicts.filter(d => !d.resolved).length;
+          return (
+            <div className="flex items-center gap-1.5">
+              <GitMerge className="w-3 h-3 text-destructive" />
+              <span className="text-xs text-destructive font-medium">
+                {unresolved > 0 ? `${unresolved} conflict${unresolved !== 1 ? "s" : ""} to resolve` : "All conflicts resolved"}
+              </span>
+              {unresolved === 0 && <CheckCheck className="w-3 h-3 text-chart-3" />}
+            </div>
+          );
+        })()}
+
         {task.fieldsToValidate && task.fieldsToValidate.length > 0 && (
           <div className="flex flex-wrap gap-1">
             {[...new Set(task.fieldsToValidate)].slice(0, 3).map((f, i) => (
@@ -104,6 +122,187 @@ function ValidationCard({ task, extraction, evidence, onAction }: {
   );
 }
 
+// ─── Conflict resolution panel ───────────────────────────────────────────────
+type ResolutionState = Record<string, { chosen_value: string; source: "option_a" | "option_b" | "custom"; custom_text: string }>;
+
+function ConflictPanel({ task, onResolved }: { task: ValidationTask; onResolved: () => void }) {
+  const { toast } = useToast();
+  const details: ConflictDetail[] = (task.conflictDetails as ConflictDetail[]) ?? [];
+  const [resolutions, setResolutions] = useState<ResolutionState>(() =>
+    Object.fromEntries(details.map(d => [d.field_key, { chosen_value: d.chosen_value, source: "option_a", custom_text: "" }]))
+  );
+  const [showResolved, setShowResolved] = useState(false);
+
+  useEffect(() => {
+    setResolutions(Object.fromEntries(details.map(d => [d.field_key, { chosen_value: d.resolved_value ?? d.chosen_value, source: d.resolved_source ?? "option_a", custom_text: d.resolved_value ?? "" }])));
+  }, [task.id]);
+
+  const unresolvedDetails = details.filter(d => !d.resolved);
+  const resolvedDetails   = details.filter(d => d.resolved);
+
+  const resolveMutation = useMutation({
+    mutationFn: () => apiRequest("POST", `/api/validation/${task.id}/resolve-conflict`, {
+      resolutions: unresolvedDetails.map(d => ({
+        field_key: d.field_key,
+        chosen_value: resolutions[d.field_key]?.source === "custom"
+          ? resolutions[d.field_key]?.custom_text
+          : resolutions[d.field_key]?.chosen_value,
+        source: resolutions[d.field_key]?.source ?? "option_a",
+      })),
+    }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/validation"] });
+      toast({ title: "Conflicts resolved", description: "Your decisions have been applied and audited." });
+      onResolved();
+    },
+    onError: () => toast({ title: "Error", description: "Failed to apply conflict resolutions.", variant: "destructive" }),
+  });
+
+  if (details.length === 0) return null;
+
+  const selectOption = (fieldKey: string, idx: number) => {
+    const d = details.find(x => x.field_key === fieldKey);
+    if (!d) return;
+    setResolutions(prev => ({
+      ...prev,
+      [fieldKey]: { chosen_value: d.options[idx]?.value ?? "", source: idx === 0 ? "option_a" : "option_b", custom_text: prev[fieldKey]?.custom_text ?? "" },
+    }));
+  };
+
+  const selectCustom = (fieldKey: string, text: string) => {
+    setResolutions(prev => ({
+      ...prev,
+      [fieldKey]: { chosen_value: text, source: "custom", custom_text: text },
+    }));
+  };
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center gap-2">
+        <GitMerge className="w-4 h-4 text-destructive" />
+        <h4 className="text-xs font-semibold text-foreground uppercase tracking-wide">
+          Field Conflicts — {unresolvedDetails.length} unresolved
+        </h4>
+        {unresolvedDetails.length > 0 && (
+          <Badge variant="outline" className="text-xs border-destructive/40 text-destructive bg-destructive/5 ml-auto">Needs Resolution</Badge>
+        )}
+      </div>
+
+      {unresolvedDetails.map((d) => {
+        const res = resolutions[d.field_key];
+        return (
+          <div key={d.field_key} className="rounded-lg border border-chart-5/30 bg-chart-5/3 p-3 space-y-2" data-testid={`conflict-field-${d.field_key}`}>
+            <p className="text-xs font-semibold text-foreground capitalize">{d.field_key.replace(/_/g, " ")}</p>
+
+            {d.options.map((opt, idx) => {
+              const isSelected = res?.source === (idx === 0 ? "option_a" : "option_b");
+              return (
+                <button
+                  key={idx}
+                  type="button"
+                  onClick={() => selectOption(d.field_key, idx)}
+                  data-testid={`conflict-option-${d.field_key}-${idx}`}
+                  className={`w-full text-left flex items-start gap-2.5 p-2.5 rounded-md border transition-colors ${
+                    isSelected
+                      ? "border-primary bg-primary/5 ring-1 ring-primary/20"
+                      : "border-border bg-background hover:border-primary/40 hover:bg-primary/3"
+                  }`}
+                >
+                  <span className={`mt-0.5 w-3.5 h-3.5 rounded-full border-2 flex-shrink-0 ${isSelected ? "border-primary bg-primary" : "border-muted-foreground"}`} />
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className="text-[10px] font-semibold text-muted-foreground uppercase">
+                        Option {String.fromCharCode(65 + idx)}
+                      </span>
+                      <Badge variant="outline" className={`text-[10px] h-4 px-1 ${opt.confidence >= 0.85 ? "border-chart-3/40 text-chart-3 bg-chart-3/5" : "border-chart-5/40 text-chart-5 bg-chart-5/5"}`}>
+                        {Math.round(opt.confidence * 100)}% confidence
+                      </Badge>
+                      <span className="text-[10px] text-muted-foreground">from: {opt.source_field}</span>
+                    </div>
+                    <p className="text-xs font-medium text-foreground mt-0.5 break-all">{opt.value}</p>
+                  </div>
+                </button>
+              );
+            })}
+
+            {/* Custom value option */}
+            <div
+              className={`flex items-start gap-2.5 p-2.5 rounded-md border transition-colors cursor-pointer ${
+                res?.source === "custom"
+                  ? "border-primary bg-primary/5 ring-1 ring-primary/20"
+                  : "border-border bg-background"
+              }`}
+              onClick={() => selectCustom(d.field_key, res?.custom_text ?? "")}
+              data-testid={`conflict-custom-${d.field_key}`}
+            >
+              <span className={`mt-2 w-3.5 h-3.5 rounded-full border-2 flex-shrink-0 ${res?.source === "custom" ? "border-primary bg-primary" : "border-muted-foreground"}`} />
+              <div className="flex-1 space-y-1">
+                <div className="flex items-center gap-1.5">
+                  <Pencil className="w-3 h-3 text-muted-foreground" />
+                  <span className="text-[10px] font-semibold text-muted-foreground uppercase">Custom Value</span>
+                </div>
+                <Input
+                  value={res?.custom_text ?? ""}
+                  onChange={(e) => { e.stopPropagation(); selectCustom(d.field_key, e.target.value); }}
+                  onClick={(e) => e.stopPropagation()}
+                  placeholder="Type the correct value..."
+                  className="h-7 text-xs"
+                  data-testid={`conflict-custom-input-${d.field_key}`}
+                />
+              </div>
+            </div>
+          </div>
+        );
+      })}
+
+      {unresolvedDetails.length > 0 && (
+        <Button
+          size="sm"
+          className="w-full gap-2 bg-primary text-primary-foreground"
+          disabled={resolveMutation.isPending || unresolvedDetails.some(d => resolutions[d.field_key]?.source === "custom" && !resolutions[d.field_key]?.custom_text?.trim())}
+          onClick={() => resolveMutation.mutate()}
+          data-testid="button-apply-resolutions"
+        >
+          <CheckCheck className="w-3.5 h-3.5" />
+          {resolveMutation.isPending ? "Applying…" : `Apply ${unresolvedDetails.length} Resolution${unresolvedDetails.length !== 1 ? "s" : ""}`}
+        </Button>
+      )}
+
+      {resolvedDetails.length > 0 && (
+        <div>
+          <button
+            type="button"
+            className="flex items-center gap-1.5 text-[10px] text-muted-foreground hover:text-foreground transition-colors"
+            onClick={() => setShowResolved(v => !v)}
+            data-testid="toggle-resolved-conflicts"
+          >
+            {showResolved ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+            {resolvedDetails.length} resolved conflict{resolvedDetails.length !== 1 ? "s" : ""}
+          </button>
+          {showResolved && (
+            <div className="mt-2 space-y-1.5">
+              {resolvedDetails.map(d => (
+                <div key={d.field_key} className="flex items-center gap-2 p-2 rounded-md border border-chart-3/20 bg-chart-3/5 text-xs" data-testid={`resolved-conflict-${d.field_key}`}>
+                  <CheckCheck className="w-3.5 h-3.5 text-chart-3 flex-shrink-0" />
+                  <div className="flex-1 min-w-0">
+                    <span className="font-medium capitalize">{d.field_key.replace(/_/g, " ")}</span>
+                    <span className="text-muted-foreground"> → </span>
+                    <span className="font-mono">{d.resolved_value}</span>
+                  </div>
+                  <span className="text-[10px] text-muted-foreground flex-shrink-0">
+                    {d.resolved_by} · {d.resolved_at ? new Date(d.resolved_at).toLocaleString() : ""}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Review dialog ────────────────────────────────────────────────────────────
 function ReviewDialog({ task, extraction, evidence, open, onClose }: {
   task: ValidationTask;
   extraction?: ExtractionRun;
@@ -113,6 +312,16 @@ function ReviewDialog({ task, extraction, evidence, open, onClose }: {
 }) {
   const { toast } = useToast();
   const [notes, setNotes] = useState(task.validatorNotes ?? "");
+  const [localTask, setLocalTask] = useState<ValidationTask>(task);
+
+  // Re-fetch task when conflicts are resolved so the panel refreshes
+  const { data: freshTask } = useQuery<ValidationTask>({
+    queryKey: ["/api/validation", task.id],
+    queryFn: () => fetch(`/api/validation/${task.id}`).then(r => r.json()),
+    enabled: open,
+    refetchInterval: false,
+  });
+  const displayTask = freshTask ?? localTask;
 
   const mutation = useMutation({
     mutationFn: ({ status, notes }: { status: string; notes: string }) =>
@@ -128,38 +337,82 @@ function ReviewDialog({ task, extraction, evidence, open, onClose }: {
 
   const fields = (extraction?.extractedFields as Record<string, any>) ?? {};
   const entities = (extraction?.extractedEntities as any[]) ?? [];
+  const hasConflicts = Array.isArray(displayTask.conflictDetails) && (displayTask.conflictDetails as ConflictDetail[]).length > 0;
+  const unresolvedCount = hasConflicts ? (displayTask.conflictDetails as ConflictDetail[]).filter(d => !d.resolved).length : 0;
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-w-2xl max-h-[80vh] overflow-auto">
+      <DialogContent className="max-w-2xl max-h-[85vh] overflow-auto">
         <DialogHeader>
           <DialogTitle className="text-sm flex items-center gap-2">
             <CheckSquare className="w-4 h-4 text-primary" />
             Human Validation — {task.taskCode}
+            {unresolvedCount > 0 && (
+              <Badge variant="outline" className="ml-2 text-xs border-destructive/40 text-destructive bg-destructive/5">
+                {unresolvedCount} conflict{unresolvedCount !== 1 ? "s" : ""}
+              </Badge>
+            )}
           </DialogTitle>
         </DialogHeader>
 
         <div className="space-y-4">
+          {/* Summary */}
           <div className="grid grid-cols-2 gap-3 p-3 rounded-md bg-muted text-xs">
             <div><span className="text-muted-foreground">File:</span> <span className="font-medium">{evidence?.fileName ?? "—"}</span></div>
             <div><span className="text-muted-foreground">Type:</span> <span className="font-medium">{extraction?.docType ?? "—"}</span></div>
-            <div><span className="text-muted-foreground">Trust Score:</span> <span className="font-medium">{Math.round(task.trustScore * 100)}%</span></div>
-            <div><span className="text-muted-foreground">Assigned:</span> <span className="font-medium">{task.assignedTo ?? "—"}</span></div>
+            <div><span className="text-muted-foreground">Trust Score:</span>
+              <span className={`font-medium ml-1 ${Math.round(task.trustScore * 100) >= 70 ? "text-chart-3" : "text-destructive"}`}>
+                {Math.round(task.trustScore * 100)}%
+              </span>
+            </div>
+            <div><span className="text-muted-foreground">Policy:</span> <span className="font-medium">{task.approvalPolicyRule ?? "—"}</span></div>
           </div>
 
+          {task.approvalPolicyReason && (
+            <div className="flex items-start gap-2 p-2.5 rounded-md border border-chart-5/30 bg-chart-5/5 text-xs text-chart-5">
+              <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
+              <span>{task.approvalPolicyReason}</span>
+            </div>
+          )}
+
+          {/* ── Conflict Resolution Panel ── */}
+          {hasConflicts && (
+            <>
+              <Separator />
+              <ConflictPanel
+                task={displayTask}
+                onResolved={() => {
+                  queryClient.invalidateQueries({ queryKey: ["/api/validation"] });
+                  queryClient.invalidateQueries({ queryKey: ["/api/validation", task.id] });
+                }}
+              />
+              <Separator />
+            </>
+          )}
+
+          {/* ── Fields ── */}
           {Object.keys(fields).length > 0 && (
             <div>
-              <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Fields to Validate</h4>
-              <div className="space-y-2">
+              <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Extracted Fields</h4>
+              <div className="space-y-1.5">
                 {Object.entries(fields).map(([key, val]) => {
                   const needsValidation = task.fieldsToValidate?.includes(key);
+                  const isConflict = hasConflicts && (displayTask.conflictDetails as ConflictDetail[]).some(d => d.field_key === key);
                   return (
-                    <div key={key} className={`flex items-center justify-between p-2.5 rounded-md border ${needsValidation ? "border-chart-5/40 bg-chart-5/5" : "border-border"}`} data-testid={`field-row-${key}`}>
-                      <div>
-                        <p className="text-xs font-medium text-foreground capitalize">{key.replace(/_/g, " ")}</p>
-                        <p className="text-xs text-muted-foreground">{String(val)}</p>
+                    <div
+                      key={key}
+                      className={`flex items-center justify-between p-2.5 rounded-md border text-xs ${
+                        isConflict ? "border-destructive/30 bg-destructive/5" :
+                        needsValidation ? "border-chart-5/40 bg-chart-5/5" : "border-border"
+                      }`}
+                      data-testid={`field-row-${key}`}
+                    >
+                      <div className="min-w-0 flex-1">
+                        <p className="font-medium capitalize">{key.replace(/_/g, " ")}</p>
+                        <p className="text-muted-foreground truncate">{String(val)}</p>
                       </div>
-                      {needsValidation && <Badge variant="outline" className="text-xs border-chart-5/40 text-chart-5 bg-chart-5/5">Review</Badge>}
+                      {isConflict && <Badge variant="outline" className="text-xs border-destructive/40 text-destructive bg-destructive/5 ml-2 flex-shrink-0">Conflict</Badge>}
+                      {!isConflict && needsValidation && <Badge variant="outline" className="text-xs border-chart-5/40 text-chart-5 bg-chart-5/5 ml-2 flex-shrink-0">Review</Badge>}
                     </div>
                   );
                 })}
@@ -167,6 +420,7 @@ function ReviewDialog({ task, extraction, evidence, open, onClose }: {
             </div>
           )}
 
+          {/* ── Entities ── */}
           {entities.length > 0 && (
             <div>
               <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Extracted Entities</h4>
@@ -182,6 +436,7 @@ function ReviewDialog({ task, extraction, evidence, open, onClose }: {
             </div>
           )}
 
+          {/* ── Validator Notes ── */}
           <div>
             <Label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2 block">Validator Notes</Label>
             <Textarea
@@ -194,6 +449,7 @@ function ReviewDialog({ task, extraction, evidence, open, onClose }: {
             />
           </div>
 
+          {/* ── Actions ── */}
           <div className="flex items-center gap-2 pt-2 border-t border-border flex-wrap">
             <Button
               size="sm"
@@ -282,10 +538,11 @@ export default function Validation() {
       <div className="flex items-start gap-3 p-4 rounded-xl border border-chart-2/30 bg-chart-2/5" data-testid="banner-validation-threshold">
         <Info className="w-4 h-4 text-chart-2 mt-0.5 shrink-0" />
         <div className="space-y-0.5">
-          <p className="text-sm font-semibold text-foreground">Automated triage — only low-trust files require human review</p>
+          <p className="text-sm font-semibold text-foreground">Automated triage — two conditions trigger human review</p>
           <p className="text-xs text-muted-foreground">
-            Files extracted with a trust score of <strong className="text-foreground">70% or above</strong> are automatically accepted and promoted to the CDM — no human review needed.
-            Only files scoring <strong className="text-foreground">below 70%</strong> are queued here for human validation, regardless of whether field conflicts are present.
+            Files are queued here when the trust score falls <strong className="text-foreground">below 70%</strong>, or when the AI detected
+            <strong className="text-foreground"> conflicting values</strong> for the same field from different sources.
+            Conflicts must be explicitly resolved by a human before the record is promoted to the CDM. Every resolution is fully audited.
           </p>
         </div>
         <div className="shrink-0 flex flex-col items-center text-center ml-auto pl-3 border-l border-chart-2/20">

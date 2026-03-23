@@ -233,15 +233,34 @@ export interface DedupResult {
   deduped: NormalizedAttribute[];
   /** Keys where conflicting normalized values were found */
   conflictKeys: string[];
+  /** Full candidate sets for each conflict — drives human resolution UI */
+  conflictDetails: Array<{
+    field_key: string;
+    options: Array<{ value: string; confidence: number; source_field: string }>;
+    chosen_value: string;
+  }>;
 }
 
 export function dedupAttributes(attrs: NormalizedAttribute[]): DedupResult {
   const map = new Map<string, NormalizedAttribute>();
   const conflictKeys: string[] = [];
+  // Track ALL candidate values seen per map key (for conflict resolution UI)
+  const candidateMap = new Map<string, Array<{ value: string; confidence: number; source_field: string }>>();
 
   for (const attr of attrs) {
     const mapKey = `${attr.subject_type}:${attr.field_key}`;
     const existing = map.get(mapKey);
+
+    // Accumulate candidates
+    const candidates = candidateMap.get(mapKey) ?? [];
+    const alreadySeen = candidates.find(c => c.value === attr.value_normalized);
+    if (!alreadySeen) {
+      candidates.push({ value: attr.value_normalized, confidence: attr.confidence_score, source_field: attr.field_key });
+    } else if (attr.confidence_score > alreadySeen.confidence) {
+      alreadySeen.confidence = attr.confidence_score;
+    }
+    candidateMap.set(mapKey, candidates);
+
     if (!existing) {
       map.set(mapKey, attr);
     } else {
@@ -269,7 +288,18 @@ export function dedupAttributes(attrs: NormalizedAttribute[]): DedupResult {
     }
   }
 
-  return { deduped: Array.from(map.values()), conflictKeys };
+  // Build conflict details from accumulated candidates
+  const conflictDetails = conflictKeys.map(mapKey => {
+    const winner = map.get(mapKey);
+    const options = (candidateMap.get(mapKey) ?? []).sort((a, b) => b.confidence - a.confidence);
+    return {
+      field_key: winner?.field_key ?? mapKey.split(":").slice(1).join(":"),
+      options,
+      chosen_value: winner?.value_normalized ?? (options[0]?.value ?? ""),
+    };
+  });
+
+  return { deduped: Array.from(map.values()), conflictKeys, conflictDetails };
 }
 
 // ─── Quality gate checks ──────────────────────────────────────────────────────

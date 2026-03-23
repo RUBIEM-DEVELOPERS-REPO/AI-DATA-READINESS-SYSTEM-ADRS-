@@ -531,16 +531,19 @@ export async function registerRoutes(httpServer: any, app: Express): Promise<any
         await storage.createAuditLog({ action: attr.validation_state === "AUTO_APPROVED" ? "APPROVE_FIELD" : "REVIEW_FIELD", resourceType: "ATTRIBUTE", resourceId: run.id, userId: "system", details: { field_key: attr.field_key, policy_rule: attr.approval_policy_rule ?? "PASSED", confidence: attr.confidence_score }, tenantId: "TENANT-001" });
       }
 
-      // 10. Auto-create ONE validation task — only when trust score < 70%
-      if (trustScore < ADRS_CONFIG.thresholds.auto_validation_task) {
+      // 10. Auto-create validation task — fires on field conflicts OR trust < 70% (one task per run)
+      const hasConflicts10 = conflictKeys.length > 0;
+      const isLowTrust10   = trustScore < ADRS_CONFIG.thresholds.auto_validation_task;
+      if (hasConflicts10 || isLowTrust10) {
         const conflictFieldKeys = conflictKeys.map(k => k.split(":").slice(1).join(":"));
         const pendingFieldKeys  = dedupedAttrs.filter(a => a.validation_state === "PENDING").map(a => a.field_key);
         const allFields = [...new Set([...conflictFieldKeys, ...pendingFieldKeys])];
-        const reasons: string[] = [`trust score ${(trustScore * 100).toFixed(0)}% is below the ${(ADRS_CONFIG.thresholds.auto_validation_task * 100).toFixed(0)}% threshold`];
-        if (conflictKeys.length > 0) reasons.push(`${conflictKeys.length} field conflict(s) detected`);
-        const rule = conflictKeys.length > 0 ? "CONFLICT" : "LOW_TRUST";
-        await storage.createValidationTask({ taskCode: generateCode("VAL"), extractionRunId: run.id, evidenceId: run.evidenceId, status: "PENDING_VALIDATION", fieldsToValidate: allFields, trustScore, approvalStage: 1, maxApprovalStages: 1, approvalPolicyRule: rule, approvalPolicyReason: `Requires human review: ${reasons.join("; ")}.`, weakFields: conflictKeys.length > 0 ? conflictKeys : undefined });
-        await storage.createAuditLog({ action: "VALIDATION_TASK_AUTO_CREATED", resourceType: "VALIDATION", resourceId: run.id, userId: "system", details: { reason: rule, trust_score: trustScore, threshold: ADRS_CONFIG.thresholds.auto_validation_task }, tenantId: "TENANT-001" });
+        const reasons: string[] = [];
+        if (hasConflicts10) reasons.push(`${conflictKeys.length} field conflict(s) require resolution`);
+        if (isLowTrust10) reasons.push(`trust score ${(trustScore * 100).toFixed(0)}% is below the ${(ADRS_CONFIG.thresholds.auto_validation_task * 100).toFixed(0)}% threshold`);
+        const rule = hasConflicts10 ? "CONFLICT" : "LOW_TRUST";
+        await storage.createValidationTask({ taskCode: generateCode("VAL"), extractionRunId: run.id, evidenceId: run.evidenceId, status: "PENDING_VALIDATION", fieldsToValidate: allFields, trustScore, approvalStage: 1, maxApprovalStages: 1, approvalPolicyRule: rule, approvalPolicyReason: `Requires human review: ${reasons.join("; ")}.`, weakFields: hasConflicts10 ? conflictKeys : undefined, conflictDetails: hasConflicts10 ? conflictDetails : undefined } as any);
+        await storage.createAuditLog({ action: "VALIDATION_TASK_AUTO_CREATED", resourceType: "VALIDATION", resourceId: run.id, userId: "system", details: { reason: rule, has_conflicts: hasConflicts10, conflict_count: conflictKeys.length, trust_score: trustScore, threshold: ADRS_CONFIG.thresholds.auto_validation_task }, tenantId: "TENANT-001" });
       }
 
       // 11. Party inference — field-based + raw-entity-based
@@ -637,16 +640,19 @@ export async function registerRoutes(httpServer: any, app: Express): Promise<any
       await storage.createAuditLog({ action: attr.validation_state === "AUTO_APPROVED" ? "APPROVE_FIELD" : "REVIEW_FIELD", resourceType: "ATTRIBUTE", resourceId: run.id, userId: "system", details: { field_key: attr.field_key, policy_rule: attr.approval_policy_rule ?? "PASSED", value_normalized: attr.value_normalized, confidence: attr.confidence_score }, tenantId: "TENANT-001" });
     }
 
-    // 5 & 6. Auto-create ONE validation task — only when trust score < 70%
-    if (trustScore < ADRS_CONFIG.thresholds.auto_validation_task) {
+    // 5 & 6. Auto-create validation task — fires on conflicts OR trust < 70% (one task per run)
+    const hasConflicts56 = conflictKeys.length > 0;
+    const isLowTrust56   = trustScore < ADRS_CONFIG.thresholds.auto_validation_task;
+    if (hasConflicts56 || isLowTrust56) {
       const conflictFieldKeys = conflictKeys.map(k => k.split(":").slice(1).join(":"));
       const pendingFieldKeys  = dedupedAttrs.filter(a => a.validation_state === "PENDING").map(a => a.field_key);
       const allFields = [...new Set([...conflictFieldKeys, ...pendingFieldKeys])];
-      const reasons: string[] = [`trust score ${(trustScore * 100).toFixed(0)}% is below the ${(ADRS_CONFIG.thresholds.auto_validation_task * 100).toFixed(0)}% threshold`];
-      if (conflictKeys.length > 0) reasons.push(`${conflictKeys.length} field conflict(s) detected`);
-      const rule = conflictKeys.length > 0 ? "CONFLICT" : "LOW_TRUST";
-      await storage.createValidationTask({ taskCode: generateCode("VAL"), extractionRunId: run.id, evidenceId: run.evidenceId, status: "PENDING_VALIDATION", fieldsToValidate: allFields, trustScore, approvalStage: 1, maxApprovalStages: 1, approvalPolicyRule: rule, approvalPolicyReason: `Requires human review: ${reasons.join("; ")}.`, weakFields: conflictKeys.length > 0 ? conflictKeys : undefined });
-      await storage.createAuditLog({ action: "VALIDATION_TASK_AUTO_CREATED", resourceType: "VALIDATION", resourceId: run.id, userId: "system", details: { reason: rule, trust_score: trustScore, threshold: ADRS_CONFIG.thresholds.auto_validation_task }, tenantId: "TENANT-001" });
+      const reasons: string[] = [];
+      if (hasConflicts56) reasons.push(`${conflictKeys.length} field conflict(s) require resolution`);
+      if (isLowTrust56) reasons.push(`trust score ${(trustScore * 100).toFixed(0)}% is below the ${(ADRS_CONFIG.thresholds.auto_validation_task * 100).toFixed(0)}% threshold`);
+      const rule = hasConflicts56 ? "CONFLICT" : "LOW_TRUST";
+      await storage.createValidationTask({ taskCode: generateCode("VAL"), extractionRunId: run.id, evidenceId: run.evidenceId, status: "PENDING_VALIDATION", fieldsToValidate: allFields, trustScore, approvalStage: 1, maxApprovalStages: 1, approvalPolicyRule: rule, approvalPolicyReason: `Requires human review: ${reasons.join("; ")}.`, weakFields: hasConflicts56 ? conflictKeys : undefined, conflictDetails: hasConflicts56 ? conflictDetails : undefined } as any);
+      await storage.createAuditLog({ action: "VALIDATION_TASK_AUTO_CREATED", resourceType: "VALIDATION", resourceId: run.id, userId: "system", details: { reason: rule, has_conflicts: hasConflicts56, conflict_count: conflictKeys.length, trust_score: trustScore, threshold: ADRS_CONFIG.thresholds.auto_validation_task }, tenantId: "TENANT-001" });
     }
 
     // 7. Party inference — field-based + raw-entity-based
@@ -703,6 +709,114 @@ export async function registerRoutes(httpServer: any, app: Express): Promise<any
     const action = req.body.status === "APPROVED" ? "VALIDATION_APPROVED" : req.body.status === "REJECTED" ? "VALIDATION_REJECTED" : "VALIDATION_UPDATED";
     await storage.createAuditLog({ action, resourceType: "VALIDATION", resourceId: task?.taskCode, userId: req.body.validator ?? "validator", details: { status: req.body.status, notes: req.body.validatorNotes, policy_rule: existing.approvalPolicyRule }, tenantId: "TENANT-001" });
     res.json(task);
+  });
+
+  // ─── Conflict resolution — human picks winning value for each conflicting field ──
+  app.post("/api/validation/:id/resolve-conflict", requireAuth, async (req: any, res: any) => {
+    const task = await storage.getValidationTask(req.params.id);
+    if (!task) return res.status(404).json({ error: "Validation task not found" });
+
+    const { resolutions, resolved_by } = req.body as {
+      resolutions: Array<{ field_key: string; chosen_value: string; source: "option_a" | "option_b" | "custom" }>;
+      resolved_by?: string;
+    };
+    if (!Array.isArray(resolutions) || resolutions.length === 0) {
+      return res.status(400).json({ error: "resolutions array is required" });
+    }
+
+    const resolvedBy = resolved_by ?? (req.user as any)?.username ?? "validator";
+    const resolvedAt = new Date().toISOString();
+
+    // Fetch linked extraction run
+    const run = await storage.getExtractionRun(task.extractionRunId);
+    if (!run) return res.status(404).json({ error: "Extraction run not found" });
+
+    // Build mutable copies of run's extractedFields and extractedAttributes
+    const updatedFields: Record<string, any>  = { ...(run.extractedFields as Record<string, any> ?? {}) };
+    const updatedAttrs: any[] = JSON.parse(JSON.stringify(run.extractedAttributes ?? []));
+
+    const auditEntries: string[] = [];
+
+    for (const resolution of resolutions) {
+      const { field_key, chosen_value, source } = resolution;
+
+      // Record old value(s) for audit
+      const oldValues = updatedAttrs
+        .filter((a: any) => a.field_key === field_key)
+        .map((a: any) => ({ value: a.value_normalized, confidence: a.confidence_score, validation_state: a.validation_state }));
+
+      // Apply chosen value to extractedFields
+      updatedFields[field_key] = chosen_value;
+
+      // Update extractedAttributes: remove :conflict variant, update winner
+      const winnerIdx = updatedAttrs.findIndex((a: any) => a.field_key === field_key && !a.approval_policy_rule?.includes("CONFLICT"));
+      const conflictIdx = updatedAttrs.findIndex((a: any) => a.field_key === field_key && a.approval_policy_rule === "CONFLICT");
+
+      if (winnerIdx !== -1) {
+        updatedAttrs[winnerIdx].value_normalized = chosen_value;
+        updatedAttrs[winnerIdx].validation_state = "HUMAN_APPROVED";
+        updatedAttrs[winnerIdx].approval_policy_rule = "HUMAN_RESOLVED";
+        updatedAttrs[winnerIdx].approval_policy_reason = `Conflict resolved by ${resolvedBy}: selected "${chosen_value}" (source: ${source}).`;
+      }
+      // Remove the duplicate conflict variant
+      if (conflictIdx !== -1 && conflictIdx !== winnerIdx) {
+        updatedAttrs.splice(conflictIdx, 1);
+      }
+
+      // Create per-field audit log
+      const auditEntry = await storage.createAuditLog({
+        action: "CONFLICT_RESOLVED",
+        resourceType: "VALIDATION",
+        resourceId: task.taskCode,
+        userId: resolvedBy,
+        details: {
+          field_key,
+          chosen_value,
+          source,
+          old_values: oldValues,
+          evidence_id: task.evidenceId,
+          extraction_run_id: task.extractionRunId,
+          resolved_at: resolvedAt,
+        },
+        tenantId: "TENANT-001",
+      });
+      auditEntries.push(auditEntry.id);
+    }
+
+    // Persist updated extraction run
+    await storage.updateExtractionRun(run.id, {
+      extractedFields: updatedFields,
+      extractedAttributes: updatedAttrs,
+    } as any);
+
+    // Update conflict details on the task to mark resolved fields
+    const existingDetails = (task.conflictDetails as any[]) ?? [];
+    const resolvedFieldKeys = new Set(resolutions.map(r => r.field_key));
+    const updatedDetails = existingDetails.map((d: any) => {
+      if (!resolvedFieldKeys.has(d.field_key)) return d;
+      const res = resolutions.find(r => r.field_key === d.field_key)!;
+      return { ...d, resolved: true, resolved_value: res.chosen_value, resolved_source: res.source, resolved_by: resolvedBy, resolved_at: resolvedAt };
+    });
+
+    // Check if ALL conflicts are now resolved
+    const allResolved = updatedDetails.every((d: any) => d.resolved);
+    const taskUpdate: any = { conflictDetails: updatedDetails, updatedAt: new Date() };
+    if (allResolved && task.approvalPolicyRule === "CONFLICT") {
+      taskUpdate.approvalPolicyReason = `All ${resolutions.length} field conflict(s) resolved by ${resolvedBy}.`;
+    }
+    await storage.updateValidationTask(task.id, taskUpdate);
+
+    // Audit summary
+    await storage.createAuditLog({
+      action: "CONFLICTS_RESOLVED_BATCH",
+      resourceType: "VALIDATION",
+      resourceId: task.taskCode,
+      userId: resolvedBy,
+      details: { resolved_count: resolutions.length, all_conflicts_cleared: allResolved, audit_entry_ids: auditEntries },
+      tenantId: "TENANT-001",
+    });
+
+    res.json({ resolved: resolutions.length, all_conflicts_cleared: allResolved, task_id: task.id });
   });
 
   // ─── CDM ───────────────────────────────────────────────────────────────────
