@@ -1,7 +1,7 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useMemo } from "react";
 import { useAuth } from "@/context/auth";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -16,11 +16,12 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import type { EvidenceFile, Batch } from "@shared/schema";
 import {
-  FileText, Upload, Search, Filter, Lock, Hash, HardDrive, Clock, FolderOpen, Plus, Eye, RefreshCw, CheckCircle2, XCircle, AlertCircle, Mic, Video, Timer,
-  Link2, CloudDownload, FolderInput, HardDriveUpload, Globe, Building2, Archive, PackageCheck, PackageX
+  FileText, Upload, Search, Filter, Lock, Hash, HardDrive, Clock, FolderOpen, Plus, Eye, RefreshCw,
+  CheckCircle2, XCircle, AlertCircle, Mic, Video, Timer, Link2, CloudDownload, FolderInput,
+  HardDriveUpload, Globe, Building2, Archive, PackageCheck, PackageX, Zap, Layers
 } from "lucide-react";
 import { SiGoogledrive, SiDropbox } from "react-icons/si";
-import { formatDistanceToNow, format } from "date-fns";
+import { formatDistanceToNow } from "date-fns";
 import { useForm } from "react-hook-form";
 import { Form, FormField, FormItem, FormLabel, FormControl } from "@/components/ui/form";
 
@@ -53,15 +54,8 @@ function formatDuration(secs: number): string {
 }
 
 const sourceIcons: Record<string, React.ComponentType<{ className?: string }>> = {
-  SCAN: FileText,
-  SHAREPOINT: HardDrive,
-  GOOGLE_DRIVE: HardDrive,
-  EMAIL: FileText,
-  FTP: HardDrive,
-  ERP: HardDrive,
-  DATABASE: HardDrive,
-  RECORDING: Mic,
-  DEVICE: Video,
+  SCAN: FileText, SHAREPOINT: HardDrive, GOOGLE_DRIVE: HardDrive, EMAIL: FileText,
+  FTP: HardDrive, ERP: HardDrive, DATABASE: HardDrive, RECORDING: Mic, DEVICE: Video,
 };
 
 const mediaTypeConfig: Record<string, { Icon: React.ComponentType<{ className?: string }>; label: string; color: string }> = {
@@ -76,7 +70,6 @@ function EvidenceCard({ file, isDuplicate }: { file: EvidenceFile; isDuplicate?:
   const derivedMediaType = (file.mediaType as string) ?? getMediaType(file.fileFormat);
   const mediaConfig = mediaTypeConfig[derivedMediaType] ?? mediaTypeConfig.DOCUMENT;
   const MediaIcon = mediaConfig.Icon;
-  const Icon = sourceIcons[file.sourceType] ?? FileText;
   const sizeMb = (file.fileSizeBytes / 1024 / 1024).toFixed(2);
   const isAV = derivedMediaType === "AUDIO" || derivedMediaType === "VIDEO";
 
@@ -110,9 +103,7 @@ function EvidenceCard({ file, isDuplicate }: { file: EvidenceFile; isDuplicate?:
             </div>
           </div>
           <div className="flex flex-col items-end gap-1 flex-shrink-0">
-            <Badge variant="outline" className={`text-xs ${statusColors[file.status]}`}>
-              {file.status}
-            </Badge>
+            <Badge variant="outline" className={`text-xs ${statusColors[file.status]}`}>{file.status}</Badge>
             {isDuplicate && (
               <Badge variant="outline" className="text-xs gap-1 border-destructive/50 text-destructive bg-destructive/5" data-testid={`badge-duplicate-${file.id}`}>
                 <AlertCircle className="w-2.5 h-2.5" /> DUPLICATE
@@ -163,12 +154,7 @@ function EvidenceCard({ file, isDuplicate }: { file: EvidenceFile; isDuplicate?:
         </div>
         <div className="flex items-center gap-2">
           {file.storedUri?.startsWith("local://") && (
-            <a
-              href={`/api/evidence/${file.id}/file`}
-              target="_blank"
-              rel="noopener noreferrer"
-              data-testid={`link-view-file-${file.id}`}
-            >
+            <a href={`/api/evidence/${file.id}/file`} target="_blank" rel="noopener noreferrer" data-testid={`link-view-file-${file.id}`}>
               <Button variant="ghost" size="sm" className="h-7 px-2 text-xs gap-1">
                 <Eye className="w-3 h-3" /> View
               </Button>
@@ -192,6 +178,147 @@ function EvidenceCard({ file, isDuplicate }: { file: EvidenceFile; isDuplicate?:
         </div>
       </CardContent>
     </Card>
+  );
+}
+
+function BatchSection({ batch, displayFiles, allFiles, duplicateHashes }: {
+  batch: Batch;
+  displayFiles: EvidenceFile[];
+  allFiles: EvidenceFile[];
+  duplicateHashes: Set<string>;
+}) {
+  const { toast } = useToast();
+  const [extracting, setExtracting] = useState(false);
+  const [progress, setProgress] = useState({ done: 0, total: 0, currentFile: "" });
+  const [collapsed, setCollapsed] = useState(false);
+
+  const pendingFiles = allFiles.filter(f => f.status === "INGESTED" || f.status === "FAILED");
+  const processedCount = allFiles.filter(f => f.status === "PROCESSED").length;
+  const progressPct = allFiles.length > 0 ? Math.round((processedCount / allFiles.length) * 100) : 0;
+
+  const runBatchExtraction = async () => {
+    if (pendingFiles.length === 0) return;
+    setExtracting(true);
+    setCollapsed(false);
+    setProgress({ done: 0, total: pendingFiles.length, currentFile: pendingFiles[0]?.fileName ?? "" });
+
+    let succeeded = 0;
+    for (let i = 0; i < pendingFiles.length; i++) {
+      const file = pendingFiles[i];
+      setProgress({ done: i, total: pendingFiles.length, currentFile: file.fileName });
+      try {
+        await apiRequest("POST", `/api/evidence/${file.id}/extract`, {});
+        succeeded++;
+      } catch {}
+      queryClient.invalidateQueries({ queryKey: ["/api/evidence"] });
+    }
+
+    setProgress({ done: pendingFiles.length, total: pendingFiles.length, currentFile: "" });
+    setExtracting(false);
+    queryClient.invalidateQueries({ queryKey: ["/api/extractions"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/dashboard/stats"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/validation"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/cdm"] });
+    toast({
+      title: "Batch extraction complete",
+      description: `${succeeded} of ${pendingFiles.length} file${pendingFiles.length !== 1 ? "s" : ""} extracted successfully`,
+    });
+  };
+
+  return (
+    <div data-testid={`section-batch-${batch.id}`} className="space-y-3">
+      {/* Batch header card */}
+      <div className="flex items-center justify-between gap-3 p-4 rounded-xl border border-border bg-card shadow-sm">
+        <button
+          className="flex items-center gap-3 min-w-0 flex-1 text-left"
+          onClick={() => setCollapsed(c => !c)}
+          data-testid={`toggle-batch-${batch.id}`}
+        >
+          <div className="w-9 h-9 rounded-lg bg-primary/10 flex items-center justify-center flex-shrink-0">
+            <Layers className="w-4 h-4 text-primary" />
+          </div>
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="font-mono font-bold text-sm text-foreground">{batch.batchCode}</span>
+              <Badge variant="outline" className="text-xs">{batch.status}</Badge>
+              <span className="text-xs text-muted-foreground truncate">{batch.sourceLocation}</span>
+            </div>
+            <div className="flex items-center gap-3 mt-1.5">
+              <div className="flex items-center gap-2 flex-1 max-w-48">
+                <Progress value={progressPct} className="h-1.5 flex-1" />
+                <span className="text-xs text-muted-foreground whitespace-nowrap font-medium">
+                  {processedCount}/{allFiles.length}
+                </span>
+              </div>
+              <span className="text-xs text-muted-foreground">{batch.createdBy}</span>
+            </div>
+          </div>
+        </button>
+
+        <div className="flex items-center gap-2 shrink-0">
+          {allFiles.length === 0 ? (
+            <Badge variant="outline" className="text-xs text-muted-foreground">Empty</Badge>
+          ) : pendingFiles.length === 0 ? (
+            <Badge variant="outline" className="gap-1 border-chart-3/40 text-chart-3 bg-chart-3/5 text-xs">
+              <CheckCircle2 className="w-3 h-3" /> All Extracted
+            </Badge>
+          ) : (
+            <Button
+              size="sm"
+              className="gap-1.5 text-xs h-8"
+              disabled={extracting}
+              onClick={runBatchExtraction}
+              data-testid={`button-extract-batch-${batch.id}`}
+            >
+              {extracting
+                ? <><RefreshCw className="w-3.5 h-3.5 animate-spin" /> {progress.done}/{progress.total}</>
+                : <><Zap className="w-3.5 h-3.5" /> Extract All ({pendingFiles.length})</>}
+            </Button>
+          )}
+        </div>
+      </div>
+
+      {/* Live extraction progress */}
+      {extracting && (
+        <div className="mx-0 p-4 rounded-xl border border-primary/25 bg-primary/5 space-y-3" data-testid={`progress-batch-${batch.id}`}>
+          <div className="flex items-center justify-between text-xs">
+            <div className="flex items-center gap-2 min-w-0">
+              <RefreshCw className="w-3.5 h-3.5 animate-spin text-primary shrink-0" />
+              <span className="text-muted-foreground">Processing: </span>
+              <span className="text-foreground font-medium truncate">{progress.currentFile}</span>
+            </div>
+            <span className="text-primary font-semibold shrink-0 ml-3 tabular-nums">
+              {progress.done}/{progress.total} files
+            </span>
+          </div>
+          <Progress
+            value={progress.total > 0 ? (progress.done / progress.total) * 100 : 0}
+            className="h-3"
+          />
+          <div className="flex items-center justify-between text-xs text-muted-foreground">
+            <span>AI extraction in progress — each file is analysed for fields, entities &amp; trust score</span>
+            <span className="font-medium tabular-nums">
+              {Math.round(progress.total > 0 ? (progress.done / progress.total) * 100 : 0)}%
+            </span>
+          </div>
+        </div>
+      )}
+
+      {/* Evidence cards */}
+      {!collapsed && (
+        displayFiles.length === 0 ? (
+          <div className="text-center py-8 text-sm text-muted-foreground border border-dashed rounded-xl">
+            No files match the current filter in this batch
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            {displayFiles.map(f => (
+              <EvidenceCard key={f.id} file={f} isDuplicate={duplicateHashes.has(f.fileHash)} />
+            ))}
+          </div>
+        )
+      )}
+    </div>
   );
 }
 
@@ -222,9 +349,7 @@ function NewBatchDialog() {
         </Button>
       </DialogTrigger>
       <DialogContent className="max-w-md">
-        <DialogHeader>
-          <DialogTitle>Register Digitization Batch</DialogTitle>
-        </DialogHeader>
+        <DialogHeader><DialogTitle>Register Digitization Batch</DialogTitle></DialogHeader>
         <Form {...form}>
           <form onSubmit={form.handleSubmit((d) => mutation.mutate({ ...d, expectedDocuments: parseInt(d.expectedDocuments) }))} className="space-y-4">
             <FormField name="sourceLocation" control={form.control} render={({ field }) => (
@@ -284,8 +409,6 @@ function detectUrlProvider(url: string): { name: string; color: string } | null 
     return { name: "Dropbox", color: "text-blue-600" };
   if (url.includes("1drv.ms") || url.includes("sharepoint.com") || url.includes("onedrive.live.com"))
     return { name: "OneDrive / SharePoint", color: "text-blue-400" };
-  if (url.includes("ftp://"))
-    return { name: "FTP", color: "text-muted-foreground" };
   return { name: "HTTP URL", color: "text-muted-foreground" };
 }
 
@@ -439,9 +562,7 @@ function IngestFileDialog() {
         </Button>
       </DialogTrigger>
       <DialogContent className="max-w-xl">
-        <DialogHeader>
-          <DialogTitle>Ingest Evidence</DialogTitle>
-        </DialogHeader>
+        <DialogHeader><DialogTitle>Ingest Evidence</DialogTitle></DialogHeader>
 
         <Tabs value={tab} onValueChange={setTab} className="mt-1">
           <TabsList className="w-full grid grid-cols-4">
@@ -602,9 +723,7 @@ function IngestFileDialog() {
             {zipResult && (
               <div className={`rounded-md border p-3 space-y-1 ${zipResult.errors === 0 ? "bg-chart-3/5 border-chart-3/30" : "bg-destructive/5 border-destructive/30"}`}>
                 <div className="flex items-center gap-2">
-                  {zipResult.errors === 0
-                    ? <PackageCheck className="w-4 h-4 text-chart-3" />
-                    : <PackageX className="w-4 h-4 text-destructive" />}
+                  {zipResult.errors === 0 ? <PackageCheck className="w-4 h-4 text-chart-3" /> : <PackageX className="w-4 h-4 text-destructive" />}
                   <span className="text-sm font-medium">
                     {zipResult.ingested} file{zipResult.ingested !== 1 ? "s" : ""} ingested
                     {zipResult.errors > 0 ? `, ${zipResult.errors} error${zipResult.errors !== 1 ? "s" : ""}` : ""}
@@ -751,21 +870,9 @@ function IngestFileDialog() {
           <TabsContent value="cloud" className="space-y-2 mt-3">
             <p className="text-xs text-muted-foreground mb-3">Connect cloud storage platforms to browse and import files directly into ADRS.</p>
             {[
-              {
-                Icon: SiGoogledrive, name: "Google Drive", status: "not_connected",
-                desc: "Browse and import files from your Google Drive — PDFs, Docs, Sheets, and more.",
-                action: "Connect Google Drive",
-              },
-              {
-                Icon: SiDropbox, name: "Dropbox", status: "url_import",
-                desc: "Import Dropbox files using a shared link via the URL import tab.",
-                action: "Use URL Import",
-              },
-              {
-                Icon: Building2, name: "OneDrive / SharePoint", status: "url_import",
-                desc: "Import OneDrive and SharePoint files using a shared link.",
-                action: "Use URL Import",
-              },
+              { Icon: SiGoogledrive, name: "Google Drive", status: "not_connected", desc: "Browse and import files from your Google Drive — PDFs, Docs, Sheets, and more.", action: "Connect Google Drive" },
+              { Icon: SiDropbox, name: "Dropbox", status: "url_import", desc: "Import Dropbox files using a shared link via the URL import tab.", action: "Use URL Import" },
+              { Icon: Building2, name: "OneDrive / SharePoint", status: "url_import", desc: "Import OneDrive and SharePoint files using a shared link.", action: "Use URL Import" },
             ].map(({ Icon, name, status, desc, action }) => (
               <div key={name} className="flex items-start gap-3 p-3 rounded-md border border-border bg-card">
                 <Icon className="w-5 h-5 mt-0.5 shrink-0 text-muted-foreground" />
@@ -811,21 +918,7 @@ export default function Evidence() {
   const { data: files, isLoading } = useQuery<EvidenceFile[]>({ queryKey: ["/api/evidence"] });
   const { data: batches } = useQuery<Batch[]>({ queryKey: ["/api/batches"] });
 
-  const filtered = (files ?? []).filter(f => {
-    const matchSearch = !search || f.fileName.toLowerCase().includes(search.toLowerCase()) || f.evidenceCode.toLowerCase().includes(search.toLowerCase());
-    const matchStatus = statusFilter === "ALL" || f.status === statusFilter;
-    return matchSearch && matchStatus;
-  });
-
-  const stats = {
-    total: files?.length ?? 0,
-    processed: files?.filter(f => f.status === "PROCESSED").length ?? 0,
-    processing: files?.filter(f => f.status === "PROCESSING").length ?? 0,
-    failed: files?.filter(f => f.status === "FAILED").length ?? 0,
-  };
-
-  // Compute which hashes appear more than once so we can flag duplicates
-  const duplicateHashes = new Set<string>(
+  const duplicateHashes = useMemo(() => new Set<string>(
     Object.entries(
       (files ?? []).reduce<Record<string, number>>((acc, f) => {
         acc[f.fileHash] = (acc[f.fileHash] ?? 0) + 1;
@@ -834,7 +927,46 @@ export default function Evidence() {
     )
       .filter(([, count]) => count > 1)
       .map(([hash]) => hash)
-  );
+  ), [files]);
+
+  const filtered = useMemo(() => (files ?? []).filter(f => {
+    const matchSearch = !search || f.fileName.toLowerCase().includes(search.toLowerCase()) || f.evidenceCode.toLowerCase().includes(search.toLowerCase());
+    const matchStatus = statusFilter === "ALL" || f.status === statusFilter;
+    return matchSearch && matchStatus;
+  }), [files, search, statusFilter]);
+
+  // All files grouped by batch (unfiltered — used for Extract All counts)
+  const allFilesByBatch = useMemo(() => {
+    const grouped: Record<string, EvidenceFile[]> = {};
+    for (const f of (files ?? [])) {
+      const key = f.batchId ?? "__unassigned__";
+      if (!grouped[key]) grouped[key] = [];
+      grouped[key].push(f);
+    }
+    return grouped;
+  }, [files]);
+
+  // Filtered files grouped by batch (used for display)
+  const filteredFilesByBatch = useMemo(() => {
+    const grouped: Record<string, EvidenceFile[]> = {};
+    for (const f of filtered) {
+      const key = f.batchId ?? "__unassigned__";
+      if (!grouped[key]) grouped[key] = [];
+      grouped[key].push(f);
+    }
+    return grouped;
+  }, [filtered]);
+
+  const stats = {
+    total: files?.length ?? 0,
+    processed: files?.filter(f => f.status === "PROCESSED").length ?? 0,
+    processing: files?.filter(f => f.status === "PROCESSING").length ?? 0,
+    failed: files?.filter(f => f.status === "FAILED").length ?? 0,
+  };
+
+  const hasBatches = (batches?.length ?? 0) > 0;
+  const unassigned = filteredFilesByBatch["__unassigned__"] ?? [];
+  const allUnassigned = allFilesByBatch["__unassigned__"] ?? [];
 
   return (
     <div className="p-6 space-y-6 max-w-7xl mx-auto">
@@ -870,45 +1002,6 @@ export default function Evidence() {
         ))}
       </div>
 
-      {batches && batches.length > 0 && (
-        <Card>
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm font-semibold flex items-center gap-2">
-              <FolderOpen className="w-4 h-4 text-primary" />
-              Digitization Batches
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-2">
-              {batches.map((batch) => (
-                <div key={batch.id} data-testid={`row-batch-${batch.id}`} className="flex items-center gap-3 p-3 rounded-md border border-border">
-                  <div className="flex-1 min-w-0 grid grid-cols-2 sm:grid-cols-4 gap-2">
-                    <div>
-                      <p className="text-xs font-mono font-semibold text-foreground">{batch.batchCode}</p>
-                      <p className="text-xs text-muted-foreground">{batch.sourceLocation}</p>
-                    </div>
-                    <div>
-                      <p className="text-xs text-muted-foreground">Progress</p>
-                      <div className="flex items-center gap-2 mt-1">
-                        <Progress value={batch.expectedDocuments > 0 ? (batch.scannedDocuments / batch.expectedDocuments) * 100 : 0} className="h-1.5 flex-1" />
-                        <span className="text-xs text-muted-foreground">{batch.scannedDocuments}/{batch.expectedDocuments}</span>
-                      </div>
-                    </div>
-                    <div>
-                      <p className="text-xs text-muted-foreground">Operator</p>
-                      <p className="text-xs text-foreground">{batch.createdBy}</p>
-                    </div>
-                    <div className="flex items-center justify-end">
-                      <Badge variant="outline" className="text-xs">{batch.status}</Badge>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
       <div className="flex items-center gap-3 flex-wrap">
         <div className="relative flex-1 min-w-48">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
@@ -936,12 +1029,19 @@ export default function Evidence() {
       </div>
 
       {isLoading ? (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {Array.from({ length: 6 }).map((_, i) => (
-            <Card key={i}><CardContent className="p-4"><Skeleton className="h-32 w-full" /></CardContent></Card>
+        <div className="space-y-6">
+          {Array.from({ length: 2 }).map((_, i) => (
+            <div key={i} className="space-y-3">
+              <Skeleton className="h-16 w-full rounded-xl" />
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                {Array.from({ length: 3 }).map((_, j) => (
+                  <Card key={j}><CardContent className="p-4"><Skeleton className="h-32 w-full" /></CardContent></Card>
+                ))}
+              </div>
+            </div>
           ))}
         </div>
-      ) : filtered.length === 0 ? (
+      ) : filtered.length === 0 && !hasBatches ? (
         <Card>
           <CardContent className="py-16 flex flex-col items-center justify-center gap-3">
             <FolderOpen className="w-12 h-12 text-muted-foreground opacity-40" />
@@ -949,6 +1049,45 @@ export default function Evidence() {
             <p className="text-xs text-muted-foreground">Use "Ingest Evidence" to add files to the system</p>
           </CardContent>
         </Card>
+      ) : hasBatches ? (
+        <div className="space-y-8">
+          {(batches ?? []).map(batch => {
+            const displayFiles = filteredFilesByBatch[batch.id] ?? [];
+            const allFiles = allFilesByBatch[batch.id] ?? [];
+            if (allFiles.length === 0 && displayFiles.length === 0) return null;
+            return (
+              <BatchSection
+                key={batch.id}
+                batch={batch}
+                displayFiles={displayFiles}
+                allFiles={allFiles}
+                duplicateHashes={duplicateHashes}
+              />
+            );
+          })}
+
+          {unassigned.length > 0 && (
+            <div className="space-y-3" data-testid="section-unassigned">
+              <div className="flex items-center gap-2 px-1">
+                <FolderOpen className="w-4 h-4 text-muted-foreground" />
+                <h3 className="text-sm font-semibold text-muted-foreground">Unassigned Evidence</h3>
+                <Badge variant="outline" className="text-xs">{unassigned.length} file{unassigned.length !== 1 ? "s" : ""}</Badge>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                {unassigned.map(f => <EvidenceCard key={f.id} file={f} isDuplicate={duplicateHashes.has(f.fileHash)} />)}
+              </div>
+            </div>
+          )}
+
+          {filtered.length === 0 && hasBatches && (
+            <Card>
+              <CardContent className="py-12 flex flex-col items-center justify-center gap-3">
+                <Search className="w-10 h-10 text-muted-foreground opacity-40" />
+                <p className="text-sm font-medium text-muted-foreground">No files match your search or filter</p>
+              </CardContent>
+            </Card>
+          )}
+        </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {filtered.map((file) => <EvidenceCard key={file.id} file={file} isDuplicate={duplicateHashes.has(file.fileHash)} />)}

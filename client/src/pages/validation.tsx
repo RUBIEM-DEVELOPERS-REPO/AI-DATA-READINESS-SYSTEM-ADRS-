@@ -13,7 +13,7 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import type { ValidationTask, ExtractionRun, EvidenceFile } from "@shared/schema";
 import {
-  CheckSquare, CheckCircle2, XCircle, AlertTriangle, Clock, User, ArrowUpRight, Eye, Shield, ScanLine, ChevronRight
+  CheckSquare, CheckCircle2, XCircle, AlertTriangle, Clock, User, ArrowUpRight, Eye, Shield, ScanLine, Info
 } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 
@@ -277,6 +277,21 @@ export default function Validation() {
       <div>
         <h1 className="text-2xl font-bold text-foreground" data-testid="heading-validation">Trust & Validation</h1>
         <p className="text-sm text-muted-foreground mt-1">Human-in-the-loop validation workflow for extracted records</p>
+      </div>
+
+      <div className="flex items-start gap-3 p-4 rounded-xl border border-chart-2/30 bg-chart-2/5" data-testid="banner-validation-threshold">
+        <Info className="w-4 h-4 text-chart-2 mt-0.5 shrink-0" />
+        <div className="space-y-0.5">
+          <p className="text-sm font-semibold text-foreground">Automated triage — only low-trust files require human review</p>
+          <p className="text-xs text-muted-foreground">
+            Files extracted with a trust score of <strong className="text-foreground">70% or above</strong> are automatically accepted and promoted to the CDM.
+            Only files scoring <strong className="text-foreground">below 70%</strong>, or those with conflicting field values, are queued here for a human validator.
+          </p>
+        </div>
+        <div className="shrink-0 flex flex-col items-center text-center ml-auto pl-3 border-l border-chart-2/20">
+          <span className="text-xl font-bold text-chart-2">70%</span>
+          <span className="text-[10px] text-muted-foreground leading-tight">threshold</span>
+        </div>
       </div>
 
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
