@@ -204,6 +204,72 @@ export function inferParties(
   return parties;
 }
 
+// ─── Party inference from raw AI entity list ─────────────────────────────────
+/**
+ * Converts the raw `extractedEntities` array from the AI extraction result into
+ * CDM entities for PERSON and ORGANIZATION entries.
+ *
+ * This captures every person and organisation the AI detected in the document text
+ * that was NOT already promoted via the prefix-based field grouping (inferParties).
+ * The `skipNames` set (normalised sorted tokens) prevents creating duplicates of
+ * entities already created by inferParties.
+ *
+ * Zero hallucination: only values already returned by the AI extraction are used.
+ */
+export function inferPartiesFromRawEntities(
+  rawEntities: Array<{ entity: string; value: string; confidence: number }>,
+  evidenceId: string,
+  runId: string,
+  skipNames: Set<string> = new Set()
+): InferredParty[] {
+  if (!ADRS_CONFIG.features.auto_party_creation) return [];
+
+  const threshold = ADRS_CONFIG.thresholds.party_creation_confidence * 0.8; // slightly lower bar for raw entities
+  const parties: InferredParty[] = [];
+  const seenNormalised = new Set<string>();
+  let idx = 0;
+
+  for (const ent of rawEntities) {
+    const rawType = String(ent.entity ?? "").toUpperCase().trim();
+    if (rawType !== "PERSON" && rawType !== "ORGANIZATION") continue;
+    if ((ent.confidence ?? 0) < threshold) continue;
+
+    const rawName = String(ent.value ?? "").trim();
+    if (!rawName || rawName.length < 2) continue;
+
+    // Normalise: lowercase, sort tokens — used for dedup only, not stored
+    const normKey = rawName.toLowerCase().split(/[\s,.\-&/]+/).filter(Boolean).sort().join(" ");
+    if (seenNormalised.has(normKey)) continue;
+    if (skipNames.has(normKey)) continue;
+    seenNormalised.add(normKey);
+
+    // Apply heuristic: re-classify ORGANIZATION if the name looks like a human name
+    let entityType: "PERSON" | "ORGANIZATION" = rawType === "PERSON" ? "PERSON" : "ORGANIZATION";
+    if (entityType === "ORGANIZATION" && looksLikePersonName(rawName)) entityType = "PERSON";
+
+    const entityCode = `AUTO-${entityType.slice(0, 3)}-ENT-${runId.slice(0, 8).toUpperCase()}-${idx}`;
+
+    const entity: InsertCdmEntity = {
+      entityCode,
+      entityType,
+      displayName: rawName,
+      canonicalFields: { name: rawName, source: "entity_extraction" },
+      identifiers: [],
+      relationships: [],
+      sourceEvidenceIds: [evidenceId],
+      isGoldenRecord: false,
+      confidenceScore: Math.min(1, ent.confidence ?? 0.75),
+      schemaVersion: "1.0",
+      tenantId: "TENANT-001",
+    };
+
+    parties.push({ entity, sourceAttrKeys: [], identifiers: [], relationships: [] });
+    idx++;
+  }
+
+  return parties;
+}
+
 // ─── Document entity inference ────────────────────────────────────────────────
 export function inferDocument(
   attrs: NormalizedAttribute[],

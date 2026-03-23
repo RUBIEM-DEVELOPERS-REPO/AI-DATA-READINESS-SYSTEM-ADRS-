@@ -12,7 +12,7 @@ import fs from "fs";
 import { passport, hashPassword, requireAuth, requireRole } from "./auth";
 import { normalizeExtractedFields, dedupAttributes, runQualityGates, computeTrustScore, type DedupResult } from "./services/normalization";
 import { buildArtifactContents, buildArtifactUris, checkPublishTrustThreshold, generateMlCsv, generateBundleZip } from "./services/publishing";
-import { inferParties, inferDocument } from "./services/party-inference";
+import { inferParties, inferDocument, inferPartiesFromRawEntities } from "./services/party-inference";
 import { ADRS_CONFIG } from "./config";
 import { uploadMiddleware, computeFileHash, getMimeType, detectCloudSource, downloadFile, UPLOADS_DIR } from "./upload";
 import { extractTextFromFile, detectDocType, isTextExtractionFailure } from "./services/extraction";
@@ -540,7 +540,7 @@ export async function registerRoutes(httpServer: any, app: Express): Promise<any
         await storage.createValidationTask({ taskCode: generateCode("VAL"), extractionRunId: run.id, evidenceId: run.evidenceId, status: "PENDING_VALIDATION", fieldsToValidate: pendingFields, trustScore, approvalStage: 1, maxApprovalStages: 1, approvalPolicyRule: "LOW_TRUST", approvalPolicyReason: `Trust score ${(trustScore * 100).toFixed(0)}% below threshold.` });
       }
 
-      // 11. Party inference
+      // 11. Party inference — field-based + raw-entity-based
       if (ADRS_CONFIG.features.auto_party_creation) {
         const inferredParties = inferParties(dedupedAttrs, run.evidenceId, docType, run.id);
         const inferredDoc = inferDocument(dedupedAttrs, run.evidenceId, docType, run.id);
@@ -549,10 +549,21 @@ export async function registerRoutes(httpServer: any, app: Express): Promise<any
           const docEntity = await storage.createCdmEntity(inferredDoc.entity);
           docEntityCode = docEntity.entityCode;
         }
-        for (const inf of inferredParties) {
+
+        // Collect normalised display names from field-based inference to avoid duplicates
+        const fieldInferredNames = new Set<string>(
+          inferredParties.map(p =>
+            p.entity.displayName.toLowerCase().split(/[\s,.\-&/]+/).filter(Boolean).sort().join(" ")
+          )
+        );
+
+        // Promote PERSON + ORGANIZATION entities from the raw AI entity list
+        const rawEntityParties = inferPartiesFromRawEntities(aiResult.entities, run.evidenceId, run.id, fieldInferredNames);
+
+        for (const inf of [...inferredParties, ...rawEntityParties]) {
           if (docEntityCode) inf.entity.relationships = [{ target_entity_id: docEntityCode, relationship_type: "MENTIONED_IN", confidence: inf.entity.confidenceScore }];
           const party = await storage.createCdmEntity(inf.entity);
-          await storage.createAuditLog({ action: "AUTO_PARTY_INFERRED", resourceType: "CDM", resourceId: party.entityCode, userId: "system", details: { display_name: party.displayName, evidence_id: run.evidenceId }, tenantId: "TENANT-001" });
+          await storage.createAuditLog({ action: "AUTO_PARTY_INFERRED", resourceType: "CDM", resourceId: party.entityCode, userId: "system", details: { display_name: party.displayName, entity_type: party.entityType, evidence_id: run.evidenceId }, tenantId: "TENANT-001" });
         }
       }
 
@@ -636,7 +647,7 @@ export async function registerRoutes(httpServer: any, app: Express): Promise<any
       await storage.createAuditLog({ action: "VALIDATION_TASK_AUTO_CREATED", resourceType: "VALIDATION", resourceId: run.id, userId: "system", details: { reason: "LOW_TRUST", trust_score: trustScore }, tenantId: "TENANT-001" });
     }
 
-    // 7. Party inference — auto-create CDM PARTY + Identifiers
+    // 7. Party inference — field-based + raw-entity-based
     if (ADRS_CONFIG.features.auto_party_creation) {
       const inferredParties = inferParties(dedupedAttrs, run.evidenceId, docType, run.id);
       const inferredDoc     = inferDocument(dedupedAttrs, run.evidenceId, docType, run.id);
@@ -648,7 +659,14 @@ export async function registerRoutes(httpServer: any, app: Express): Promise<any
         await storage.createAuditLog({ action: "AUTO_DOC_INFERRED", resourceType: "CDM", resourceId: docEntity.entityCode, userId: "system", details: { display_name: docEntity.displayName, evidence_id: run.evidenceId }, tenantId: "TENANT-001" });
       }
 
-      for (const inferred of inferredParties) {
+      const fieldInferredNames = new Set<string>(
+        inferredParties.map(p =>
+          p.entity.displayName.toLowerCase().split(/[\s,.\-&/]+/).filter(Boolean).sort().join(" ")
+        )
+      );
+      const rawEntityParties = inferPartiesFromRawEntities(extractedEntities, run.evidenceId, run.id, fieldInferredNames);
+
+      for (const inferred of [...inferredParties, ...rawEntityParties]) {
         if (docEntityCode) {
           inferred.entity.relationships = [{ target_entity_id: docEntityCode, relationship_type: "MENTIONED_IN", confidence: inferred.entity.confidenceScore }];
         }

@@ -28,11 +28,11 @@ export interface AiExtractionResult {
 }
 
 const EXTRACTION_SYSTEM_PROMPT = `You are an expert document intelligence engine for an African financial data platform (ADRS).
-Your task is to extract ALL structured information from documents — invoices, receipts, contracts, reports, permits, identity documents, correspondence, and more.
+Your task is to extract ALL structured information from documents — invoices, quotations, receipts, contracts, CVs, forms, policies, permits, bank statements, payslips, certificates, leases, and more.
 
 Return ONLY a valid JSON object with EXACTLY this structure (no markdown, no preamble):
 {
-  "doc_type": "INVOICE|RECEIPT|CONTRACT|REPORT|PERMIT|IDENTITY|FINANCIAL|CORRESPONDENCE|OTHER",
+  "doc_type": "INVOICE|QUOTATION|PURCHASE_ORDER|RECEIPT|CONTRACT|AGREEMENT|LEASE|DEED|REPORT|FINANCIAL|BANK_STATEMENT|PAYSLIP|PERMIT|CERTIFICATE|LICENSE|IDENTITY|CV|FORM|POLICY|CORRESPONDENCE|MEMORANDUM|OTHER",
   "doc_type_confidence": 0.0-1.0,
   "language": "en|fr|pt|sw|zu|xh|other",
   "summary": "one sentence describing this document",
@@ -97,8 +97,33 @@ ENTITY TYPES to extract:
 - REFERENCE: Reference numbers, IDs, codes
 - ADDRESS: Full postal addresses
 
+DOC_TYPE CLASSIFICATION RULES (choose the MOST specific type):
+- INVOICE: A bill issued by a seller for goods/services delivered — includes amounts, line items, invoice number
+- QUOTATION: A price quote or pro-forma — prices given BEFORE work/delivery, no payment yet made
+- PURCHASE_ORDER: Buyer's order requesting goods/services from a supplier
+- RECEIPT: Proof of payment already made — "RECEIVED" stamp, payment confirmation, cash receipt
+- CONTRACT: A legally binding multi-party agreement with terms and signatures
+- AGREEMENT: A less formal contract, MOU, partnership agreement, or SLA
+- LEASE: A tenancy, rental, or hire agreement for property or equipment
+- DEED: A property transfer deed, title deed, or conveyance document
+- REPORT: An analytical, audit, or status report — narrative with findings
+- FINANCIAL: A general financial statement, balance sheet, or P&L not covered by a specific type
+- BANK_STATEMENT: A bank or mobile-money statement listing transactions
+- PAYSLIP: An employee payslip or salary advice showing earnings and deductions
+- PERMIT: A government-issued permit, licence, or authorisation for activity
+- CERTIFICATE: A certificate of incorporation, compliance, good standing, completion, or training
+- LICENSE: A software, business, or professional licence document
+- IDENTITY: A national ID, passport, voter registration, or birth certificate
+- CV: A curriculum vitae or résumé — lists personal details, education, work history, skills
+- FORM: A structured data-entry form — application form, claim form, registration form, survey
+- POLICY: An insurance policy, company policy document, terms & conditions, or regulatory policy
+- CORRESPONDENCE: An email, letter, memo, or notice — primarily narrative communication
+- MEMORANDUM: An internal memorandum or circular
+- AUDIO_RECORDING / VIDEO_RECORDING: Only for transcribed audio/video — do NOT use for documents
+- OTHER: Only when truly impossible to classify after careful reading
+
 CONFIDENCE RULES:
-- 0.95-1.0: Explicitly labeled in document (e.g., "Invoice No: ABC123")
+- 0.95-1.0: Explicitly labeled in document (e.g., "Invoice No: ABC123", "QUOTATION" header)
 - 0.80-0.94: Clearly present but inferred from context
 - 0.65-0.79: Present but ambiguous or partially matching
 - 0.50-0.64: Uncertain, possible match
@@ -109,7 +134,10 @@ IMPORTANT:
 - For line items, format as a JSON string: "[{...}, {...}]"
 - Normalize phone numbers but preserve original format too
 - If a field is not found, omit it from the response entirely
-- Return confidence 0.0-1.0 as a decimal number`;
+- Return confidence 0.0-1.0 as a decimal number
+- For CV documents: extract candidate_name, date_of_birth, email, phone, address, education, work_experience, skills, nationality as fields
+- For FORM documents: extract all visible form fields and their filled-in values
+- For POLICY documents: extract policy_number, effective_date, expiry_date, insured_name, premium_amount as applicable`;
 
 export async function aiExtractDocumentFields(
   text: string,
@@ -214,11 +242,27 @@ export async function aiReclassifyDocType(
             "You are a document classifier for an African financial data platform. " +
             "Classify the document type from its text content. " +
             "Return ONLY a valid JSON object — no markdown, no preamble:\n" +
-            '{"doc_type":"INVOICE|RECEIPT|CONTRACT|REPORT|PERMIT|IDENTITY|FINANCIAL|CORRESPONDENCE|OTHER","confidence":0.0-1.0}\n' +
+            '{"doc_type":"INVOICE|QUOTATION|PURCHASE_ORDER|RECEIPT|CONTRACT|AGREEMENT|LEASE|DEED|REPORT|FINANCIAL|BANK_STATEMENT|PAYSLIP|PERMIT|CERTIFICATE|LICENSE|IDENTITY|CV|FORM|POLICY|CORRESPONDENCE|MEMORANDUM|OTHER","confidence":0.0-1.0}\n' +
             "RULES:\n" +
-            "- Quotations and purchase orders → INVOICE\n" +
-            "- Receipts and payment confirmations → FINANCIAL\n" +
-            "- Only use OTHER if truly ambiguous after reading the text\n" +
+            "- INVOICE: bill for delivered goods/services with invoice number and amounts\n" +
+            "- QUOTATION: price quote before delivery (pro-forma, estimate, quote)\n" +
+            "- PURCHASE_ORDER: buyer's order to a supplier requesting goods/services\n" +
+            "- RECEIPT: proof of payment already made, RECEIVED stamp\n" +
+            "- CONTRACT: formal legally-binding agreement with signatures\n" +
+            "- AGREEMENT: MOU, partnership agreement, SLA, informal agreement\n" +
+            "- LEASE: tenancy, rental, or hire agreement\n" +
+            "- DEED: property transfer deed, title deed\n" +
+            "- BANK_STATEMENT: bank or mobile-money transaction statement\n" +
+            "- PAYSLIP: employee salary advice with earnings and deductions\n" +
+            "- CERTIFICATE: certificate of incorporation, completion, compliance\n" +
+            "- LICENSE: business licence, professional licence, software licence\n" +
+            "- IDENTITY: national ID, passport, birth certificate, voter card\n" +
+            "- CV: curriculum vitae or resume with personal details and work history\n" +
+            "- FORM: application form, claim form, survey, registration form\n" +
+            "- POLICY: insurance policy, company policy document, T&Cs\n" +
+            "- CORRESPONDENCE: letter, email, notice, circular\n" +
+            "- MEMORANDUM: internal memo or circular\n" +
+            "- Only use OTHER if truly impossible to classify after careful reading\n" +
             "- confidence must reflect how certain you are from the actual content",
         },
         {
@@ -320,21 +364,61 @@ export async function aiTranscribeAudio(storedUri: string, fileName: string): Pr
 
 function normalizeDocType(raw: string): string {
   const map: Record<string, string> = {
-    INVOICE: "INVOICE",
-    RECEIPT: "FINANCIAL",
-    CONTRACT: "CONTRACT",
-    REPORT: "REPORT",
-    PERMIT: "PERMIT",
-    IDENTITY: "IDENTITY",
-    FINANCIAL: "FINANCIAL",
+    // Direct mappings (1:1)
+    INVOICE:        "INVOICE",
+    QUOTATION:      "QUOTATION",
+    QUOTE:          "QUOTATION",
+    PROFORMA:       "QUOTATION",
+    PRO_FORMA:      "QUOTATION",
+    PURCHASE_ORDER: "PURCHASE_ORDER",
+    PO:             "PURCHASE_ORDER",
+    RECEIPT:        "RECEIPT",
+    PAYMENT_RECEIPT:"RECEIPT",
+    CONTRACT:       "CONTRACT",
+    AGREEMENT:      "AGREEMENT",
+    MOU:            "AGREEMENT",
+    SLA:            "AGREEMENT",
+    LEASE:          "LEASE",
+    TENANCY:        "LEASE",
+    RENTAL:         "LEASE",
+    DEED:           "DEED",
+    TITLE_DEED:     "DEED",
+    REPORT:         "REPORT",
+    FINANCIAL:      "FINANCIAL",
+    BANK_STATEMENT: "BANK_STATEMENT",
+    STATEMENT:      "BANK_STATEMENT",
+    PAYSLIP:        "PAYSLIP",
+    SALARY_SLIP:    "PAYSLIP",
+    PAY_SLIP:       "PAYSLIP",
+    PERMIT:         "PERMIT",
+    CERTIFICATE:    "CERTIFICATE",
+    CERT:           "CERTIFICATE",
+    LICENSE:        "LICENSE",
+    LICENCE:        "LICENSE",
+    IDENTITY:       "IDENTITY",
+    ID_DOCUMENT:    "IDENTITY",
+    PASSPORT:       "IDENTITY",
+    CV:             "CV",
+    RESUME:         "CV",
+    CURRICULUM_VITAE: "CV",
+    FORM:           "FORM",
+    APPLICATION:    "FORM",
+    POLICY:         "POLICY",
+    INSURANCE:      "POLICY",
     CORRESPONDENCE: "CORRESPONDENCE",
-    LETTER: "CORRESPONDENCE",
-    QUOTATION: "INVOICE",
-    QUOTE: "INVOICE",
-    PURCHASE_ORDER: "INVOICE",
-    OTHER: "OTHER",
+    LETTER:         "CORRESPONDENCE",
+    EMAIL:          "CORRESPONDENCE",
+    NOTICE:         "CORRESPONDENCE",
+    MEMORANDUM:     "MEMORANDUM",
+    MEMO:           "MEMORANDUM",
+    CIRCULAR:       "MEMORANDUM",
+    OTHER:          "OTHER",
+    AUDIO_RECORDING:"AUDIO_RECORDING",
+    VIDEO_RECORDING:"VIDEO_RECORDING",
+    INTERVIEW:      "INTERVIEW",
+    MEETING_RECORDING:"MEETING_RECORDING",
   };
-  const upper = String(raw ?? "").toUpperCase().trim();
+  const upper = String(raw ?? "").toUpperCase().trim().replace(/[\s-]/g, "_");
   return map[upper] ?? "OTHER";
 }
 
@@ -345,8 +429,13 @@ export function scoreAiExtraction(fieldCount: number, docType: string): {
   docQualityScore: number;
 } {
   const expected: Record<string, number> = {
-    INVOICE: 7, FINANCIAL: 5, CONTRACT: 5, REPORT: 3,
-    PERMIT: 4, IDENTITY: 5, CORRESPONDENCE: 3, OTHER: 2,
+    INVOICE: 7, QUOTATION: 6, PURCHASE_ORDER: 6, RECEIPT: 5,
+    CONTRACT: 6, AGREEMENT: 5, LEASE: 5, DEED: 4,
+    REPORT: 3, FINANCIAL: 5, BANK_STATEMENT: 6, PAYSLIP: 7,
+    PERMIT: 4, CERTIFICATE: 4, LICENSE: 4,
+    IDENTITY: 6, CV: 7, FORM: 5, POLICY: 6,
+    CORRESPONDENCE: 3, MEMORANDUM: 3, OTHER: 2,
+    AUDIO_RECORDING: 2, VIDEO_RECORDING: 2, INTERVIEW: 2, MEETING_RECORDING: 2,
   };
   const exp = expected[docType] ?? 3;
   const coverage = Math.min(1.0, fieldCount / exp);
@@ -461,11 +550,11 @@ export async function aiExtractWithVision(
     return { docType: "OTHER", docTypeConfidence: 0.4, fields: {}, entities: [], summary: `${fileName} — no visual content`, language: "en" };
   }
 
-  const visionPrompt = `You are an expert document intelligence engine. Analyze this document image and extract ALL structured information.
+  const visionPrompt = `You are an expert document intelligence engine for an African financial data platform. Analyze this document image and extract ALL structured information.
 
 Return ONLY a valid JSON object with EXACTLY this structure (no markdown, no preamble):
 {
-  "doc_type": "INVOICE|RECEIPT|CONTRACT|REPORT|PERMIT|IDENTITY|FINANCIAL|CORRESPONDENCE|OTHER",
+  "doc_type": "INVOICE|QUOTATION|PURCHASE_ORDER|RECEIPT|CONTRACT|AGREEMENT|LEASE|DEED|REPORT|FINANCIAL|BANK_STATEMENT|PAYSLIP|PERMIT|CERTIFICATE|LICENSE|IDENTITY|CV|FORM|POLICY|CORRESPONDENCE|MEMORANDUM|OTHER",
   "doc_type_confidence": 0.0-1.0,
   "language": "en|fr|pt|sw|zu|xh|other",
   "summary": "one sentence describing this document",
@@ -477,9 +566,13 @@ Return ONLY a valid JSON object with EXACTLY this structure (no markdown, no pre
   ]
 }
 
-Extract ALL visible fields including: document_date, due_date, reference_number, invoice_number, total_amount, subtotal, tax_amount, currency, vendor_name, vendor_address, customer_name, customer_address, line_items, payment_terms, description, signatory_name, bank_name, bank_account, contract_number, permit_number, and any other structured data visible in the document.
+DOC_TYPE: Choose the most specific type. INVOICE=bill with amounts due; QUOTATION=price quote before delivery; RECEIPT=proof of payment made; CONTRACT=formal legally-binding agreement; CV=resume/curriculum vitae; FORM=application or data-entry form; POLICY=insurance or company policy; PAYSLIP=salary advice; BANK_STATEMENT=transaction statement; CERTIFICATE=certificate of any kind; IDENTITY=ID doc/passport.
 
-Be thorough — extract everything you can read. Return confidence 0.95+ for clearly printed text, 0.8+ for legible handwriting, 0.6+ for partially obscured text.`;
+Extract ALL visible fields including: document_date, due_date, reference_number, invoice_number, total_amount, subtotal, tax_amount, currency, vendor_name, vendor_address, vendor_email, vendor_phone, customer_name, customer_address, customer_email, signatory_name, bank_name, bank_account, contract_number, permit_number, national_id, date_of_birth, and any other structured data visible.
+
+For PERSON entities: extract EVERY individual human name visible. For ORGANIZATION entities: extract EVERY company, institution, or body name visible.
+
+Be thorough — extract everything you can read. Return confidence 0.95+ for clearly printed text, 0.8+ for legible text, 0.6+ for partially obscured text.`;
 
   try {
     const messageContent = buildImageContent(images, visionPrompt);
