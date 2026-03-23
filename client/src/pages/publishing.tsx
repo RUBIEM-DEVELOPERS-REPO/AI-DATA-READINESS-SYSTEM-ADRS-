@@ -376,7 +376,7 @@ function DatasetCard({ dataset }: { dataset: PublishedDataset }) {
             </span>
             <div className="flex items-center gap-1">
               {dataset.status === "DRAFT" && (
-                <Button size="sm" className="h-7 text-xs gap-1" onClick={() => publishMutation.mutate()} disabled={publishMutation.isPending} data-testid={`button-publish-${dataset.id}`}>
+                <Button size="sm" className="h-7 text-xs gap-1" onClick={() => publishMutation.mutate(undefined)} disabled={publishMutation.isPending} data-testid={`button-publish-${dataset.id}`}>
                   {publishMutation.isPending ? <><Zap className="w-3 h-3 animate-pulse" /> Building...</> : <><Globe className="w-3 h-3" /> Publish</>}
                 </Button>
               )}

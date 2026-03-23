@@ -47,8 +47,8 @@ async function assertBatchCapacity(batchId: string | undefined | null, slotsNeed
   if (batch.status === "COMPLETED") {
     throw Object.assign(new Error(`Batch ${batch.batchCode} is already completed and cannot accept new files`), { status: 409 });
   }
-  if (batch.status === "CANCELLED") {
-    throw Object.assign(new Error(`Batch ${batch.batchCode} has been cancelled and cannot accept new files`), { status: 409 });
+  if (batch.status === "FAILED") {
+    throw Object.assign(new Error(`Batch ${batch.batchCode} has failed and cannot accept new files`), { status: 409 });
   }
   if (batch.expectedDocuments > 0) {
     const remaining = batch.expectedDocuments - batch.scannedDocuments;
@@ -485,7 +485,7 @@ export async function registerRoutes(httpServer: any, app: Express): Promise<any
 
       // 6. Normalize + dedup (existing pipeline, now fed with AI-extracted data)
       const rawAttrs = normalizeExtractedFields(plainFields, aiResult.entities);
-      const { deduped: dedupedAttrs, conflictKeys } = dedupAttributes(rawAttrs);
+      const { deduped: dedupedAttrs, conflictKeys, conflictDetails } = dedupAttributes(rawAttrs);
       const qgResult = runQualityGates(docType, dedupedAttrs, scores.ocrConfidence);
       const trustScore = computeTrustScore(scores.ocrConfidence, scores.extractionConfidence, qgResult.completenessScore, scores.consistencyScore, scores.docQualityScore);
 
@@ -614,7 +614,7 @@ export async function registerRoutes(httpServer: any, app: Express): Promise<any
 
     // 1. Normalize + dedup
     const rawAttrs = normalizeExtractedFields(extractedFields, extractedEntities);
-    const { deduped: dedupedAttrs, conflictKeys } = dedupAttributes(rawAttrs);
+    const { deduped: dedupedAttrs, conflictKeys, conflictDetails } = dedupAttributes(rawAttrs);
     const qgResult  = runQualityGates(docType, dedupedAttrs, ocrConfidence);
     const { extractionConfidence = 0, consistencyScore = 0, docQualityScore = 0 } = rest;
     const trustScore = computeTrustScore(ocrConfidence, extractionConfidence, qgResult.completenessScore, consistencyScore, docQualityScore);
