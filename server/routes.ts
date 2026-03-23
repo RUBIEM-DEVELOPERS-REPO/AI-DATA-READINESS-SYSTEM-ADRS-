@@ -154,6 +154,16 @@ export async function registerRoutes(httpServer: any, app: Express): Promise<any
     res.json(users.map(({ password: _, ...u }) => u));
   });
 
+  // Lightweight user list for operator dropdowns — available to all authenticated users
+  app.get("/api/users", requireAuth, async (_req: any, res: any) => {
+    const users = await storage.listUsers();
+    res.json(
+      users
+        .filter(u => u.isActive)
+        .map(({ password: _, ...u }) => ({ id: u.id, username: u.username, firstName: u.firstName, lastName: u.lastName, role: u.role }))
+    );
+  });
+
   app.patch("/api/auth/users/:id", requireAuth, requireRole("ADMIN"), async (req: any, res: any) => {
     const allowed = ["isActive", "role", "firstName", "lastName"];
     const updates = Object.fromEntries(Object.entries(req.body).filter(([k]) => allowed.includes(k)));

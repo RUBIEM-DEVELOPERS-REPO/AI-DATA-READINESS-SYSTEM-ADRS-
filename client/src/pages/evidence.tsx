@@ -1,5 +1,6 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useState, useRef, useCallback } from "react";
+import { useAuth } from "@/context/auth";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -290,27 +291,33 @@ function detectUrlProvider(url: string): { name: string; color: string } | null 
 
 function IngestFileDialog() {
   const { toast } = useToast();
+  const { user } = useAuth();
   const [open, setOpen] = useState(false);
   const [tab, setTab] = useState("upload");
   const { data: batches } = useQuery<Batch[]>({ queryKey: ["/api/batches"] });
+  const { data: users = [] } = useQuery<{ id: string; username: string; firstName: string; lastName: string; role: string }[]>({
+    queryKey: ["/api/users"],
+  });
+
+  const defaultOperator = user?.username ?? "";
 
   const [dragOver, setDragOver] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
-  const [uploadOperator, setUploadOperator] = useState("operator_001");
+  const [uploadOperator, setUploadOperator] = useState(defaultOperator);
   const [uploadBatch, setUploadBatch] = useState("");
   const [uploadDuration, setUploadDuration] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [importUrl, setImportUrl] = useState("");
   const [importing, setImporting] = useState(false);
-  const [importOperator, setImportOperator] = useState("operator_001");
+  const [importOperator, setImportOperator] = useState(defaultOperator);
   const [importBatch, setImportBatch] = useState("");
   const [importDuration, setImportDuration] = useState("");
 
   const [zipFile, setZipFile] = useState<File | null>(null);
   const [zipBatch, setZipBatch] = useState("");
-  const [zipOperator, setZipOperator] = useState("operator_001");
+  const [zipOperator, setZipOperator] = useState(defaultOperator);
   const [zipUploading, setZipUploading] = useState(false);
   const [zipResult, setZipResult] = useState<{ ingested: number; errors: number; errorDetails: string[] } | null>(null);
   const [zipDragOver, setZipDragOver] = useState(false);
@@ -343,7 +350,7 @@ function IngestFileDialog() {
       const formData = new FormData();
       formData.append("file", zipFile);
       formData.append("uploadedBy", zipOperator);
-      if (zipBatch) formData.append("batchId", zipBatch);
+      if (zipBatch && zipBatch !== "none") formData.append("batchId", zipBatch);
       const resp = await fetch("/api/evidence/upload-zip", { method: "POST", body: formData });
       const data = await resp.json();
       if (!resp.ok) throw new Error(data.error ?? "ZIP upload failed");
@@ -385,7 +392,7 @@ function IngestFileDialog() {
       fd.append("file", selectedFile);
       fd.append("uploadedBy", uploadOperator || "operator_001");
       fd.append("sourceType", isAV ? (fileMediaType === "AUDIO" ? "RECORDING" : "DEVICE") : "SCAN");
-      if (uploadBatch) fd.append("batchId", uploadBatch);
+      if (uploadBatch && uploadBatch !== "none") fd.append("batchId", uploadBatch);
       if (uploadDuration) fd.append("durationSeconds", uploadDuration);
       const res = await fetch("/api/evidence/upload", { method: "POST", body: fd });
       const data = await res.json();
@@ -408,7 +415,7 @@ function IngestFileDialog() {
       const data = await apiRequest("POST", "/api/evidence/import-url", {
         url: importUrl.trim(),
         uploadedBy: importOperator || "operator_001",
-        batchId: importBatch || undefined,
+        batchId: (importBatch && importBatch !== "none") ? importBatch : undefined,
         durationSeconds: importDuration ? parseInt(importDuration) : undefined,
       });
       invalidate();
@@ -493,39 +500,51 @@ function IngestFileDialog() {
               />
             </div>
 
-            {selectedFile && (
-              <div className="space-y-3">
-                {isAV && (
-                  <div className="flex items-center gap-2 p-2.5 rounded-md bg-chart-5/5 border border-chart-5/20">
-                    {fileMediaType === "AUDIO" ? <Mic className="w-3.5 h-3.5 text-chart-5 shrink-0" /> : <Video className="w-3.5 h-3.5 text-chart-2 shrink-0" />}
-                    <p className="text-xs text-muted-foreground">
-                      {fileMediaType === "AUDIO" ? "Audio — transcription pipeline will be triggered" : "Video — transcription + frame extraction pipeline will be triggered"}
-                    </p>
-                  </div>
-                )}
-                <div className="grid grid-cols-2 gap-3">
-                  {isAV && (
-                    <div>
-                      <Label className="text-xs mb-1 block">Duration (seconds)</Label>
-                      <Input value={uploadDuration} onChange={(e) => setUploadDuration(e.target.value)} type="number" min="1" placeholder="e.g. 2700" className="h-8 text-sm" data-testid="input-upload-duration" />
-                    </div>
-                  )}
-                  <div className={isAV ? "" : "col-span-2"}>
-                    <Label className="text-xs mb-1 block">Operator ID</Label>
-                    <Input value={uploadOperator} onChange={(e) => setUploadOperator(e.target.value)} placeholder="operator_001" className="h-8 text-sm" data-testid="input-upload-operator" />
-                  </div>
-                </div>
-                {batches && batches.length > 0 && (
-                  <div>
-                    <Label className="text-xs mb-1 block">Batch (optional)</Label>
-                    <Select value={uploadBatch} onValueChange={setUploadBatch}>
-                      <SelectTrigger className="h-8 text-sm" data-testid="select-upload-batch"><SelectValue placeholder="Select batch..." /></SelectTrigger>
-                      <SelectContent>
-                        {batches.map(b => <SelectItem key={b.id} value={b.id}>{b.batchCode} — {b.sourceLocation}</SelectItem>)}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                )}
+            {selectedFile && isAV && (
+              <div className="flex items-center gap-2 p-2.5 rounded-md bg-chart-5/5 border border-chart-5/20">
+                {fileMediaType === "AUDIO" ? <Mic className="w-3.5 h-3.5 text-chart-5 shrink-0" /> : <Video className="w-3.5 h-3.5 text-chart-2 shrink-0" />}
+                <p className="text-xs text-muted-foreground">
+                  {fileMediaType === "AUDIO" ? "Audio — transcription pipeline will be triggered" : "Video — transcription + frame extraction pipeline will be triggered"}
+                </p>
+              </div>
+            )}
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label className="text-xs mb-1 block">Operator</Label>
+                <Select value={uploadOperator} onValueChange={setUploadOperator}>
+                  <SelectTrigger className="h-8 text-sm" data-testid="select-upload-operator">
+                    <SelectValue placeholder="Select operator..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {users.map(u => (
+                      <SelectItem key={u.id} value={u.username}>
+                        {u.firstName} {u.lastName} <span className="text-muted-foreground">({u.username})</span>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label className="text-xs mb-1 block">Batch (optional)</Label>
+                <Select value={uploadBatch} onValueChange={setUploadBatch}>
+                  <SelectTrigger className="h-8 text-sm" data-testid="select-upload-batch">
+                    <SelectValue placeholder="No batch" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">No batch</SelectItem>
+                    {(batches ?? []).map(b => (
+                      <SelectItem key={b.id} value={b.id}>{b.batchCode} — {b.sourceLocation}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            {selectedFile && isAV && (
+              <div>
+                <Label className="text-xs mb-1 block">Duration (seconds)</Label>
+                <Input value={uploadDuration} onChange={(e) => setUploadDuration(e.target.value)} type="number" min="1" placeholder="e.g. 2700" className="h-8 text-sm" data-testid="input-upload-duration" />
               </div>
             )}
 
@@ -604,12 +623,14 @@ function IngestFileDialog() {
                 <Label className="text-xs mb-1 block">Operator</Label>
                 <Select value={zipOperator} onValueChange={setZipOperator}>
                   <SelectTrigger data-testid="select-zip-operator" className="h-8 text-xs">
-                    <SelectValue />
+                    <SelectValue placeholder="Select operator..." />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="operator_001">operator_001</SelectItem>
-                    <SelectItem value="operator_002">operator_002</SelectItem>
-                    <SelectItem value="admin_001">admin_001</SelectItem>
+                    {users.map(u => (
+                      <SelectItem key={u.id} value={u.username}>
+                        {u.firstName} {u.lastName} <span className="text-muted-foreground">({u.username})</span>
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </div>
@@ -617,12 +638,12 @@ function IngestFileDialog() {
                 <Label className="text-xs mb-1 block">Assign to Batch</Label>
                 <Select value={zipBatch} onValueChange={setZipBatch}>
                   <SelectTrigger data-testid="select-zip-batch" className="h-8 text-xs">
-                    <SelectValue placeholder="None" />
+                    <SelectValue placeholder="No batch" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="none">None</SelectItem>
-                    {batches?.map(b => (
-                      <SelectItem key={b.id} value={b.id}>{b.batchCode} — {b.name}</SelectItem>
+                    <SelectItem value="none">No batch</SelectItem>
+                    {(batches ?? []).map(b => (
+                      <SelectItem key={b.id} value={b.id}>{b.batchCode} — {b.sourceLocation}</SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
@@ -664,8 +685,19 @@ function IngestFileDialog() {
 
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <Label className="text-xs mb-1 block">Operator ID</Label>
-                <Input value={importOperator} onChange={(e) => setImportOperator(e.target.value)} placeholder="operator_001" className="h-8 text-sm" data-testid="input-import-operator" />
+                <Label className="text-xs mb-1 block">Operator</Label>
+                <Select value={importOperator} onValueChange={setImportOperator}>
+                  <SelectTrigger className="h-8 text-sm" data-testid="select-import-operator">
+                    <SelectValue placeholder="Select operator..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {users.map(u => (
+                      <SelectItem key={u.id} value={u.username}>
+                        {u.firstName} {u.lastName} <span className="text-muted-foreground">({u.username})</span>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
               <div>
                 <Label className="text-xs mb-1 block">Duration in secs (A/V only)</Label>
@@ -673,17 +705,20 @@ function IngestFileDialog() {
               </div>
             </div>
 
-            {batches && batches.length > 0 && (
-              <div>
-                <Label className="text-xs mb-1 block">Batch (optional)</Label>
-                <Select value={importBatch} onValueChange={setImportBatch}>
-                  <SelectTrigger className="h-8 text-sm" data-testid="select-import-batch"><SelectValue placeholder="Select batch..." /></SelectTrigger>
-                  <SelectContent>
-                    {batches.map(b => <SelectItem key={b.id} value={b.id}>{b.batchCode} — {b.sourceLocation}</SelectItem>)}
-                  </SelectContent>
-                </Select>
-              </div>
-            )}
+            <div>
+              <Label className="text-xs mb-1 block">Batch (optional)</Label>
+              <Select value={importBatch} onValueChange={setImportBatch}>
+                <SelectTrigger className="h-8 text-sm" data-testid="select-import-batch">
+                  <SelectValue placeholder="No batch" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">No batch</SelectItem>
+                  {(batches ?? []).map(b => (
+                    <SelectItem key={b.id} value={b.id}>{b.batchCode} — {b.sourceLocation}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
 
             <div className="rounded-md border border-border bg-muted/20 p-3 space-y-2">
               <p className="text-xs font-medium text-muted-foreground">How to get a sharing link</p>
