@@ -326,6 +326,7 @@ function BatchSection({ batch, displayFiles, allFiles, duplicateHashes }: {
 
 function NewBatchDialog() {
   const { toast } = useToast();
+  const { can } = useAuth();
   const [open, setOpen] = useState(false);
   const form = useForm({
     defaultValues: { sourceLocation: "", expectedDocuments: "10", notes: "", createdBy: "operator_001" }
