@@ -82,14 +82,14 @@ function CopyButton({ text }: { text: string }) {
 
 function ApproveDialog({ request, open, onClose }: { request: AccessRequest; open: boolean; onClose: () => void }) {
   const { toast } = useToast();
-  const [result, setResult] = useState<{ username: string; tempPassword: string } | null>(null);
+  const [result, setResult] = useState<{ username: string; tempPassword: string; emailPreviewUrl?: string | null } | null>(null);
 
   const approveMutation = useMutation({
     mutationFn: () => apiRequest("POST", `/api/access-requests/${request.id}/approve`, {}).then(r => r.json()),
     onSuccess: (data: any) => {
       queryClient.invalidateQueries({ queryKey: ["/api/access-requests"] });
       queryClient.invalidateQueries({ queryKey: ["/api/auth/users"] });
-      setResult({ username: data.username, tempPassword: data.tempPassword });
+      setResult({ username: data.username, tempPassword: data.tempPassword, emailPreviewUrl: data.emailPreviewUrl });
       toast({ title: "Request approved", description: `Account created for ${request.firstName} ${request.lastName}` });
     },
     onError: (err: any) => {
@@ -139,9 +139,26 @@ function ApproveDialog({ request, open, onClose }: { request: AccessRequest; ope
               </div>
             </div>
 
-            <p className="text-xs text-muted-foreground">
-              Pass these credentials to the user. They will be prompted to change their password on first use.
-            </p>
+            {result.emailPreviewUrl ? (
+              <div className="p-3 rounded-md bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 text-xs space-y-1.5">
+                <p className="font-medium text-blue-800 dark:text-blue-300">Email sent (test mode)</p>
+                <p className="text-blue-700 dark:text-blue-400">
+                  Emails are captured in a test mailbox — not delivered to the real inbox in this environment.
+                </p>
+                <a
+                  href={result.emailPreviewUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1 font-medium text-blue-700 dark:text-blue-300 underline underline-offset-2 hover:text-blue-900"
+                >
+                  View approval email in browser →
+                </a>
+              </div>
+            ) : (
+              <p className="text-xs text-muted-foreground">
+                Pass these credentials to the user. They will be prompted to change their password on first use.
+              </p>
+            )}
 
             <Button className="w-full" onClick={handleClose} data-testid="button-done-approve">Done</Button>
           </div>
@@ -191,22 +208,29 @@ function ApproveDialog({ request, open, onClose }: { request: AccessRequest; ope
 function RejectDialog({ request, open, onClose }: { request: AccessRequest; open: boolean; onClose: () => void }) {
   const { toast } = useToast();
   const [reason, setReason] = useState("");
+  const [emailPreviewUrl, setEmailPreviewUrl] = useState<string | null>(null);
 
   const rejectMutation = useMutation({
     mutationFn: () => apiRequest("POST", `/api/access-requests/${request.id}/reject`, { rejectionReason: reason || undefined }).then(r => r.json()),
-    onSuccess: () => {
+    onSuccess: (data: any) => {
       queryClient.invalidateQueries({ queryKey: ["/api/access-requests"] });
-      toast({ title: "Request rejected", description: `Rejection notice sent to ${request.email}` });
-      setReason("");
-      onClose();
+      if (data.emailPreviewUrl) {
+        setEmailPreviewUrl(data.emailPreviewUrl);
+      } else {
+        toast({ title: "Request rejected", description: `Rejection notice sent to ${request.email}` });
+        setReason("");
+        onClose();
+      }
     },
     onError: (err: any) => {
       toast({ title: "Rejection failed", description: err?.message ?? "Please try again", variant: "destructive" });
     },
   });
 
+  const handleRejectClose = () => { setReason(""); setEmailPreviewUrl(null); onClose(); };
+
   return (
-    <Dialog open={open} onOpenChange={v => { if (!v) { setReason(""); onClose(); } }}>
+    <Dialog open={open} onOpenChange={v => { if (!v) handleRejectClose(); }}>
       <DialogContent className="max-w-md">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
@@ -215,39 +239,61 @@ function RejectDialog({ request, open, onClose }: { request: AccessRequest; open
           </DialogTitle>
         </DialogHeader>
 
-        <div className="space-y-4">
-          <div className="text-sm space-y-1">
-            <p><span className="text-muted-foreground">Name:</span> <strong>{request.firstName} {request.lastName}</strong></p>
-            <p><span className="text-muted-foreground">Email:</span> {request.email}</p>
+        {emailPreviewUrl ? (
+          <div className="space-y-4">
+            <div className="p-3 rounded-md bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 text-sm">
+              <p className="font-medium text-green-800 dark:text-green-300">Request rejected</p>
+              <p className="text-green-700 dark:text-green-400 text-xs mt-0.5">Rejection notice sent to {request.email}</p>
+            </div>
+            <div className="p-3 rounded-md bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 text-xs space-y-1.5">
+              <p className="font-medium text-blue-800 dark:text-blue-300">Email sent (test mode)</p>
+              <p className="text-blue-700 dark:text-blue-400">Emails are captured in a test mailbox — not delivered to the real inbox in this environment.</p>
+              <a
+                href={emailPreviewUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1 font-medium text-blue-700 dark:text-blue-300 underline underline-offset-2 hover:text-blue-900"
+              >
+                View rejection email in browser →
+              </a>
+            </div>
+            <Button className="w-full" onClick={handleRejectClose}>Done</Button>
           </div>
+        ) : (
+          <div className="space-y-4">
+            <div className="text-sm space-y-1">
+              <p><span className="text-muted-foreground">Name:</span> <strong>{request.firstName} {request.lastName}</strong></p>
+              <p><span className="text-muted-foreground">Email:</span> {request.email}</p>
+            </div>
 
-          <div className="space-y-1.5">
-            <Label>Rejection reason <span className="text-muted-foreground text-xs">(optional — will be included in the notification email)</span></Label>
-            <Textarea
-              value={reason}
-              onChange={e => setReason(e.target.value)}
-              placeholder="e.g. Insufficient justification provided. Please contact your line manager for approval."
-              className="resize-none h-24 text-sm"
-              data-testid="textarea-rejection-reason"
-            />
-          </div>
+            <div className="space-y-1.5">
+              <Label>Rejection reason <span className="text-muted-foreground text-xs">(optional — will be included in the notification email)</span></Label>
+              <Textarea
+                value={reason}
+                onChange={e => setReason(e.target.value)}
+                placeholder="e.g. Insufficient justification provided. Please contact your line manager for approval."
+                className="resize-none h-24 text-sm"
+                data-testid="textarea-rejection-reason"
+              />
+            </div>
 
-          <div className="flex gap-2 justify-end">
-            <Button variant="outline" size="sm" onClick={() => { setReason(""); onClose(); }}>Cancel</Button>
-            <Button
-              size="sm"
-              variant="destructive"
-              className="gap-2"
-              disabled={rejectMutation.isPending}
-              onClick={() => rejectMutation.mutate()}
-              data-testid="button-confirm-reject"
-            >
-              {rejectMutation.isPending
-                ? <><RefreshCw className="w-3.5 h-3.5 animate-spin" /> Rejecting…</>
-                : <><XCircle className="w-3.5 h-3.5" /> Reject Request</>}
-            </Button>
+            <div className="flex gap-2 justify-end">
+              <Button variant="outline" size="sm" onClick={handleRejectClose}>Cancel</Button>
+              <Button
+                size="sm"
+                variant="destructive"
+                className="gap-2"
+                disabled={rejectMutation.isPending}
+                onClick={() => rejectMutation.mutate()}
+                data-testid="button-confirm-reject"
+              >
+                {rejectMutation.isPending
+                  ? <><RefreshCw className="w-3.5 h-3.5 animate-spin" /> Rejecting…</>
+                  : <><XCircle className="w-3.5 h-3.5" /> Reject Request</>}
+              </Button>
+            </div>
           </div>
-        </div>
+        )}
       </DialogContent>
     </Dialog>
   );

@@ -267,7 +267,7 @@ export async function registerRoutes(httpServer: any, app: Express): Promise<any
       tenantId: "TENANT-001",
     });
 
-    await sendAccessApprovedEmail({
+    const { previewUrl: approvePreviewUrl } = await sendAccessApprovedEmail({
       to: accessReq.email,
       firstName: accessReq.firstName,
       username,
@@ -276,7 +276,7 @@ export async function registerRoutes(httpServer: any, app: Express): Promise<any
     });
 
     const { password: _, ...safeUser } = user;
-    res.json({ user: safeUser, username, tempPassword, message: "Request approved and account created" });
+    res.json({ user: safeUser, username, tempPassword, emailPreviewUrl: approvePreviewUrl ?? null, message: "Request approved and account created" });
   });
 
   // Admin: reject an access request
@@ -302,13 +302,13 @@ export async function registerRoutes(httpServer: any, app: Express): Promise<any
       tenantId: "TENANT-001",
     });
 
-    await sendAccessRejectedEmail({
+    const { previewUrl: rejectPreviewUrl } = await sendAccessRejectedEmail({
       to: accessReq.email,
       firstName: accessReq.firstName,
       rejectionReason,
     });
 
-    res.json({ message: "Request rejected" });
+    res.json({ message: "Request rejected", emailPreviewUrl: rejectPreviewUrl ?? null });
   });
 
   // ─── Config endpoint (read-only feature flags) ─────────────────────────────

@@ -1,35 +1,72 @@
 import nodemailer from "nodemailer";
+import type { Transporter } from "nodemailer";
 
-const SMTP_HOST = process.env.SMTP_HOST ?? "smtp.ethereal.email";
+const SMTP_HOST = process.env.SMTP_HOST;
 const SMTP_PORT = parseInt(process.env.SMTP_PORT ?? "587");
 const SMTP_USER = process.env.SMTP_USER ?? "";
 const SMTP_PASS = process.env.SMTP_PASS ?? "";
 const FROM_NAME = process.env.EMAIL_FROM_NAME ?? "ADRS Platform – AI Institute Africa";
 const FROM_EMAIL = process.env.EMAIL_FROM_ADDRESS ?? "noreply@aiinstituteafrica.org";
 
-function makeTransport() {
-  if (SMTP_USER && SMTP_PASS) {
-    return nodemailer.createTransport({
+let _transport: Transporter | null = null;
+let _fromEmail = FROM_EMAIL;
+let _etherealReady = false;
+
+async function getTransport(): Promise<Transporter> {
+  if (_transport) return _transport;
+
+  // Use real SMTP if credentials are fully configured
+  if (SMTP_HOST && SMTP_USER && SMTP_PASS) {
+    _transport = nodemailer.createTransport({
       host: SMTP_HOST,
       port: SMTP_PORT,
       secure: SMTP_PORT === 465,
       auth: { user: SMTP_USER, pass: SMTP_PASS },
     });
+    console.log(`[EMAIL] Using SMTP: ${SMTP_HOST}:${SMTP_PORT} as ${SMTP_USER}`);
+    return _transport;
   }
-  return null;
+
+  // Auto-create an Ethereal test account (free, zero config, preview via URL)
+  try {
+    const testAccount = await nodemailer.createTestAccount();
+    _transport = nodemailer.createTransport({
+      host: "smtp.ethereal.email",
+      port: 587,
+      secure: false,
+      auth: { user: testAccount.user, pass: testAccount.pass },
+    });
+    _fromEmail = testAccount.user;
+    _etherealReady = true;
+    console.log("[EMAIL] Ethereal test account created — emails will NOT be delivered to real inboxes.");
+    console.log(`[EMAIL] View sent messages at: https://ethereal.email (login: ${testAccount.user} / ${testAccount.pass})`);
+    return _transport;
+  } catch (err) {
+    console.error("[EMAIL] Failed to create Ethereal account:", err);
+    throw err;
+  }
 }
 
-async function sendEmail(to: string, subject: string, html: string): Promise<void> {
-  const transport = makeTransport();
-  if (!transport) {
-    console.log(`[EMAIL] SMTP not configured — would send to: ${to}`);
-    console.log(`[EMAIL] Subject: ${subject}`);
-    return;
-  }
+async function sendEmail(to: string, subject: string, html: string): Promise<{ previewUrl?: string }> {
   try {
-    await transport.sendMail({ from: `"${FROM_NAME}" <${FROM_EMAIL}>`, to, subject, html });
+    const transport = await getTransport();
+    const info = await transport.sendMail({
+      from: `"${FROM_NAME}" <${_fromEmail}>`,
+      to,
+      subject,
+      html,
+    });
+    if (_etherealReady) {
+      const previewUrl = nodemailer.getTestMessageUrl(info) || undefined;
+      console.log(`[EMAIL] Sent to ${to} — preview: ${previewUrl}`);
+      return { previewUrl: previewUrl ?? undefined };
+    } else {
+      console.log(`[EMAIL] Sent to ${to} — messageId: ${info.messageId}`);
+      return {};
+    }
   } catch (err) {
     console.error("[EMAIL] Failed to send email:", err);
+    return {};
   }
 }
 
@@ -86,14 +123,14 @@ export async function sendAccessApprovedEmail(opts: {
     </div>
   </div>
   `;
-  await sendEmail(opts.to, subject, html);
+  return sendEmail(opts.to, subject, html);
 }
 
 export async function sendAccessRejectedEmail(opts: {
   to: string;
   firstName: string;
   rejectionReason?: string;
-}): Promise<void> {
+}): Promise<{ previewUrl?: string }> {
   const subject = "Update on Your ADRS Access Request";
   const html = `
   <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; background: #f9fafb; padding: 32px; border-radius: 12px;">
@@ -124,5 +161,5 @@ export async function sendAccessRejectedEmail(opts: {
     </div>
   </div>
   `;
-  await sendEmail(opts.to, subject, html);
+  return sendEmail(opts.to, subject, html);
 }
