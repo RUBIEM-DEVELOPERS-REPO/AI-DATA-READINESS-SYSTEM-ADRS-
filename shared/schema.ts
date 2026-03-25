@@ -240,6 +240,13 @@ export const accessRequests = pgTable("access_requests", {
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 
+export const systemConfig = pgTable("system_config", {
+  key: text("key").primaryKey(),
+  value: text("value"),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  updatedBy: varchar("updated_by"),
+});
+
 export const auditLogs = pgTable("audit_logs", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   action: text("action").notNull(),

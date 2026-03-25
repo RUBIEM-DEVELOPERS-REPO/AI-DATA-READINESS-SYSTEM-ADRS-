@@ -16,7 +16,8 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { formatDistanceToNow } from "date-fns";
 import {
   Users, Shield, CheckCircle2, XCircle, Clock, Building2, Mail,
-  Copy, Check, RefreshCw, Search, AlertCircle, Key, ClipboardList
+  Copy, Check, RefreshCw, Search, AlertCircle, Key, ClipboardList,
+  Settings, Wifi, WifiOff, Eye, EyeOff, Save, FlaskConical
 } from "lucide-react";
 
 type UserRole = "SUPER_ADMIN" | "ADMIN" | "ANALYST" | "REVIEWER" | "VIEWER";
@@ -395,6 +396,223 @@ function AccessRequestCard({ request }: { request: AccessRequest }) {
   );
 }
 
+interface SmtpConfig {
+  smtpHost: string;
+  smtpPort: string;
+  smtpUser: string;
+  smtpPassSet: boolean;
+  fromEmail: string;
+  fromName: string;
+  usingEnvVars: boolean;
+}
+
+function SmtpSettingsTab() {
+  const { toast } = useToast();
+  const { data: cfg, isLoading } = useQuery<SmtpConfig>({ queryKey: ["/api/settings/smtp"] });
+
+  const [host, setHost] = useState("");
+  const [port, setPort] = useState("587");
+  const [user, setUser] = useState("");
+  const [pass, setPass] = useState("");
+  const [fromEmail, setFromEmail] = useState("");
+  const [fromName, setFromName] = useState("ADRS Platform – AI Institute Africa");
+  const [showPass, setShowPass] = useState(false);
+  const [testResult, setTestResult] = useState<{ ok: boolean; error?: string } | null>(null);
+  const [initialised, setInitialised] = useState(false);
+
+  if (cfg && !initialised) {
+    setHost(cfg.smtpHost);
+    setPort(cfg.smtpPort);
+    setUser(cfg.smtpUser);
+    setFromEmail(cfg.fromEmail || cfg.smtpUser);
+    setFromName(cfg.fromName);
+    setInitialised(true);
+  }
+
+  const save = useMutation({
+    mutationFn: () => apiRequest("POST", "/api/settings/smtp", {
+      smtpHost: host, smtpPort: port, smtpUser: user,
+      smtpPass: pass || undefined, fromEmail, fromName,
+    }).then(r => r.json()),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/settings/smtp"] });
+      setPass("");
+      setTestResult(null);
+      toast({ title: "Email settings saved", description: "SMTP configuration updated successfully." });
+    },
+    onError: () => toast({ title: "Save failed", variant: "destructive" }),
+  });
+
+  const test = useMutation({
+    mutationFn: () => apiRequest("POST", "/api/settings/smtp/test", {}).then(r => r.json()),
+    onSuccess: (data: { ok: boolean; error?: string }) => {
+      setTestResult(data);
+      if (data.ok) toast({ title: "Connection successful", description: "SMTP server responded correctly." });
+      else toast({ title: "Connection failed", description: data.error, variant: "destructive" });
+    },
+    onError: () => toast({ title: "Test failed", variant: "destructive" }),
+  });
+
+  if (isLoading) return <Skeleton className="h-64 rounded-lg" />;
+
+  return (
+    <div className="max-w-2xl space-y-6">
+      {cfg?.usingEnvVars && (
+        <Card className="border-blue-500/30 bg-blue-500/5">
+          <CardContent className="p-4 flex items-start gap-3">
+            <Shield className="w-4 h-4 text-blue-500 mt-0.5 shrink-0" />
+            <div>
+              <p className="text-sm font-medium text-blue-700 dark:text-blue-300">Environment variables are active</p>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                SMTP credentials are set via server environment variables and take priority. Changes here are saved but won't take effect until the environment variables are removed.
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      <Card>
+        <CardHeader className="pb-4">
+          <CardTitle className="text-base flex items-center gap-2">
+            <Mail className="w-4 h-4" />
+            Email Delivery (SMTP)
+          </CardTitle>
+          <p className="text-xs text-muted-foreground">
+            Configure a Gmail account (or any SMTP server) to send approval and rejection emails to users.
+            For Gmail, use your Gmail address and a 16-character App Password from your Google account settings.
+          </p>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid grid-cols-3 gap-3">
+            <div className="col-span-2 space-y-1.5">
+              <Label className="text-xs">SMTP Host</Label>
+              <Input
+                value={host}
+                onChange={e => setHost(e.target.value)}
+                placeholder="smtp.gmail.com"
+                data-testid="input-smtp-host"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs">Port</Label>
+              <Input
+                value={port}
+                onChange={e => setPort(e.target.value)}
+                placeholder="587"
+                data-testid="input-smtp-port"
+              />
+            </div>
+          </div>
+
+          <div className="space-y-1.5">
+            <Label className="text-xs">Gmail / SMTP Username</Label>
+            <Input
+              type="email"
+              value={user}
+              onChange={e => { setUser(e.target.value); if (!fromEmail) setFromEmail(e.target.value); }}
+              placeholder="youraddress@gmail.com"
+              data-testid="input-smtp-user"
+            />
+          </div>
+
+          <div className="space-y-1.5">
+            <Label className="text-xs flex items-center justify-between">
+              <span>
+                App Password
+                {cfg?.smtpPassSet && !pass && (
+                  <span className="ml-2 text-green-600 dark:text-green-400 font-normal">(saved — leave blank to keep)</span>
+                )}
+              </span>
+            </Label>
+            <div className="relative">
+              <Input
+                type={showPass ? "text" : "password"}
+                value={pass}
+                onChange={e => setPass(e.target.value)}
+                placeholder={cfg?.smtpPassSet ? "••••••••••••••••" : "16-character App Password from Google"}
+                className="pr-10"
+                data-testid="input-smtp-pass"
+              />
+              <button
+                type="button"
+                onClick={() => setShowPass(v => !v)}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+              >
+                {showPass ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              </button>
+            </div>
+          </div>
+
+          <div className="border-t pt-4 space-y-3">
+            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Sender Identity</p>
+            <div className="space-y-1.5">
+              <Label className="text-xs">From Email Address</Label>
+              <Input
+                type="email"
+                value={fromEmail}
+                onChange={e => setFromEmail(e.target.value)}
+                placeholder="youraddress@gmail.com"
+                data-testid="input-smtp-from-email"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs">From Name</Label>
+              <Input
+                value={fromName}
+                onChange={e => setFromName(e.target.value)}
+                placeholder="ADRS Platform – AI Institute Africa"
+                data-testid="input-smtp-from-name"
+              />
+            </div>
+          </div>
+
+          {testResult && (
+            <div className={`flex items-center gap-2 rounded-lg px-4 py-3 text-sm ${testResult.ok ? "bg-green-500/10 text-green-700 dark:text-green-400" : "bg-red-500/10 text-red-700 dark:text-red-400"}`}>
+              {testResult.ok
+                ? <><Wifi className="w-4 h-4 shrink-0" /> Connection verified — SMTP server is reachable</>
+                : <><WifiOff className="w-4 h-4 shrink-0" /> {testResult.error ?? "Connection failed"}</>
+              }
+            </div>
+          )}
+
+          <div className="flex items-center gap-2 pt-2">
+            <Button
+              onClick={() => save.mutate()}
+              disabled={save.isPending}
+              data-testid="button-save-smtp"
+            >
+              <Save className="w-4 h-4 mr-1.5" />
+              {save.isPending ? "Saving…" : "Save Settings"}
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() => test.mutate()}
+              disabled={test.isPending}
+              data-testid="button-test-smtp"
+            >
+              <FlaskConical className="w-4 h-4 mr-1.5" />
+              {test.isPending ? "Testing…" : "Test Connection"}
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card className="border-muted/50 bg-muted/20">
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm">How to get a Gmail App Password</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-2 text-xs text-muted-foreground">
+          <p>1. Go to <strong>myaccount.google.com</strong> → Security → turn on <strong>2-Step Verification</strong> (required)</p>
+          <p>2. Search for <strong>"App passwords"</strong> in your Google Account search bar</p>
+          <p>3. Enter an app name (e.g. <em>ADRS Platform</em>) and click <strong>Create</strong></p>
+          <p>4. Copy the 16-character password shown and paste it into the App Password field above</p>
+          <p>5. Click <strong>Save Settings</strong>, then <strong>Test Connection</strong> to verify it works</p>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
 function UsersTab() {
   const { can } = useAuth();
   const [search, setSearch] = useState("");
@@ -620,6 +838,10 @@ export default function UserManagement() {
               </Badge>
             )}
           </TabsTrigger>
+          <TabsTrigger value="settings" data-testid="tab-settings">
+            <Settings className="w-4 h-4 mr-1.5" />
+            Email Settings
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="users" className="mt-6">
@@ -627,6 +849,9 @@ export default function UserManagement() {
         </TabsContent>
         <TabsContent value="access-requests" className="mt-6">
           <AccessRequestsTab />
+        </TabsContent>
+        <TabsContent value="settings" className="mt-6">
+          <SmtpSettingsTab />
         </TabsContent>
       </Tabs>
     </div>

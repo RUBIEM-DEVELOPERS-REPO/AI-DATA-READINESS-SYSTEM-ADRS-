@@ -6,7 +6,7 @@ import {
   insertValidationTaskSchema, insertCdmEntitySchema, insertDatasetSchema,
   registerSchema, loginSchema
 } from "@shared/schema";
-import { sendAccessApprovedEmail, sendAccessRejectedEmail } from "./services/email";
+import { sendAccessApprovedEmail, sendAccessRejectedEmail, testSmtpConnection, resetEmailTransport } from "./services/email";
 import { createHash, randomUUID } from "crypto";
 import path from "path";
 import fs from "fs";
@@ -309,6 +309,44 @@ export async function registerRoutes(httpServer: any, app: Express): Promise<any
     });
 
     res.json({ message: "Request rejected", emailPreviewUrl: rejectPreviewUrl ?? null });
+  });
+
+  // ─── SMTP / Email Settings ─────────────────────────────────────────────────
+  app.get("/api/settings/smtp", requireAuth, requireRole("ADMIN"), async (_req: any, res: any) => {
+    try {
+      const cfg = await storage.getAllSystemConfig();
+      res.json({
+        smtpHost: cfg["smtp_host"] ?? "smtp.gmail.com",
+        smtpPort: cfg["smtp_port"] ?? "587",
+        smtpUser: cfg["smtp_user"] ?? "",
+        smtpPassSet: !!(cfg["smtp_pass"]),
+        fromEmail: cfg["smtp_from_email"] ?? "",
+        fromName: cfg["smtp_from_name"] ?? "ADRS Platform – AI Institute Africa",
+        usingEnvVars: !!(process.env.SMTP_USER && process.env.SMTP_PASS),
+      });
+    } catch { res.status(500).json({ error: "Failed" }); }
+  });
+
+  app.post("/api/settings/smtp", requireAuth, requireRole("ADMIN"), async (req: any, res: any) => {
+    const { smtpHost, smtpPort, smtpUser, smtpPass, fromEmail, fromName } = req.body;
+    const userId = (req.user as any)?.id ?? "system";
+    const updates: { key: string; value: string }[] = [
+      { key: "smtp_host", value: smtpHost ?? "smtp.gmail.com" },
+      { key: "smtp_port", value: smtpPort ?? "587" },
+      { key: "smtp_user", value: smtpUser ?? "" },
+      { key: "smtp_from_email", value: fromEmail ?? smtpUser ?? "" },
+      { key: "smtp_from_name", value: fromName ?? "ADRS Platform – AI Institute Africa" },
+    ];
+    if (smtpPass) updates.push({ key: "smtp_pass", value: smtpPass });
+    for (const u of updates) await storage.setSystemConfig(u.key, u.value, userId);
+    resetEmailTransport();
+    res.json({ message: "SMTP settings saved" });
+  });
+
+  app.post("/api/settings/smtp/test", requireAuth, requireRole("ADMIN"), async (_req: any, res: any) => {
+    resetEmailTransport();
+    const result = await testSmtpConnection();
+    res.json(result);
   });
 
   // ─── Config endpoint (read-only feature flags) ─────────────────────────────

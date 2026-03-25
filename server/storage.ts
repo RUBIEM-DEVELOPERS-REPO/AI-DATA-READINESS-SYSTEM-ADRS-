@@ -9,7 +9,7 @@ import {
   type PublishedDataset, type InsertDataset,
   type AuditLog, type InsertAuditLog,
   type AccessRequest, type InsertAccessRequest,
-  users, batches, evidenceFiles, extractionRuns, extractionTexts, validationTasks, cdmEntities, publishedDatasets, auditLogs, accessRequests
+  users, batches, evidenceFiles, extractionRuns, extractionTexts, validationTasks, cdmEntities, publishedDatasets, auditLogs, accessRequests, systemConfig
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, desc, and, sql } from "drizzle-orm";
@@ -253,6 +253,21 @@ export class DatabaseStorage implements IStorage {
   async updateAccessRequest(id: string, updates: Partial<InsertAccessRequest>): Promise<AccessRequest | undefined> {
     const [updated] = await db.update(accessRequests).set({ ...updates, updatedAt: new Date() }).where(eq(accessRequests.id, id)).returning();
     return updated;
+  }
+
+  async getSystemConfig(key: string): Promise<string | null> {
+    const [row] = await db.select().from(systemConfig).where(eq(systemConfig.key, key));
+    return row?.value ?? null;
+  }
+  async setSystemConfig(key: string, value: string | null, updatedBy?: string): Promise<void> {
+    await db.insert(systemConfig).values({ key, value, updatedBy }).onConflictDoUpdate({
+      target: systemConfig.key,
+      set: { value, updatedAt: new Date(), updatedBy },
+    });
+  }
+  async getAllSystemConfig(): Promise<Record<string, string | null>> {
+    const rows = await db.select().from(systemConfig);
+    return Object.fromEntries(rows.map(r => [r.key, r.value]));
   }
 
   async getDashboardStats() {
