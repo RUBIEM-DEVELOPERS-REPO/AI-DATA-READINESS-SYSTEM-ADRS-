@@ -1,5 +1,6 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useState } from "react";
+import { useAuth } from "@/context/auth";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -186,6 +187,7 @@ function ArtifactCounts({ contents }: { contents: any }) {
 
 function DatasetCard({ dataset }: { dataset: PublishedDataset }) {
   const { toast } = useToast();
+  const { can } = useAuth();
   const [showDetail, setShowDetail] = useState(false);
   const [showOverride, setShowOverride] = useState(false);
   const [overrideReason, setOverrideReason] = useState("");
@@ -290,7 +292,7 @@ function DatasetCard({ dataset }: { dataset: PublishedDataset }) {
               <Button
                 size="sm"
                 variant="destructive"
-                disabled={overrideReason.trim().length < 10 || publishMutation.isPending}
+                disabled={overrideReason.trim().length < 10 || publishMutation.isPending || !can("ADMIN")}
                 onClick={() => publishMutation.mutate({ override: true, overrideReason })}
                 data-testid="button-confirm-override"
               >
@@ -376,7 +378,7 @@ function DatasetCard({ dataset }: { dataset: PublishedDataset }) {
             </span>
             <div className="flex items-center gap-1">
               {dataset.status === "DRAFT" && (
-                <Button size="sm" className="h-7 text-xs gap-1" onClick={() => publishMutation.mutate(undefined)} disabled={publishMutation.isPending} data-testid={`button-publish-${dataset.id}`}>
+                <Button size="sm" className="h-7 text-xs gap-1" onClick={() => publishMutation.mutate(undefined)} disabled={publishMutation.isPending || !can("ADMIN")} data-testid={`button-publish-${dataset.id}`}>
                   {publishMutation.isPending ? <><Zap className="w-3 h-3 animate-pulse" /> Building...</> : <><Globe className="w-3 h-3" /> Publish</>}
                 </Button>
               )}
@@ -384,7 +386,7 @@ function DatasetCard({ dataset }: { dataset: PublishedDataset }) {
                 <Eye className="w-3 h-3" /> {dataset.status === "PUBLISHED" ? "Artifacts" : "Details"}
               </Button>
               {dataset.status === "PUBLISHED" && (
-                <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => archiveMutation.mutate()} disabled={archiveMutation.isPending}>
+                <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => archiveMutation.mutate()} disabled={archiveMutation.isPending || !can("ADMIN")}>
                   <Archive className="w-3 h-3" />
                 </Button>
               )}
@@ -545,6 +547,7 @@ function DatasetCard({ dataset }: { dataset: PublishedDataset }) {
 
 function NewDatasetDialog() {
   const { toast } = useToast();
+  const { can } = useAuth();
   const [open, setOpen] = useState(false);
   const [scope, setScope] = useState<"SINGLE_BATCH" | "CROSS_BATCH">("SINGLE_BATCH");
   const [selectedBatchId, setSelectedBatchId] = useState<string>("__all__");
@@ -662,7 +665,7 @@ function NewDatasetDialog() {
             <p className="text-xs text-muted-foreground">Publishing will automatically generate ML features, KG entities/edges, and RAG chunks as separate artifacts.</p>
             <div className="flex justify-end gap-2">
               <Button type="button" variant="outline" size="sm" onClick={() => setOpen(false)}>Cancel</Button>
-              <Button type="submit" size="sm" disabled={mutation.isPending} data-testid="button-submit-dataset">
+              <Button type="submit" size="sm" disabled={mutation.isPending || !can("ANALYST")} data-testid="button-submit-dataset">
                 {mutation.isPending ? "Creating..." : "Create Draft"}
               </Button>
             </div>

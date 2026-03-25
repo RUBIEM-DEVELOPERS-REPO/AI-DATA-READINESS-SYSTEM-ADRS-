@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
+import { useAuth } from "@/context/auth";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -283,6 +284,7 @@ export default function CdmExplorer() {
   const [reclassifyResult, setReclassifyResult] = useState<any>(null);
   const [goldenResult, setGoldenResult]         = useState<any>(null);
   const { toast } = useToast();
+  const { can } = useAuth();
   const queryClient = useQueryClient();
 
   const { data: entities, isLoading } = useQuery<CdmEntity[]>({ queryKey: ["/api/cdm"] });
@@ -356,7 +358,7 @@ export default function CdmExplorer() {
             variant="outline"
             className="h-8 text-xs gap-1.5"
             onClick={() => reclassifyMutation.mutate()}
-            disabled={reclassifyMutation.isPending}
+            disabled={reclassifyMutation.isPending || !can("ANALYST")}
             data-testid="button-reclassify"
           >
             {reclassifyMutation.isPending
@@ -369,7 +371,7 @@ export default function CdmExplorer() {
             variant="outline"
             className="h-8 text-xs gap-1.5"
             onClick={() => goldenMutation.mutate()}
-            disabled={goldenMutation.isPending}
+            disabled={goldenMutation.isPending || !can("ANALYST")}
             data-testid="button-compute-golden"
           >
             {goldenMutation.isPending

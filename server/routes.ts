@@ -175,35 +175,35 @@ export async function registerRoutes(httpServer: any, app: Express): Promise<any
   });
 
   // ─── Config endpoint (read-only feature flags) ─────────────────────────────
-  app.get("/api/config", (_req: any, res: any) => {
+  app.get("/api/config", requireAuth, (_req: any, res: any) => {
     res.json({ features: ADRS_CONFIG.features, thresholds: { auto_validation_task: ADRS_CONFIG.thresholds.auto_validation_task, publish_trust_block: ADRS_CONFIG.thresholds.publish_trust_block, party_creation_confidence: ADRS_CONFIG.thresholds.party_creation_confidence }, trust_weights: ADRS_CONFIG.trust_weights });
   });
 
   // ─── Dashboard ─────────────────────────────────────────────────────────────
-  app.get("/api/dashboard/stats", async (_req: any, res: any) => {
+  app.get("/api/dashboard/stats", requireAuth, async (_req: any, res: any) => {
     try { res.json(await storage.getDashboardStats()); } catch { res.status(500).json({ error: "Failed" }); }
   });
 
   // ─── Batches ───────────────────────────────────────────────────────────────
-  app.get("/api/batches", async (_req: any, res: any) => res.json(await storage.getBatches()));
-  app.post("/api/batches", async (req: any, res: any) => {
+  app.get("/api/batches", requireAuth, async (_req: any, res: any) => res.json(await storage.getBatches()));
+  app.post("/api/batches", requireAuth, requireRole("ANALYST"), async (req: any, res: any) => {
     const parse = insertBatchSchema.safeParse({ ...req.body, batchCode: generateCode("BATCH") });
     if (!parse.success) return res.status(400).json({ error: parse.error });
     const batch = await storage.createBatch(parse.data);
     await storage.createAuditLog({ action: "BATCH_CREATED", resourceType: "BATCH", resourceId: batch.id, userId: batch.createdBy, details: { batch_code: batch.batchCode }, tenantId: "TENANT-001" });
     res.json(batch);
   });
-  app.patch("/api/batches/:id", async (req: any, res: any) => {
+  app.patch("/api/batches/:id", requireAuth, requireRole("ANALYST"), async (req: any, res: any) => {
     const batch = await storage.updateBatch(req.params.id, req.body);
     if (!batch) return res.status(404).json({ error: "Not found" });
     res.json(batch);
   });
 
   // ─── Evidence ──────────────────────────────────────────────────────────────
-  app.get("/api/evidence", async (_req: any, res: any) => res.json(await storage.getEvidenceFiles()));
+  app.get("/api/evidence", requireAuth, async (_req: any, res: any) => res.json(await storage.getEvidenceFiles()));
 
   // Serve stored file for download/preview
-  app.get("/api/evidence/:id/file", async (req: any, res: any) => {
+  app.get("/api/evidence/:id/file", requireAuth, async (req: any, res: any) => {
     try {
       const f = await storage.getEvidenceFile(req.params.id);
       if (!f) return res.status(404).json({ error: "Not found" });
@@ -218,14 +218,14 @@ export async function registerRoutes(httpServer: any, app: Express): Promise<any
   });
 
   // Metadata-only ingest (legacy/fallback)
-  app.get("/api/evidence/:id", async (req: any, res: any) => {
+  app.get("/api/evidence/:id", requireAuth, async (req: any, res: any) => {
     const f = await storage.getEvidenceFile(req.params.id);
     if (!f) return res.status(404).json({ error: "Not found" });
     res.json(f);
   });
 
   // Real file upload via multipart/form-data
-  app.post("/api/evidence/upload", (req: any, res: any) => {
+  app.post("/api/evidence/upload", requireAuth, requireRole("ANALYST"), (req: any, res: any) => {
     uploadMiddleware(req, res, async (err: any) => {
       if (err) return res.status(400).json({ error: err.message });
       if (!req.file) return res.status(400).json({ error: "No file provided" });
@@ -271,7 +271,7 @@ export async function registerRoutes(httpServer: any, app: Express): Promise<any
   });
 
   // Import from URL (Google Drive shared links, Dropbox, OneDrive, HTTP)
-  app.post("/api/evidence/import-url", async (req: any, res: any) => {
+  app.post("/api/evidence/import-url", requireAuth, requireRole("ANALYST"), async (req: any, res: any) => {
     const { url, uploadedBy, batchId, tags, durationSeconds } = req.body;
     if (!url) return res.status(400).json({ error: "url is required" });
     try {
@@ -342,7 +342,7 @@ export async function registerRoutes(httpServer: any, app: Express): Promise<any
     },
   }).single("file");
 
-  app.post("/api/evidence/upload-zip", (req: any, res: any) => {
+  app.post("/api/evidence/upload-zip", requireAuth, requireRole("ANALYST"), (req: any, res: any) => {
     zipUploadMiddleware(req, res, async (err: any) => {
       if (err) return res.status(400).json({ error: err.message });
       if (!req.file) return res.status(400).json({ error: "No ZIP file provided" });
@@ -427,7 +427,7 @@ export async function registerRoutes(httpServer: any, app: Express): Promise<any
     });
   });
 
-  app.post("/api/evidence", async (req: any, res: any) => {
+  app.post("/api/evidence", requireAuth, requireRole("ANALYST"), async (req: any, res: any) => {
     const body = { ...req.body, evidenceCode: generateCode("EVID"), fileHash: generateHash(req.body.fileName ?? "file"), storedUri: `s3://evidence/tenant-001/${new Date().getFullYear()}/${String(new Date().getMonth() + 1).padStart(2, "0")}/${randomUUID()}/original.${req.body.fileFormat ?? "pdf"}`, immutabilityStatus: "LOCKED" };
     const parse = insertEvidenceSchema.safeParse(body);
     if (!parse.success) return res.status(400).json({ error: parse.error });
@@ -435,14 +435,14 @@ export async function registerRoutes(httpServer: any, app: Express): Promise<any
     await storage.createAuditLog({ action: "EVIDENCE_INGESTED", resourceType: "EVIDENCE", resourceId: file.id, userId: file.uploadedBy, details: { file_name: file.fileName, hash: file.fileHash }, tenantId: "TENANT-001" });
     res.json(file);
   });
-  app.patch("/api/evidence/:id", async (req: any, res: any) => {
+  app.patch("/api/evidence/:id", requireAuth, requireRole("ANALYST"), async (req: any, res: any) => {
     const f = await storage.updateEvidenceFile(req.params.id, req.body);
     if (!f) return res.status(404).json({ error: "Not found" });
     res.json(f);
   });
 
   // ─── One-click file extraction ──────────────────────────────────────────────
-  app.post("/api/evidence/:id/extract", async (req: any, res: any) => {
+  app.post("/api/evidence/:id/extract", requireAuth, requireRole("ANALYST"), async (req: any, res: any) => {
     const evidenceFile = await storage.getEvidenceFile(req.params.id);
     if (!evidenceFile) return res.status(404).json({ error: "Evidence file not found" });
 
@@ -584,13 +584,13 @@ export async function registerRoutes(httpServer: any, app: Express): Promise<any
   });
 
   // ─── Extractions (include_text=true strips rawText by default) ─────────────
-  app.get("/api/extractions", async (req: any, res: any) => {
+  app.get("/api/extractions", requireAuth, async (req: any, res: any) => {
     const runs = await storage.getExtractionRuns();
     const includeText = req.query.include_text === "true" || ADRS_CONFIG.features.include_text_by_default;
     res.json(includeText ? runs : runs.map(stripText));
   });
 
-  app.get("/api/extractions/:id", async (req: any, res: any) => {
+  app.get("/api/extractions/:id", requireAuth, async (req: any, res: any) => {
     const run = await storage.getExtractionRun(req.params.id);
     if (!run) return res.status(404).json({ error: "Not found" });
     const includeText = req.query.include_text === "true" || ADRS_CONFIG.features.include_text_by_default;
@@ -598,7 +598,7 @@ export async function registerRoutes(httpServer: any, app: Express): Promise<any
   });
 
   // Dedicated text endpoint
-  app.get("/api/extractions/:id/text", async (req: any, res: any) => {
+  app.get("/api/extractions/:id/text", requireAuth, async (req: any, res: any) => {
     const run = await storage.getExtractionRun(req.params.id);
     if (!run) return res.status(404).json({ error: "Not found" });
     if (run.extractionTextId) {
@@ -609,7 +609,7 @@ export async function registerRoutes(httpServer: any, app: Express): Promise<any
     res.json({ extraction_text_id: null, evidence_id: run.evidenceId, text: run.rawText ?? "", char_count: (run.rawText ?? "").length });
   });
 
-  app.post("/api/extractions", async (req: any, res: any) => {
+  app.post("/api/extractions", requireAuth, requireRole("ANALYST"), async (req: any, res: any) => {
     const { extractedFields = {}, extractedEntities = [], ocrConfidence = 0, docType = "OTHER", rawText = "", ...rest } = req.body;
 
     // 1. Normalize + dedup
@@ -689,18 +689,18 @@ export async function registerRoutes(httpServer: any, app: Express): Promise<any
   });
 
   // ─── Validation ────────────────────────────────────────────────────────────
-  app.get("/api/validation", async (_req: any, res: any) => res.json(await storage.getValidationTasks()));
-  app.get("/api/validation/:id", async (req: any, res: any) => {
+  app.get("/api/validation", requireAuth, async (_req: any, res: any) => res.json(await storage.getValidationTasks()));
+  app.get("/api/validation/:id", requireAuth, async (req: any, res: any) => {
     const t = await storage.getValidationTask(req.params.id);
     if (!t) return res.status(404).json({ error: "Not found" });
     res.json(t);
   });
-  app.post("/api/validation", async (req: any, res: any) => {
+  app.post("/api/validation", requireAuth, requireRole("ANALYST"), async (req: any, res: any) => {
     const parse = insertValidationTaskSchema.safeParse({ ...req.body, taskCode: generateCode("VAL") });
     if (!parse.success) return res.status(400).json({ error: parse.error });
     res.json(await storage.createValidationTask(parse.data));
   });
-  app.patch("/api/validation/:id", async (req: any, res: any) => {
+  app.patch("/api/validation/:id", requireAuth, requireRole("REVIEWER"), async (req: any, res: any) => {
     const existing = await storage.getValidationTask(req.params.id);
     if (!existing) return res.status(404).json({ error: "Not found" });
     const updates: any = { ...req.body };
@@ -712,7 +712,7 @@ export async function registerRoutes(httpServer: any, app: Express): Promise<any
   });
 
   // ─── Conflict resolution — human picks winning value for each conflicting field ──
-  app.post("/api/validation/:id/resolve-conflict", requireAuth, async (req: any, res: any) => {
+  app.post("/api/validation/:id/resolve-conflict", requireAuth, requireRole("REVIEWER"), async (req: any, res: any) => {
     const task = await storage.getValidationTask(req.params.id);
     if (!task) return res.status(404).json({ error: "Validation task not found" });
 
@@ -820,7 +820,7 @@ export async function registerRoutes(httpServer: any, app: Express): Promise<any
   });
 
   // ─── CDM ───────────────────────────────────────────────────────────────────
-  app.get("/api/cdm", async (_req: any, res: any) => res.json(await storage.getCdmEntities()));
+  app.get("/api/cdm", requireAuth, async (_req: any, res: any) => res.json(await storage.getCdmEntities()));
   // Golden-records summary — must be BEFORE /api/cdm/:id to avoid param capture
   app.get("/api/cdm/golden-records", requireAuth, async (_req: any, res: any) => {
     const entities = await storage.getCdmEntities();
@@ -834,12 +834,12 @@ export async function registerRoutes(httpServer: any, app: Express): Promise<any
     }));
     res.json(summary);
   });
-  app.get("/api/cdm/:id", async (req: any, res: any) => {
+  app.get("/api/cdm/:id", requireAuth, async (req: any, res: any) => {
     const e = await storage.getCdmEntity(req.params.id);
     if (!e) return res.status(404).json({ error: "Not found" });
     res.json(e);
   });
-  app.post("/api/cdm", async (req: any, res: any) => {
+  app.post("/api/cdm", requireAuth, requireRole("ANALYST"), async (req: any, res: any) => {
     const body = { ...req.body, entityCode: req.body.entityCode ?? generateCode(req.body.entityType ?? "ENT") };
     const parse = insertCdmEntitySchema.safeParse(body);
     if (!parse.success) return res.status(400).json({ error: parse.error });
@@ -847,7 +847,7 @@ export async function registerRoutes(httpServer: any, app: Express): Promise<any
     await storage.createAuditLog({ action: "ENTITY_CREATED", resourceType: "CDM", resourceId: entity.entityCode, userId: "system", details: { entity_type: entity.entityType, name: entity.displayName }, tenantId: "TENANT-001" });
     res.json(entity);
   });
-  app.patch("/api/cdm/:id", async (req: any, res: any) => {
+  app.patch("/api/cdm/:id", requireAuth, requireRole("ANALYST"), async (req: any, res: any) => {
     const entity = await storage.updateCdmEntity(req.params.id, req.body);
     if (!entity) return res.status(404).json({ error: "Not found" });
     res.json(entity);
@@ -857,7 +857,7 @@ export async function registerRoutes(httpServer: any, app: Express): Promise<any
   // Fixes two problems in one pass:
   //   1. PERSON/ORGANIZATION mismatches on existing CDM entities
   //   2. Extraction runs whose doc_type is "OTHER"
-  app.post("/api/cdm/reclassify", requireAuth, async (_req: any, res: any) => {
+  app.post("/api/cdm/reclassify", requireAuth, requireRole("ANALYST"), async (_req: any, res: any) => {
     const results = {
       entitiesScanned: 0,
       entitiesReclassified: 0,
@@ -939,7 +939,7 @@ export async function registerRoutes(httpServer: any, app: Express): Promise<any
   // Groups entities that share name / email / phone and designates the highest-
   // confidence record as the golden record.  Zero hallucination: only existing
   // field values are compared; the AI is not asked to invent anything.
-  app.post("/api/cdm/golden-records/compute", requireAuth, async (_req: any, res: any) => {
+  app.post("/api/cdm/golden-records/compute", requireAuth, requireRole("ANALYST"), async (_req: any, res: any) => {
     const entities = await storage.getCdmEntities();
     const groups   = groupEntitiesForMerge(entities);
 
@@ -985,15 +985,15 @@ export async function registerRoutes(httpServer: any, app: Express): Promise<any
   });
 
   // ─── Datasets ──────────────────────────────────────────────────────────────
-  app.get("/api/datasets", async (_req: any, res: any) => res.json(await storage.getPublishedDatasets()));
-  app.get("/api/datasets/:id", async (req: any, res: any) => {
+  app.get("/api/datasets", requireAuth, async (_req: any, res: any) => res.json(await storage.getPublishedDatasets()));
+  app.get("/api/datasets/:id", requireAuth, async (req: any, res: any) => {
     const d = await storage.getPublishedDataset(req.params.id);
     if (!d) return res.status(404).json({ error: "Not found" });
     res.json(d);
   });
 
   // ─── Multi-artifact download (CSV for ML, real ZIP for bundle) ─────────────
-  app.get("/api/datasets/:code/artifact", async (req: any, res: any) => {
+  app.get("/api/datasets/:code/artifact", requireAuth, async (req: any, res: any) => {
     const datasets = await storage.getPublishedDatasets();
     const dataset  = datasets.find(d => d.datasetCode === req.params.code || d.id === req.params.code);
     if (!dataset) return res.status(404).json({ error: "Dataset not found" });
@@ -1031,17 +1031,17 @@ export async function registerRoutes(httpServer: any, app: Express): Promise<any
     res.send(jsonl);
   });
 
-  app.post("/api/datasets", async (req: any, res: any) => {
+  app.post("/api/datasets", requireAuth, requireRole("ANALYST"), async (req: any, res: any) => {
     const body = { ...req.body, datasetCode: generateCode("DS"), tenantId: "TENANT-001" };
     const parse = insertDatasetSchema.safeParse(body);
     if (!parse.success) return res.status(400).json({ error: parse.error });
     const dataset = await storage.createPublishedDataset(parse.data);
-    await storage.createAuditLog({ action: "DATASET_CREATED", resourceType: "DATASET", resourceId: dataset.datasetCode, userId: "Wills", details: { name: dataset.name, version: dataset.version }, tenantId: "TENANT-001" });
+    await storage.createAuditLog({ action: "DATASET_CREATED", resourceType: "DATASET", resourceId: dataset.datasetCode, userId: (req.user as any)?.id ?? "system", details: { name: dataset.name, version: dataset.version }, tenantId: "TENANT-001" });
     res.json(dataset);
   });
 
   // ─── Publish with trust-score blocking + override ─────────────────────────
-  app.post("/api/datasets/:id/publish", async (req: any, res: any) => {
+  app.post("/api/datasets/:id/publish", requireAuth, requireRole("ADMIN"), async (req: any, res: any) => {
     req.body = req.body ?? {};
     const dataset = await storage.getPublishedDataset(req.params.id);
     if (!dataset) return res.status(404).json({ error: "Not found" });
@@ -1079,11 +1079,11 @@ export async function registerRoutes(httpServer: any, app: Express): Promise<any
         const { override, overrideReason } = req.body;
         if (!override) {
           const blockingReason = `Dataset quality score ${(datasetTrustScore * 100).toFixed(0)}% is below the publishing threshold of ${(threshold * 100).toFixed(0)}%. Improve extraction quality or provide an override reason.`;
-          await storage.createAuditLog({ action: "PUBLISH_BLOCKED", resourceType: "DATASET", resourceId: dataset.datasetCode, userId: req.body.publishedBy ?? "Wills", details: { avg_trust_score: datasetTrustScore, threshold, reason: blockingReason }, tenantId: "TENANT-001" });
+          await storage.createAuditLog({ action: "PUBLISH_BLOCKED", resourceType: "DATASET", resourceId: dataset.datasetCode, userId: (req.user as any)?.id ?? "system", details: { avg_trust_score: datasetTrustScore, threshold, reason: blockingReason }, tenantId: "TENANT-001" });
           return res.status(422).json({ blocked: true, avg_trust_score: datasetTrustScore, threshold, reason: blockingReason });
         }
         // Override granted — audit it
-        await storage.createAuditLog({ action: "PUBLISH_OVERRIDE", resourceType: "DATASET", resourceId: dataset.datasetCode, userId: req.body.publishedBy ?? "Wills", details: { override_reason: overrideReason, avg_trust_score: datasetTrustScore, threshold }, tenantId: "TENANT-001" });
+        await storage.createAuditLog({ action: "PUBLISH_OVERRIDE", resourceType: "DATASET", resourceId: dataset.datasetCode, userId: (req.user as any)?.id ?? "system", details: { override_reason: overrideReason, avg_trust_score: datasetTrustScore, threshold }, tenantId: "TENANT-001" });
       }
     }
 
@@ -1091,24 +1091,24 @@ export async function registerRoutes(httpServer: any, app: Express): Promise<any
     const artifactUris = buildArtifactUris(dataset.datasetCode, dataset.version);
     const kgNodes      = artifacts.kg_graph.filter((r: any) => r.record_type === "NODE").length;
     const kgEdges      = artifacts.kg_graph.filter((r: any) => r.record_type === "EDGE").length;
-    const updated      = await storage.updatePublishedDataset(req.params.id, { status: "PUBLISHED", publishedAt: new Date(), publishedBy: req.body.publishedBy ?? "Wills", datasetCard: artifacts.dataset_card, artifactUris, artifactContents: artifacts, formats: ["ML_FEATURES", "KG_GRAPH", "KG_ENTITIES", "KG_EDGES", "KG_IDENTIFIERS", "RAG_CHUNKS"] });
+    const updated      = await storage.updatePublishedDataset(req.params.id, { status: "PUBLISHED", publishedAt: new Date(), publishedBy: (req.user as any)?.id ?? "system", datasetCard: artifacts.dataset_card, artifactUris, artifactContents: artifacts, formats: ["ML_FEATURES", "KG_GRAPH", "KG_ENTITIES", "KG_EDGES", "KG_IDENTIFIERS", "RAG_CHUNKS"] });
 
     await storage.createAuditLog({ action: "ARTIFACT_GENERATED", resourceType: "DATASET", resourceId: dataset.datasetCode, userId: "system", details: { artifacts: ["ml_features.csv", "kg_graph.jsonl", "kg_entities.jsonl", "kg_identifiers.jsonl", "kg_edges.jsonl", "rag_chunks.jsonl", "bundle.zip"], quality_gates_passed: artifacts.quality_gates.overall_passed }, tenantId: "TENANT-001" });
-    await storage.createAuditLog({ action: "DATASET_PUBLISHED", resourceType: "DATASET", resourceId: dataset.datasetCode, userId: req.body.publishedBy ?? "Wills", details: { name: dataset.name, version: dataset.version, ml_rows: artifacts.ml_features.length, kg_nodes: kgNodes, kg_edges: kgEdges, rag_chunks: artifacts.rag_chunks.length }, tenantId: "TENANT-001" });
+    await storage.createAuditLog({ action: "DATASET_PUBLISHED", resourceType: "DATASET", resourceId: dataset.datasetCode, userId: (req.user as any)?.id ?? "system", details: { name: dataset.name, version: dataset.version, ml_rows: artifacts.ml_features.length, kg_nodes: kgNodes, kg_edges: kgEdges, rag_chunks: artifacts.rag_chunks.length }, tenantId: "TENANT-001" });
 
     res.json({ dataset: updated, ml: artifacts.ml_features.length, kg_nodes: kgNodes, kg_edges: kgEdges, kg_entities: artifacts.kg_entities.length, kg_identifiers: artifacts.kg_identifiers.length, rag_chunks: artifacts.rag_chunks.length, quality_gates: artifacts.quality_gates });
   });
 
-  app.patch("/api/datasets/:id", async (req: any, res: any) => {
+  app.patch("/api/datasets/:id", requireAuth, requireRole("ADMIN"), async (req: any, res: any) => {
     const existing = await storage.getPublishedDataset(req.params.id);
     if (!existing) return res.status(404).json({ error: "Not found" });
     const updated = await storage.updatePublishedDataset(req.params.id, req.body);
-    if (req.body.status === "PUBLISHED") await storage.createAuditLog({ action: "DATASET_PUBLISHED", resourceType: "DATASET", resourceId: existing.datasetCode, userId: req.body.publishedBy ?? "Wills", details: { name: existing.name, version: existing.version }, tenantId: "TENANT-001" });
+    if (req.body.status === "PUBLISHED") await storage.createAuditLog({ action: "DATASET_PUBLISHED", resourceType: "DATASET", resourceId: existing.datasetCode, userId: (req.user as any)?.id ?? "system", details: { name: existing.name, version: existing.version }, tenantId: "TENANT-001" });
     res.json(updated);
   });
 
   // ─── Normalization preview ─────────────────────────────────────────────────
-  app.post("/api/normalize/preview", async (req: any, res: any) => {
+  app.post("/api/normalize/preview", requireAuth, requireRole("ANALYST"), async (req: any, res: any) => {
     const { fields = {}, entities = [] } = req.body;
     const rawAttrs = normalizeExtractedFields(fields, entities);
     const { deduped, conflictKeys } = dedupAttributes(rawAttrs);
@@ -1116,7 +1116,7 @@ export async function registerRoutes(httpServer: any, app: Express): Promise<any
   });
 
   // ─── Audit ─────────────────────────────────────────────────────────────────
-  app.get("/api/audit", async (_req: any, res: any) => res.json(await storage.getAuditLogs(200)));
+  app.get("/api/audit", requireAuth, async (_req: any, res: any) => res.json(await storage.getAuditLogs(200)));
 
   return httpServer;
 }

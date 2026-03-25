@@ -67,6 +67,7 @@ const mediaTypeConfig: Record<string, { Icon: React.ComponentType<{ className?: 
 
 function EvidenceCard({ file, isDuplicate }: { file: EvidenceFile; isDuplicate?: boolean }) {
   const { toast } = useToast();
+  const { can } = useAuth();
   const derivedMediaType = (file.mediaType as string) ?? getMediaType(file.fileFormat);
   const mediaConfig = mediaTypeConfig[derivedMediaType] ?? mediaTypeConfig.DOCUMENT;
   const MediaIcon = mediaConfig.Icon;
@@ -164,7 +165,7 @@ function EvidenceCard({ file, isDuplicate }: { file: EvidenceFile; isDuplicate?:
             size="sm"
             variant={file.status === "PROCESSED" ? "outline" : "default"}
             className="h-7 text-xs gap-1 ml-auto"
-            disabled={extractMutation.isPending || file.status === "PROCESSING"}
+            disabled={extractMutation.isPending || file.status === "PROCESSING" || !can("ANALYST")}
             onClick={() => extractMutation.mutate()}
             data-testid={`button-extract-${file.id}`}
           >
@@ -188,6 +189,7 @@ function BatchSection({ batch, displayFiles, allFiles, duplicateHashes }: {
   duplicateHashes: Set<string>;
 }) {
   const { toast } = useToast();
+  const { can } = useAuth();
   const [extracting, setExtracting] = useState(false);
   const [progress, setProgress] = useState({ done: 0, total: 0, currentFile: "" });
   const [collapsed, setCollapsed] = useState(false);
@@ -266,7 +268,7 @@ function BatchSection({ batch, displayFiles, allFiles, duplicateHashes }: {
             <Button
               size="sm"
               className="gap-1.5 text-xs h-8"
-              disabled={extracting}
+              disabled={extracting || !can("ANALYST")}
               onClick={runBatchExtraction}
               data-testid={`button-extract-batch-${batch.id}`}
             >
@@ -378,7 +380,7 @@ function NewBatchDialog() {
             )} />
             <div className="flex justify-end gap-2">
               <Button type="button" variant="outline" size="sm" onClick={() => setOpen(false)}>Cancel</Button>
-              <Button type="submit" size="sm" disabled={mutation.isPending} data-testid="button-submit-batch">
+              <Button type="submit" size="sm" disabled={mutation.isPending || !can("ANALYST")} data-testid="button-submit-batch">
                 {mutation.isPending ? "Creating..." : "Create Batch"}
               </Button>
             </div>
@@ -414,7 +416,7 @@ function detectUrlProvider(url: string): { name: string; color: string } | null 
 
 function IngestFileDialog() {
   const { toast } = useToast();
-  const { user } = useAuth();
+  const { user, can } = useAuth();
   const [open, setOpen] = useState(false);
   const [tab, setTab] = useState("upload");
   const { data: batches } = useQuery<Batch[]>({ queryKey: ["/api/batches"] });
@@ -671,7 +673,7 @@ function IngestFileDialog() {
 
             <div className="flex justify-end gap-2 pt-1">
               <Button type="button" variant="outline" size="sm" onClick={() => setOpen(false)}>Cancel</Button>
-              <Button size="sm" disabled={!selectedFile || uploading} onClick={handleUpload} data-testid="button-submit-upload">
+              <Button size="sm" disabled={!selectedFile || uploading || !can("ANALYST")} onClick={handleUpload} data-testid="button-submit-upload">
                 {uploading ? <><RefreshCw className="w-3.5 h-3.5 mr-1.5 animate-spin" /> Uploading...</> : <><Upload className="w-3.5 h-3.5 mr-1.5" /> Upload &amp; Ingest</>}
               </Button>
             </div>
@@ -772,7 +774,7 @@ function IngestFileDialog() {
             <Button
               data-testid="button-zip-upload"
               className="w-full h-9 text-sm"
-              disabled={!zipFile || zipUploading}
+              disabled={!zipFile || zipUploading || !can("ANALYST")}
               onClick={handleZipUpload}
             >
               {zipUploading
@@ -860,7 +862,7 @@ function IngestFileDialog() {
 
             <div className="flex justify-end gap-2 pt-1">
               <Button type="button" variant="outline" size="sm" onClick={() => setOpen(false)}>Cancel</Button>
-              <Button size="sm" disabled={!importUrl.trim() || importing} onClick={handleImportUrl} data-testid="button-submit-import-url">
+              <Button size="sm" disabled={!importUrl.trim() || importing || !can("ANALYST")} onClick={handleImportUrl} data-testid="button-submit-import-url">
                 {importing ? <><RefreshCw className="w-3.5 h-3.5 mr-1.5 animate-spin" /> Importing...</> : <><CloudDownload className="w-3.5 h-3.5 mr-1.5" /> Import &amp; Ingest</>}
               </Button>
             </div>

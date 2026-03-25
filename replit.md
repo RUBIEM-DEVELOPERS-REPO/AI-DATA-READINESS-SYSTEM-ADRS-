@@ -11,11 +11,15 @@ A comprehensive platform that transforms raw, unstructured evidence (PDFs, image
 ### Authentication & RBAC
 - Session-based auth using Passport.js (local strategy) + express-session + connect-pg-simple (Postgres session store)
 - Passwords hashed with bcryptjs (12 rounds)
-- 5 roles: SUPER_ADMIN → ADMIN → ANALYST → REVIEWER → VIEWER (hierarchical)
+- 5 roles: SUPER_ADMIN(5) → ADMIN(4) → ANALYST(3) → REVIEWER(2) → VIEWER(1) (hierarchical)
 - Default admin seeded on first run: `username=admin` / `password=Admin@12345!`
 - Auth routes: POST /api/auth/login, POST /api/auth/register, POST /api/auth/logout, GET /api/auth/me
-- RBAC middleware: `requireAuth` and `requireRole(...roles)` in `server/auth.ts`
-- Frontend: `client/src/context/auth.tsx` (AuthProvider + useAuth hook), `client/src/pages/auth.tsx`
+- RBAC middleware: `requireAuth` and `requireRole(minRole)` in `server/auth.ts`
+- **Backend RBAC (complete):** All API routes protected — GET routes require `requireAuth` (any role); evidence/extraction/CDM/batch/normalize write routes require `requireRole("ANALYST")`; validation PATCH/resolve-conflict require `requireRole("REVIEWER")`; dataset publish/archive/PATCH require `requireRole("ADMIN")`
+- **Frontend RBAC (complete):** `useAuth().can(minRole)` function disables action buttons by role — Evidence: ANALYST+; Validation approve/reject/escalate/resolve: REVIEWER+; CDM reclassify/golden: ANALYST+; Publishing publish/archive/override: ADMIN+, create dataset: ANALYST+
+- Audit log userId fields use `(req.user as any)?.id ?? "system"` (no more hardcoded "Wills")
+- Sidebar shows real user identity (name, email, role badge) from auth context with role-based nav filtering
+- Frontend: `client/src/context/auth.tsx` (AuthProvider + useAuth hook with `can()`), `client/src/pages/auth.tsx`
 - All app routes are protected; unauthenticated users redirect to /auth
 
 ### Frontend (React + TypeScript)

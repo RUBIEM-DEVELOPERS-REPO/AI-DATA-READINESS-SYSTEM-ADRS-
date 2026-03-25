@@ -1,5 +1,6 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useState, useEffect } from "react";
+import { useAuth } from "@/context/auth";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -127,6 +128,7 @@ type ResolutionState = Record<string, { chosen_value: string; source: "option_a"
 
 function ConflictPanel({ task, onResolved }: { task: ValidationTask; onResolved: () => void }) {
   const { toast } = useToast();
+  const { can } = useAuth();
   const details: ConflictDetail[] = (task.conflictDetails as ConflictDetail[]) ?? [];
   const [resolutions, setResolutions] = useState<ResolutionState>(() =>
     Object.fromEntries(details.map(d => [d.field_key, { chosen_value: d.chosen_value, source: "option_a", custom_text: "" }]))
@@ -259,7 +261,7 @@ function ConflictPanel({ task, onResolved }: { task: ValidationTask; onResolved:
         <Button
           size="sm"
           className="w-full gap-2 bg-primary text-primary-foreground"
-          disabled={resolveMutation.isPending || unresolvedDetails.some(d => resolutions[d.field_key]?.source === "custom" && !resolutions[d.field_key]?.custom_text?.trim())}
+          disabled={resolveMutation.isPending || !can("REVIEWER") || unresolvedDetails.some(d => resolutions[d.field_key]?.source === "custom" && !resolutions[d.field_key]?.custom_text?.trim())}
           onClick={() => resolveMutation.mutate()}
           data-testid="button-apply-resolutions"
         >
@@ -311,6 +313,7 @@ function ReviewDialog({ task, extraction, evidence, open, onClose }: {
   onClose: () => void;
 }) {
   const { toast } = useToast();
+  const { can } = useAuth();
   const [notes, setNotes] = useState(task.validatorNotes ?? "");
   const [localTask, setLocalTask] = useState<ValidationTask>(task);
 
@@ -454,7 +457,7 @@ function ReviewDialog({ task, extraction, evidence, open, onClose }: {
             <Button
               size="sm"
               className="gap-2 bg-chart-3 text-white border-chart-3"
-              disabled={mutation.isPending}
+              disabled={mutation.isPending || !can("REVIEWER")}
               onClick={() => mutation.mutate({ status: "APPROVED", notes })}
               data-testid="button-approve"
             >
@@ -464,7 +467,7 @@ function ReviewDialog({ task, extraction, evidence, open, onClose }: {
               size="sm"
               variant="destructive"
               className="gap-2"
-              disabled={mutation.isPending}
+              disabled={mutation.isPending || !can("REVIEWER")}
               onClick={() => mutation.mutate({ status: "REJECTED", notes })}
               data-testid="button-reject"
             >
@@ -474,7 +477,7 @@ function ReviewDialog({ task, extraction, evidence, open, onClose }: {
               size="sm"
               variant="outline"
               className="gap-2"
-              disabled={mutation.isPending}
+              disabled={mutation.isPending || !can("REVIEWER")}
               onClick={() => mutation.mutate({ status: "NEEDS_RESCAN", notes })}
               data-testid="button-needs-rescan"
             >
@@ -484,7 +487,7 @@ function ReviewDialog({ task, extraction, evidence, open, onClose }: {
               size="sm"
               variant="outline"
               className="gap-2"
-              disabled={mutation.isPending}
+              disabled={mutation.isPending || !can("REVIEWER")}
               onClick={() => mutation.mutate({ status: "ESCALATED", notes })}
               data-testid="button-escalate"
             >
