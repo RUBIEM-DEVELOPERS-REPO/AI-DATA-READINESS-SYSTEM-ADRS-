@@ -6,6 +6,7 @@ import {
   insertValidationTaskSchema, insertCdmEntitySchema, insertDatasetSchema,
   registerSchema, loginSchema
 } from "@shared/schema";
+import { sendAccessApprovedEmail, sendAccessRejectedEmail } from "./services/email";
 import { createHash, randomUUID } from "crypto";
 import path from "path";
 import fs from "fs";
@@ -172,6 +173,142 @@ export async function registerRoutes(httpServer: any, app: Express): Promise<any
     if (!user) return res.status(404).json({ error: "User not found" });
     const { password: _, ...safeUser } = user;
     res.json(safeUser);
+  });
+
+  // ─── Access Requests ────────────────────────────────────────────────────────
+  // Public: submit a new access request (no auth required)
+  app.post("/api/access-requests", async (req: any, res: any) => {
+    const { firstName, lastName, email, organisation, requestedRole, reason } = req.body;
+    if (!firstName || !lastName || !email || !organisation || !requestedRole || !reason) {
+      return res.status(400).json({ error: "All fields are required" });
+    }
+    const validRoles = ["SUPER_ADMIN", "ADMIN", "ANALYST", "REVIEWER", "VIEWER"];
+    if (!validRoles.includes(requestedRole)) {
+      return res.status(400).json({ error: "Invalid role" });
+    }
+    const existing = await storage.getUserByEmail(email);
+    if (existing) {
+      return res.status(409).json({ error: "An account with this email already exists" });
+    }
+    const accessReq = await storage.createAccessRequest({
+      firstName, lastName, email, organisation,
+      requestedRole, reason, tenantId: "TENANT-001",
+    });
+    await storage.createAuditLog({
+      action: "ACCESS_REQUEST_SUBMITTED",
+      resourceType: "ACCESS_REQUEST",
+      resourceId: accessReq.id,
+      userId: "anonymous",
+      details: { firstName, lastName, email, organisation, requestedRole },
+      tenantId: "TENANT-001",
+    });
+    res.status(201).json({ id: accessReq.id, message: "Access request submitted successfully" });
+  });
+
+  // Admin: list all access requests
+  app.get("/api/access-requests", requireAuth, requireRole("ADMIN"), async (_req: any, res: any) => {
+    const reqs = await storage.getAccessRequests();
+    res.json(reqs);
+  });
+
+  // Admin: approve an access request
+  app.post("/api/access-requests/:id/approve", requireAuth, requireRole("ADMIN"), async (req: any, res: any) => {
+    const accessReq = await storage.getAccessRequest(req.params.id);
+    if (!accessReq) return res.status(404).json({ error: "Request not found" });
+    if (accessReq.status !== "PENDING") return res.status(409).json({ error: "Request already reviewed" });
+
+    const existing = await storage.getUserByEmail(accessReq.email);
+    if (existing) return res.status(409).json({ error: "User with this email already exists" });
+
+    // Generate username from name
+    const baseUsername = `${accessReq.firstName.toLowerCase().replace(/\s+/g, "")}.${accessReq.lastName.toLowerCase().replace(/\s+/g, "")}`;
+    let username = baseUsername;
+    let suffix = 1;
+    while (await storage.getUserByUsername(username)) {
+      username = `${baseUsername}${suffix++}`;
+    }
+
+    // Generate a secure temporary password
+    const chars = "ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789!@#$";
+    let tempPassword = "";
+    const crypto = await import("crypto");
+    for (let i = 0; i < 12; i++) {
+      tempPassword += chars[crypto.randomInt(0, chars.length)];
+    }
+    // Ensure it meets password requirements
+    tempPassword = `Adrs${tempPassword.slice(4)}!2`;
+
+    const hashed = await hashPassword(tempPassword);
+    const user = await storage.createUser({
+      username,
+      email: accessReq.email,
+      password: hashed,
+      firstName: accessReq.firstName,
+      lastName: accessReq.lastName,
+      role: accessReq.requestedRole,
+      tenantId: accessReq.tenantId,
+      isActive: true,
+    });
+
+    await storage.updateAccessRequest(req.params.id, {
+      status: "APPROVED",
+      reviewedBy: (req.user as any)?.id,
+      reviewedAt: new Date(),
+      tempPassword,
+      createdUserId: user.id,
+    });
+
+    await storage.createAuditLog({
+      action: "ACCESS_REQUEST_APPROVED",
+      resourceType: "ACCESS_REQUEST",
+      resourceId: accessReq.id,
+      userId: (req.user as any)?.id ?? "system",
+      details: { email: accessReq.email, username, role: accessReq.requestedRole, newUserId: user.id },
+      tenantId: "TENANT-001",
+    });
+
+    await sendAccessApprovedEmail({
+      to: accessReq.email,
+      firstName: accessReq.firstName,
+      username,
+      tempPassword,
+      role: accessReq.requestedRole,
+    });
+
+    const { password: _, ...safeUser } = user;
+    res.json({ user: safeUser, username, tempPassword, message: "Request approved and account created" });
+  });
+
+  // Admin: reject an access request
+  app.post("/api/access-requests/:id/reject", requireAuth, requireRole("ADMIN"), async (req: any, res: any) => {
+    const accessReq = await storage.getAccessRequest(req.params.id);
+    if (!accessReq) return res.status(404).json({ error: "Request not found" });
+    if (accessReq.status !== "PENDING") return res.status(409).json({ error: "Request already reviewed" });
+
+    const { rejectionReason } = req.body;
+    await storage.updateAccessRequest(req.params.id, {
+      status: "REJECTED",
+      rejectionReason: rejectionReason ?? null,
+      reviewedBy: (req.user as any)?.id,
+      reviewedAt: new Date(),
+    });
+
+    await storage.createAuditLog({
+      action: "ACCESS_REQUEST_REJECTED",
+      resourceType: "ACCESS_REQUEST",
+      resourceId: accessReq.id,
+      userId: (req.user as any)?.id ?? "system",
+      details: { email: accessReq.email, rejectionReason: rejectionReason ?? null },
+      tenantId: "TENANT-001",
+    });
+
+    await sendAccessRejectedEmail({
+      to: accessReq.email,
+      firstName: accessReq.firstName,
+      rejectionReason,
+    });
+
+    res.json({ message: "Request rejected" });
   });
 
   // ─── Config endpoint (read-only feature flags) ─────────────────────────────

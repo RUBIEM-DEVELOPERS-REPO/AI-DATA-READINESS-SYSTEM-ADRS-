@@ -216,6 +216,30 @@ export const publishedDatasets = pgTable("published_datasets", {
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 
+// ─── Access Request Status Enum ───────────────────────────────────────────
+export const accessRequestStatusEnum = pgEnum("access_request_status", [
+  "PENDING", "APPROVED", "REJECTED"
+]);
+
+export const accessRequests = pgTable("access_requests", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  firstName: text("first_name").notNull(),
+  lastName: text("last_name").notNull(),
+  email: text("email").notNull(),
+  organisation: text("organisation").notNull(),
+  requestedRole: userRoleEnum("requested_role").notNull(),
+  reason: text("reason").notNull(),
+  status: accessRequestStatusEnum("status").notNull().default("PENDING"),
+  rejectionReason: text("rejection_reason"),
+  reviewedBy: varchar("reviewed_by"),
+  reviewedAt: timestamp("reviewed_at"),
+  tempPassword: text("temp_password"),
+  createdUserId: varchar("created_user_id"),
+  tenantId: text("tenant_id").notNull().default("TENANT-001"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
 export const auditLogs = pgTable("audit_logs", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   action: text("action").notNull(),
@@ -227,6 +251,8 @@ export const auditLogs = pgTable("audit_logs", {
   tenantId: text("tenant_id").notNull().default("TENANT-001"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
+
+export const insertAccessRequestSchema = createInsertSchema(accessRequests).omit({ id: true, createdAt: true, updatedAt: true });
 
 export const insertExtractionTextSchema = createInsertSchema(extractionTexts).omit({ id: true, createdAt: true });
 export const insertBatchSchema = createInsertSchema(batches).omit({ id: true, createdAt: true, updatedAt: true });
@@ -257,6 +283,8 @@ export const loginSchema = z.object({
   password: z.string().min(1, "Password is required"),
 });
 
+export type AccessRequest = typeof accessRequests.$inferSelect;
+export type InsertAccessRequest = z.infer<typeof insertAccessRequestSchema>;
 export type ExtractionText = typeof extractionTexts.$inferSelect;
 export type InsertExtractionText = z.infer<typeof insertExtractionTextSchema>;
 export type InsertUser = z.infer<typeof insertUserSchema>;

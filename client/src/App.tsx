@@ -14,6 +14,7 @@ import Validation from "@/pages/validation";
 import CdmExplorer from "@/pages/cdm";
 import Publishing from "@/pages/publishing";
 import AuditLog from "@/pages/audit";
+import UserManagement from "@/pages/users";
 import AuthPage from "@/pages/auth";
 import { useEffect, useState } from "react";
 import { Moon, Sun, LogOut, ChevronDown, Shield } from "lucide-react";
@@ -169,6 +170,7 @@ function ProtectedApp() {
               <Route path="/cdm" component={CdmExplorer} />
               <Route path="/publishing" component={Publishing} />
               <Route path="/audit" component={AuditLog} />
+              <Route path="/users" component={UserManagement} />
               <Route component={NotFound} />
             </Switch>
           </main>

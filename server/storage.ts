@@ -8,7 +8,8 @@ import {
   type CdmEntity, type InsertCdmEntity,
   type PublishedDataset, type InsertDataset,
   type AuditLog, type InsertAuditLog,
-  users, batches, evidenceFiles, extractionRuns, extractionTexts, validationTasks, cdmEntities, publishedDatasets, auditLogs
+  type AccessRequest, type InsertAccessRequest,
+  users, batches, evidenceFiles, extractionRuns, extractionTexts, validationTasks, cdmEntities, publishedDatasets, auditLogs, accessRequests
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, desc, and, sql } from "drizzle-orm";
@@ -60,6 +61,11 @@ export interface IStorage {
 
   getAuditLogs(limit?: number): Promise<AuditLog[]>;
   createAuditLog(log: InsertAuditLog): Promise<AuditLog>;
+
+  getAccessRequests(): Promise<AccessRequest[]>;
+  getAccessRequest(id: string): Promise<AccessRequest | undefined>;
+  createAccessRequest(req: InsertAccessRequest): Promise<AccessRequest>;
+  updateAccessRequest(id: string, updates: Partial<InsertAccessRequest>): Promise<AccessRequest | undefined>;
 
   getDashboardStats(): Promise<{
     totalEvidence: number;
@@ -231,6 +237,22 @@ export class DatabaseStorage implements IStorage {
   async createAuditLog(log: InsertAuditLog): Promise<AuditLog> {
     const [created] = await db.insert(auditLogs).values(log).returning();
     return created;
+  }
+
+  async getAccessRequests(): Promise<AccessRequest[]> {
+    return db.select().from(accessRequests).orderBy(desc(accessRequests.createdAt));
+  }
+  async getAccessRequest(id: string): Promise<AccessRequest | undefined> {
+    const [req] = await db.select().from(accessRequests).where(eq(accessRequests.id, id));
+    return req;
+  }
+  async createAccessRequest(req: InsertAccessRequest): Promise<AccessRequest> {
+    const [created] = await db.insert(accessRequests).values(req).returning();
+    return created;
+  }
+  async updateAccessRequest(id: string, updates: Partial<InsertAccessRequest>): Promise<AccessRequest | undefined> {
+    const [updated] = await db.update(accessRequests).set({ ...updates, updatedAt: new Date() }).where(eq(accessRequests.id, id)).returning();
+    return updated;
   }
 
   async getDashboardStats() {
