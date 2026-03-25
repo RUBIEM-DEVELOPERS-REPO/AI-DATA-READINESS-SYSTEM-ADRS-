@@ -242,6 +242,10 @@ export class DatabaseStorage implements IStorage {
   async getAccessRequests(): Promise<AccessRequest[]> {
     return db.select().from(accessRequests).orderBy(desc(accessRequests.createdAt));
   }
+  async getAccessRequestByEmail(email: string): Promise<AccessRequest | undefined> {
+    const [req] = await db.select().from(accessRequests).where(eq(accessRequests.email, email)).orderBy(desc(accessRequests.createdAt));
+    return req;
+  }
   async getAccessRequest(id: string): Promise<AccessRequest | undefined> {
     const [req] = await db.select().from(accessRequests).where(eq(accessRequests.id, id));
     return req;

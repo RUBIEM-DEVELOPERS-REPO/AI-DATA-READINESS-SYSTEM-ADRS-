@@ -186,9 +186,21 @@ export async function registerRoutes(httpServer: any, app: Express): Promise<any
     if (!validRoles.includes(requestedRole)) {
       return res.status(400).json({ error: "Invalid role" });
     }
-    const existing = await storage.getUserByEmail(email);
-    if (existing) {
-      return res.status(409).json({ error: "An account with this email already exists" });
+    // Check for existing user account
+    const existingUser = await storage.getUserByEmail(email);
+    if (existingUser) {
+      return res.status(409).json({ error: "An account with this email already exists. Please sign in instead." });
+    }
+    // Check for duplicate pending/approved request
+    const existingRequest = await storage.getAccessRequestByEmail(email);
+    if (existingRequest) {
+      if (existingRequest.status === "PENDING") {
+        return res.status(409).json({ error: "An access request for this email is already pending review. Please wait for the administrator to respond." });
+      }
+      if (existingRequest.status === "APPROVED") {
+        return res.status(409).json({ error: "An access request for this email was already approved. Please check your email for your login credentials." });
+      }
+      // REJECTED — allow re-application
     }
     const accessReq = await storage.createAccessRequest({
       firstName, lastName, email, organisation,

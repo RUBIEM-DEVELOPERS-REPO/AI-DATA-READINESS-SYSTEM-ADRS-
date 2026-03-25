@@ -739,8 +739,11 @@ function UsersTab() {
 }
 
 function AccessRequestsTab() {
-  const [statusFilter, setStatusFilter] = useState<"ALL" | "PENDING" | "APPROVED" | "REJECTED">("ALL");
-  const { data: requests, isLoading } = useQuery<AccessRequest[]>({ queryKey: ["/api/access-requests"] });
+  const [statusFilter, setStatusFilter] = useState<"ALL" | "PENDING" | "APPROVED" | "REJECTED">("PENDING");
+  const { data: requests, isLoading } = useQuery<AccessRequest[]>({
+    queryKey: ["/api/access-requests"],
+    refetchInterval: 20000,
+  });
 
   const filtered = (requests ?? []).filter(r => statusFilter === "ALL" || r.status === statusFilter);
   const pendingCount = (requests ?? []).filter(r => r.status === "PENDING").length;
