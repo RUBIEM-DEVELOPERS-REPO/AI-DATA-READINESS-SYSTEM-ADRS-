@@ -229,7 +229,8 @@ export function inferPartiesFromRawEntities(
   const seenNormalised = new Set<string>();
   let idx = 0;
 
-  for (const ent of rawEntities) {
+  for (let i = 0; i < rawEntities.length; i++) {
+    const ent = rawEntities[i];
     const rawType = String(ent.entity ?? "").toUpperCase().trim();
     if (rawType !== "PERSON" && rawType !== "ORGANIZATION") continue;
     if ((ent.confidence ?? 0) < threshold) continue;
@@ -249,12 +250,40 @@ export function inferPartiesFromRawEntities(
 
     const entityCode = `AUTO-${entityType.slice(0, 3)}-ENT-${runId.slice(0, 8).toUpperCase()}-${idx}`;
 
+    // ── Correlate nearby contact entities (EMAIL, PHONE, ADDRESS) ──────────────
+    // Look within a window of ±4 positions in the raw entity list.
+    const windowStart = Math.max(0, i - 4);
+    const windowEnd   = Math.min(rawEntities.length - 1, i + 4);
+    const windowEnts  = rawEntities.slice(windowStart, windowEnd + 1);
+
+    let emailVal: string | undefined;
+    let phoneVal: string | undefined;
+    let addressVal: string | undefined;
+
+    for (const w of windowEnts) {
+      const wt = String(w.entity ?? "").toUpperCase().trim();
+      if (wt === "EMAIL" && !emailVal && w.value?.includes("@")) emailVal = w.value.trim();
+      if (wt === "PHONE" && !phoneVal && w.value?.trim()) phoneVal = w.value.trim();
+      if (wt === "ADDRESS" && !addressVal && w.value?.trim()) addressVal = w.value.trim();
+    }
+
+    // Build canonical fields with contact details
+    const canonicalFields: Record<string, any> = { name: rawName, source: "entity_extraction" };
+    if (emailVal) canonicalFields.email = emailVal;
+    if (phoneVal) canonicalFields.phone = phoneVal;
+    if (addressVal) canonicalFields.address = addressVal;
+
+    // Build identifiers
+    const identifiers: InferredParty["identifiers"] = [];
+    if (emailVal) identifiers.push({ id_type_label: "Email", id_value: emailVal, is_verified: false });
+    if (phoneVal) identifiers.push({ id_type_label: "Phone", id_value: phoneVal, is_verified: false });
+
     const entity: InsertCdmEntity = {
       entityCode,
       entityType,
       displayName: rawName,
-      canonicalFields: { name: rawName, source: "entity_extraction" },
-      identifiers: [],
+      canonicalFields,
+      identifiers,
       relationships: [],
       sourceEvidenceIds: [evidenceId],
       isGoldenRecord: false,
@@ -263,7 +292,7 @@ export function inferPartiesFromRawEntities(
       tenantId: "TENANT-001",
     };
 
-    parties.push({ entity, sourceAttrKeys: [], identifiers: [], relationships: [] });
+    parties.push({ entity, sourceAttrKeys: [], identifiers, relationships: [] });
     idx++;
   }
 

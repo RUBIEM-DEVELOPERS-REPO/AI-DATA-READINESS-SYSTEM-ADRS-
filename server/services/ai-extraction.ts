@@ -57,16 +57,24 @@ FIELDS to extract (include ALL that appear in the document):
 - currency: Currency code (USD/ZWL/ZAR/KES/GHS/NGN/EUR/GBP)
 - vendor_name: Seller/supplier/issuer organization name
 - vendor_address: Seller/supplier address
-- vendor_email: Seller/supplier email
-- vendor_phone: Seller/supplier phone
+- vendor_email: Seller/supplier email address
+- vendor_phone: Seller/supplier phone number
 - vendor_registration: Company registration number of seller
 - vendor_tax_number: Tax/VAT number of seller
 - customer_name: Buyer/client/recipient name
 - customer_address: Buyer/client address
-- customer_email: Buyer/client email
-- customer_phone: Buyer/client phone
+- customer_email: Buyer/client email address
+- customer_phone: Buyer/client phone number
 - customer_id: Customer/account ID or number
 - signatory_name: Name of person who signed
+- signatory_email: Email address of the signatory/signer
+- signatory_phone: Phone number of the signatory/signer
+- employee_name: Employee name (payslips, employment contracts)
+- employee_email: Employee email address
+- employee_phone: Employee phone number
+- director_name: Company director or officer name
+- officer_name: Officer or authorised representative name
+- guarantor_name: Guarantor name (loan/lease documents)
 - bank_name: Bank name for payment
 - bank_account: Bank account number
 - bank_branch: Bank branch name/code

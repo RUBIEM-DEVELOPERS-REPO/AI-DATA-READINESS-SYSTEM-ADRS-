@@ -17,6 +17,7 @@ import {
   Database, User, Building2, FileText, DollarSign, Package,
   Search, Star, Eye, Network, ShieldCheck, Sparkles, GitMerge,
   CheckCircle2, AlertTriangle, RefreshCw, ChevronRight,
+  Mail, Phone, CreditCard, MapPin,
 } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { useToast } from "@/hooks/use-toast";
@@ -28,6 +29,26 @@ const entityIcons: Record<string, React.ComponentType<{ className?: string }>> =
   TRANSACTION:  DollarSign,
   ASSET:        Package,
 };
+
+interface IdentifierEntry { id_type_label: string; id_value: string; is_verified?: boolean }
+
+const identifierIcons: Record<string, React.ComponentType<{ className?: string }>> = {
+  Email:       Mail,
+  Phone:       Phone,
+  "National ID": CreditCard,
+  Address:     MapPin,
+};
+
+function IdentifierBadge({ id }: { id: IdentifierEntry }) {
+  const Icon = identifierIcons[id.id_type_label] ?? CreditCard;
+  return (
+    <div className="flex items-center gap-1.5 text-xs py-1 px-2 rounded border border-border bg-muted/40" data-testid={`identifier-${id.id_type_label.toLowerCase().replace(/\s+/g, "-")}`}>
+      <Icon className="w-3 h-3 text-muted-foreground flex-shrink-0" />
+      <span className="font-mono truncate">{id.id_value}</span>
+      {id.is_verified && <ShieldCheck className="w-3 h-3 text-chart-3 flex-shrink-0 ml-auto" />}
+    </div>
+  );
+}
 
 const entityColors: Record<string, { bg: string; text: string; border: string }> = {
   PERSON:       { bg: "bg-chart-1/10", text: "text-chart-1", border: "border-chart-1/30" },
@@ -42,7 +63,8 @@ function EntityCard({ entity }: { entity: CdmEntity }) {
   const Icon   = entityIcons[entity.entityType] ?? Database;
   const colors = entityColors[entity.entityType] ?? { bg: "bg-muted", text: "text-muted-foreground", border: "border-border" };
   const fields = entity.canonicalFields as Record<string, any>;
-  const fieldEntries = Object.entries(fields);
+  const fieldEntries = Object.entries(fields).filter(([k]) => k !== "name" && k !== "source");
+  const identifiers  = (entity.identifiers as IdentifierEntry[] | null) ?? [];
   const confidencePct = Math.round(entity.confidenceScore * 100);
 
   return (
@@ -79,15 +101,25 @@ function EntityCard({ entity }: { entity: CdmEntity }) {
             <Progress value={confidencePct} className="h-1" />
           </div>
 
+          {identifiers.length > 0 && (
+            <div className="space-y-1">
+              {identifiers.slice(0, 2).map((id, i) => (
+                <IdentifierBadge key={i} id={id} />
+              ))}
+              {identifiers.length > 2 && (
+                <p className="text-xs text-muted-foreground">+{identifiers.length - 2} more contact{identifiers.length - 2 !== 1 ? "s" : ""}</p>
+              )}
+            </div>
+          )}
           <div className="space-y-1 flex-1">
-            {fieldEntries.slice(0, 3).map(([key, val]) => (
+            {fieldEntries.slice(0, 2).map(([key, val]) => (
               <div key={key} className="flex items-center justify-between text-xs">
                 <span className="text-muted-foreground capitalize">{key.replace(/_/g, " ")}</span>
                 <span className="font-medium text-foreground truncate max-w-28">{String(val)}</span>
               </div>
             ))}
-            {fieldEntries.length > 3 && (
-              <p className="text-xs text-muted-foreground">+{fieldEntries.length - 3} more fields</p>
+            {fieldEntries.length > 2 && (
+              <p className="text-xs text-muted-foreground">+{fieldEntries.length - 2} more fields</p>
             )}
           </div>
 
@@ -140,6 +172,16 @@ function EntityCard({ entity }: { entity: CdmEntity }) {
                 </div>
               )}
             </div>
+            {identifiers.length > 0 && (
+              <div>
+                <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Contact Details</h4>
+                <div className="space-y-1.5">
+                  {identifiers.map((id, i) => (
+                    <IdentifierBadge key={i} id={id} />
+                  ))}
+                </div>
+              </div>
+            )}
             <div>
               <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Canonical Fields</h4>
               <div className="space-y-2">
@@ -153,7 +195,9 @@ function EntityCard({ entity }: { entity: CdmEntity }) {
             </div>
             {entity.sourceEvidenceIds && entity.sourceEvidenceIds.length > 0 && (
               <div>
-                <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Source Evidence</h4>
+                <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">
+                  Source Evidence ({entity.sourceEvidenceIds.length} document{entity.sourceEvidenceIds.length !== 1 ? "s" : ""})
+                </h4>
                 <div className="flex flex-wrap gap-1">
                   {entity.sourceEvidenceIds.map((id) => (
                     <Badge key={id} variant="outline" className="text-xs font-mono">{id.slice(0, 8)}…</Badge>
@@ -178,6 +222,7 @@ function GoldenCard({ entity }: { entity: GoldenSummary }) {
   const [open, setOpen] = useState(false);
   const Icon   = entityIcons[entity.entityType] ?? Database;
   const colors = entityColors[entity.entityType] ?? { bg: "bg-muted", text: "text-muted-foreground", border: "border-border" };
+  const identifiers = (entity.identifiers as IdentifierEntry[] | null) ?? [];
   const confidencePct = Math.round(entity.confidenceScore * 100);
 
   return (
@@ -210,6 +255,14 @@ function GoldenCard({ entity }: { entity: GoldenSummary }) {
               <span>{confidencePct}% confidence</span>
             </div>
           </div>
+
+          {identifiers.length > 0 && (
+            <div className="space-y-1">
+              {identifiers.slice(0, 2).map((id, i) => (
+                <IdentifierBadge key={i} id={id} />
+              ))}
+            </div>
+          )}
 
           {entity.absorbed.length > 0 && (
             <div className="space-y-1">
@@ -245,6 +298,16 @@ function GoldenCard({ entity }: { entity: GoldenSummary }) {
               <div><span className="text-muted-foreground">Confidence:</span> <span className="font-semibold">{confidencePct}%</span></div>
               <div><span className="text-muted-foreground">Absorbed:</span> <span className="font-semibold">{entity.absorbedCount} record(s)</span></div>
             </div>
+            {identifiers.length > 0 && (
+              <div>
+                <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Contact Details</h4>
+                <div className="space-y-1.5">
+                  {identifiers.map((id, i) => (
+                    <IdentifierBadge key={i} id={id} />
+                  ))}
+                </div>
+              </div>
+            )}
             <div>
               <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Canonical Fields</h4>
               <div className="space-y-2">
@@ -256,6 +319,18 @@ function GoldenCard({ entity }: { entity: GoldenSummary }) {
                 ))}
               </div>
             </div>
+            {entity.sourceEvidenceIds && entity.sourceEvidenceIds.length > 0 && (
+              <div>
+                <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">
+                  Source Evidence ({entity.sourceEvidenceIds.length} document{entity.sourceEvidenceIds.length !== 1 ? "s" : ""})
+                </h4>
+                <div className="flex flex-wrap gap-1">
+                  {entity.sourceEvidenceIds.map((id: string) => (
+                    <Badge key={id} variant="outline" className="text-xs font-mono">{id.slice(0, 8)}…</Badge>
+                  ))}
+                </div>
+              </div>
+            )}
             {entity.absorbed.length > 0 && (
               <div>
                 <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Merged Duplicates</h4>

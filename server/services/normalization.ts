@@ -212,8 +212,17 @@ export function normalizeExtractedFields(
 
   for (const [key, value] of Object.entries(fields)) {
     if (value == null || value === "") continue;
-    // Skip complex nested objects/arrays (e.g. transcript_segments) — not normalizable as scalar
-    if (typeof value === "object") continue;
+    // AiExtractedField: { value: string, confidence: number, source: "ai" }
+    if (typeof value === "object" && !Array.isArray(value) && value !== null) {
+      if (typeof value.value === "string" && typeof value.confidence === "number") {
+        const strVal = value.value.trim();
+        if (!strVal) continue;
+        attrs.push(normalizeValue(key, strVal, value.confidence, undefined, "DOCUMENT"));
+        continue;
+      }
+      // Skip other complex nested objects/arrays (e.g. transcript_segments)
+      continue;
+    }
     attrs.push(normalizeValue(key, String(value), 0.85, undefined, "DOCUMENT"));
   }
 

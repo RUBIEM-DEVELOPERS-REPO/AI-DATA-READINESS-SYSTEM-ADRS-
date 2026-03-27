@@ -750,7 +750,7 @@ export async function registerRoutes(httpServer: any, app: Express): Promise<any
       // 4. AI-based scores (deterministic from field coverage)
       const scores = scoreAiExtraction(fieldCount, docType);
 
-      // 5. Convert AI fields to plain string map for normalization pipeline
+      // 5. Convert AI fields to plain string map for DB storage; keep typed fields for normalization
       const plainFields: Record<string, string> = {};
       for (const [k, v] of Object.entries(aiResult.fields)) {
         if (v?.value != null && String(v.value).trim() !== "") {
@@ -758,8 +758,9 @@ export async function registerRoutes(httpServer: any, app: Express): Promise<any
         }
       }
 
-      // 6. Normalize + dedup (existing pipeline, now fed with AI-extracted data)
-      const rawAttrs = normalizeExtractedFields(plainFields, aiResult.entities);
+      // 6. Normalize + dedup — pass aiResult.fields (with per-field confidence) so
+      //    email/phone/etc. use their true AI confidence rather than a hardcoded 0.85.
+      const rawAttrs = normalizeExtractedFields(aiResult.fields as Record<string, any>, aiResult.entities);
       const { deduped: dedupedAttrs, conflictKeys, conflictDetails } = dedupAttributes(rawAttrs);
       const qgResult = runQualityGates(docType, dedupedAttrs, scores.ocrConfidence);
       const trustScore = computeTrustScore(scores.ocrConfidence, scores.extractionConfidence, qgResult.completenessScore, scores.consistencyScore, scores.docQualityScore);
@@ -983,6 +984,67 @@ export async function registerRoutes(httpServer: any, app: Express): Promise<any
     const task = await storage.updateValidationTask(req.params.id, updates);
     const action = req.body.status === "APPROVED" ? "VALIDATION_APPROVED" : req.body.status === "REJECTED" ? "VALIDATION_REJECTED" : "VALIDATION_UPDATED";
     await storage.createAuditLog({ action, resourceType: "VALIDATION", resourceId: task?.taskCode, userId: req.body.validator ?? "validator", details: { status: req.body.status, notes: req.body.validatorNotes, policy_rule: existing.approvalPolicyRule }, tenantId: "TENANT-001" });
+
+    // ── Post-approval CDM enrichment ────────────────────────────────────────────
+    // When a HITL reviewer approves a task, any PENDING attributes (e.g. email/phone
+    // that failed auto-approval thresholds) are now human-validated. Re-run party
+    // inference treating PENDING as APPROVED so contact details make it into CDM.
+    if (req.body.status === "APPROVED" && ADRS_CONFIG.features.auto_party_creation) {
+      try {
+        const run = await storage.getExtractionRun(existing.extractionRunId);
+        if (run) {
+          // Treat PENDING attrs as APPROVED for this inference pass
+          const approvedAttrs = ((run.extractedAttributes as any[]) ?? []).map((a: any) => ({
+            ...a,
+            validation_state: a.validation_state === "PENDING" ? "APPROVED" : a.validation_state,
+          }));
+
+          // Skip names that already have CDM entities from this evidence (created at extraction time)
+          const allEntities = await storage.getCdmEntities();
+          const existingNames = new Set<string>(
+            allEntities
+              .filter(e => (e.sourceEvidenceIds ?? []).includes(run.evidenceId))
+              .map(e => e.displayName.toLowerCase().trim())
+          );
+
+          const newParties = inferParties(approvedAttrs, run.evidenceId, run.docType, run.id);
+          const rawEntityParties = inferPartiesFromRawEntities(
+            (run.extractedEntities as any[]) ?? [],
+            run.evidenceId,
+            run.id,
+            new Set(Array.from(existingNames).map(n => n.split(/[\s,.\-&/]+/).filter(Boolean).sort().join(" ")))
+          );
+
+          for (const inf of [...newParties, ...rawEntityParties]) {
+            const nameKey = inf.entity.displayName.toLowerCase().trim();
+            if (existingNames.has(nameKey)) {
+              // Entity exists — update its identifiers if the new inference adds missing contact info
+              const existing = allEntities.find(e =>
+                (e.sourceEvidenceIds ?? []).includes(run.evidenceId) &&
+                e.displayName.toLowerCase().trim() === nameKey
+              );
+              if (existing && inf.entity.identifiers && (inf.entity.identifiers as any[]).length > 0) {
+                const existingIds = (existing.identifiers as any[]) ?? [];
+                const existingIdValues = new Set(existingIds.map((id: any) => id.id_value));
+                const newIds = (inf.entity.identifiers as any[]).filter((id: any) => !existingIdValues.has(id.id_value));
+                if (newIds.length > 0) {
+                  const mergedIds = [...existingIds, ...newIds];
+                  const mergedFields = { ...(existing.canonicalFields as any), ...(inf.entity.canonicalFields as any) };
+                  await storage.updateCdmEntity(existing.id, { identifiers: mergedIds, canonicalFields: mergedFields } as any);
+                }
+              }
+            } else {
+              const party = await storage.createCdmEntity(inf.entity);
+              await storage.createAuditLog({ action: "AUTO_PARTY_INFERRED", resourceType: "CDM", resourceId: party.entityCode, userId: req.body.validator ?? "validator", details: { display_name: party.displayName, entity_type: party.entityType, evidence_id: run.evidenceId, trigger: "validation_approved" }, tenantId: "TENANT-001" });
+            }
+          }
+        }
+      } catch (enrichErr: any) {
+        // Non-fatal — log and continue; the validation is still approved
+        console.error("[CDM enrichment] post-approval party inference failed:", enrichErr?.message);
+      }
+    }
+
     res.json(task);
   });
 
@@ -1223,10 +1285,43 @@ export async function registerRoutes(httpServer: any, app: Express): Promise<any
     const detail: Array<{ golden: string; absorbed: string[]; reasons: string[] }> = [];
 
     for (const group of groups) {
-      // Promote golden record
+      // Collect all sourceEvidenceIds and contact identifiers from absorbed entities
+      // so the golden record aggregates provenance across all source documents.
+      const goldenEntity = entities.find(e => e.id === group.goldenEntityId);
+      const absorbedEntities = group.mergedEntityIds.map(id => entities.find(e => e.id === id)).filter(Boolean) as typeof entities;
+
+      // Merge sourceEvidenceIds — union of all evidence IDs across the group
+      const allEvidenceIds = [
+        ...((goldenEntity?.sourceEvidenceIds ?? []) as string[]),
+        ...absorbedEntities.flatMap(e => (e.sourceEvidenceIds ?? []) as string[]),
+      ];
+      const mergedEvidenceIds = [...new Set(allEvidenceIds)];
+
+      // Merge identifiers from absorbed entities into the golden record (no duplicates by id_value)
+      const goldenIds: any[] = (goldenEntity?.identifiers as any[]) ?? [];
+      const existingIdValues = new Set(goldenIds.map((id: any) => id.id_value));
+      const absorbedIds = absorbedEntities.flatMap(e => (e.identifiers as any[]) ?? []);
+      for (const id of absorbedIds) {
+        if (!existingIdValues.has(id.id_value)) {
+          goldenIds.push(id);
+          existingIdValues.add(id.id_value);
+        }
+      }
+
+      // Merge canonical fields from absorbed entities into golden (golden fields take precedence)
+      const mergedFields: Record<string, any> = {};
+      for (const absorbed of absorbedEntities) {
+        Object.assign(mergedFields, absorbed.canonicalFields as Record<string, any>);
+      }
+      Object.assign(mergedFields, goldenEntity?.canonicalFields as Record<string, any>);
+
+      // Promote golden record with merged provenance
       await storage.updateCdmEntity(group.goldenEntityId, {
         isGoldenRecord: true,
         goldenRecordId: null,
+        sourceEvidenceIds: mergedEvidenceIds,
+        identifiers: goldenIds,
+        canonicalFields: mergedFields,
       } as any);
       promoted++;
 
@@ -1245,10 +1340,11 @@ export async function registerRoutes(httpServer: any, app: Express): Promise<any
         resourceId: group.goldenEntityId,
         userId: "system",
         details: {
-          golden_name:    group.goldenDisplayName,
-          merged_count:   group.mergedEntityIds.length,
-          match_reasons:  group.matchReasons,
-          confidence:     group.confidence,
+          golden_name:      group.goldenDisplayName,
+          merged_count:     group.mergedEntityIds.length,
+          match_reasons:    group.matchReasons,
+          confidence:       group.confidence,
+          evidence_sources: mergedEvidenceIds.length,
         },
         tenantId: "TENANT-001",
       });
