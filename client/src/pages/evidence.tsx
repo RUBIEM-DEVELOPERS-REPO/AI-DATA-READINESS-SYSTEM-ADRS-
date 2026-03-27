@@ -247,6 +247,33 @@ function BatchSection({ batch, displayFiles, allFiles, duplicateHashes }: {
   const [progress, setProgress] = useState({ done: 0, total: 0, currentFile: "" });
   const [collapsed, setCollapsed] = useState(false);
 
+  const batchStartRef = useRef<number | null>(null);
+  const fileStartRef  = useRef<number | null>(null);
+  const doneRef       = useRef(0);
+  const totalRef      = useRef(0);
+  const [timing, setTiming] = useState({
+    batchMs: 0, fileMs: 0, avgMs: 0, etaMs: 0, filesPerMin: 0,
+  });
+
+  useEffect(() => {
+    if (!extracting) {
+      setTiming({ batchMs: 0, fileMs: 0, avgMs: 0, etaMs: 0, filesPerMin: 0 });
+      return;
+    }
+    const id = setInterval(() => {
+      const now = Date.now();
+      const batchMs  = batchStartRef.current ? now - batchStartRef.current : 0;
+      const fileMs   = fileStartRef.current  ? now - fileStartRef.current  : 0;
+      const done     = doneRef.current;
+      const total    = totalRef.current;
+      const avgMs    = done > 0 ? batchMs / done : 0;
+      const etaMs    = avgMs * (total - done);
+      const filesPerMin = batchMs > 0 ? (done / batchMs) * 60000 : 0;
+      setTiming({ batchMs, fileMs, avgMs, etaMs, filesPerMin });
+    }, 200);
+    return () => clearInterval(id);
+  }, [extracting]);
+
   const pendingFiles = allFiles.filter(f => f.status === "INGESTED" || f.status === "FAILED");
   const processedCount = allFiles.filter(f => f.status === "PROCESSED").length;
   const progressPct = allFiles.length > 0 ? Math.round((processedCount / allFiles.length) * 100) : 0;
@@ -255,21 +282,30 @@ function BatchSection({ batch, displayFiles, allFiles, duplicateHashes }: {
     if (pendingFiles.length === 0) return;
     setExtracting(true);
     setCollapsed(false);
+    batchStartRef.current = Date.now();
+    fileStartRef.current  = Date.now();
+    doneRef.current  = 0;
+    totalRef.current = pendingFiles.length;
     setProgress({ done: 0, total: pendingFiles.length, currentFile: pendingFiles[0]?.fileName ?? "" });
 
     let succeeded = 0;
     for (let i = 0; i < pendingFiles.length; i++) {
       const file = pendingFiles[i];
+      fileStartRef.current = Date.now();
+      doneRef.current = i;
       setProgress({ done: i, total: pendingFiles.length, currentFile: file.fileName });
       try {
         await apiRequest("POST", `/api/evidence/${file.id}/extract`, {});
         succeeded++;
       } catch {}
+      doneRef.current = i + 1;
       queryClient.invalidateQueries({ queryKey: ["/api/evidence"] });
     }
 
     setProgress({ done: pendingFiles.length, total: pendingFiles.length, currentFile: "" });
     setExtracting(false);
+    batchStartRef.current = null;
+    fileStartRef.current  = null;
     queryClient.invalidateQueries({ queryKey: ["/api/extractions"] });
     queryClient.invalidateQueries({ queryKey: ["/api/dashboard/stats"] });
     queryClient.invalidateQueries({ queryKey: ["/api/validation"] });
@@ -335,26 +371,70 @@ function BatchSection({ batch, displayFiles, allFiles, duplicateHashes }: {
 
       {/* Live extraction progress */}
       {extracting && (
-        <div className="mx-0 p-4 rounded-xl border border-primary/25 bg-primary/5 space-y-3" data-testid={`progress-batch-${batch.id}`}>
-          <div className="flex items-center justify-between text-xs">
+        <div className="mx-0 rounded-xl border border-primary/25 bg-primary/5 overflow-hidden" data-testid={`progress-batch-${batch.id}`}>
+          {/* Header row */}
+          <div className="flex items-center justify-between gap-3 px-4 pt-3 pb-2 text-xs">
             <div className="flex items-center gap-2 min-w-0">
               <RefreshCw className="w-3.5 h-3.5 animate-spin text-primary shrink-0" />
-              <span className="text-muted-foreground">Processing: </span>
-              <span className="text-foreground font-medium truncate">{progress.currentFile}</span>
+              <span className="text-muted-foreground">Processing:</span>
+              <span className="text-foreground font-medium truncate">{progress.currentFile || "Preparing…"}</span>
             </div>
-            <span className="text-primary font-semibold shrink-0 ml-3 tabular-nums">
+            <span className="text-primary font-semibold shrink-0 tabular-nums">
               {progress.done}/{progress.total} files
             </span>
           </div>
-          <Progress
-            value={progress.total > 0 ? (progress.done / progress.total) * 100 : 0}
-            className="h-3"
-          />
-          <div className="flex items-center justify-between text-xs text-muted-foreground">
-            <span>AI extraction in progress — each file is analysed for fields, entities &amp; trust score</span>
-            <span className="font-medium tabular-nums">
-              {Math.round(progress.total > 0 ? (progress.done / progress.total) * 100 : 0)}%
-            </span>
+
+          {/* Progress bar */}
+          <div className="px-4 pb-2">
+            <Progress
+              value={progress.total > 0 ? (progress.done / progress.total) * 100 : 0}
+              className="h-2.5"
+            />
+          </div>
+
+          {/* Timing metrics grid */}
+          <div className="grid grid-cols-3 gap-px bg-primary/10 border-t border-primary/15 text-xs">
+            <div className="flex flex-col gap-0.5 px-3 py-2 bg-primary/5">
+              <span className="text-muted-foreground uppercase tracking-wide" style={{ fontSize: "0.65rem" }}>Total elapsed</span>
+              <span className="font-mono font-bold text-foreground tabular-nums" data-testid={`timer-batch-elapsed-${batch.id}`}>
+                {fmtMs(timing.batchMs)}
+              </span>
+            </div>
+            <div className="flex flex-col gap-0.5 px-3 py-2 bg-primary/5">
+              <span className="text-muted-foreground uppercase tracking-wide" style={{ fontSize: "0.65rem" }}>This file</span>
+              <span className="font-mono font-bold text-foreground tabular-nums" data-testid={`timer-batch-file-${batch.id}`}>
+                {fmtMs(timing.fileMs)}
+              </span>
+            </div>
+            <div className="flex flex-col gap-0.5 px-3 py-2 bg-primary/5">
+              <span className="text-muted-foreground uppercase tracking-wide" style={{ fontSize: "0.65rem" }}>Avg per file</span>
+              <span className="font-mono font-bold text-foreground tabular-nums">
+                {timing.avgMs > 0 ? fmtMs(timing.avgMs) : "—"}
+              </span>
+            </div>
+            <div className="flex flex-col gap-0.5 px-3 py-2 bg-primary/5">
+              <span className="text-muted-foreground uppercase tracking-wide" style={{ fontSize: "0.65rem" }}>Speed</span>
+              <span className="font-mono font-bold text-foreground tabular-nums">
+                {timing.filesPerMin > 0 ? `${timing.filesPerMin.toFixed(1)}/min` : "—"}
+              </span>
+            </div>
+            <div className="flex flex-col gap-0.5 px-3 py-2 bg-primary/5">
+              <span className="text-muted-foreground uppercase tracking-wide" style={{ fontSize: "0.65rem" }}>ETA</span>
+              <span className="font-mono font-bold text-foreground tabular-nums" data-testid={`timer-batch-eta-${batch.id}`}>
+                {timing.etaMs > 0 ? `~${fmtMs(timing.etaMs)}` : "—"}
+              </span>
+            </div>
+            <div className="flex flex-col gap-0.5 px-3 py-2 bg-primary/5">
+              <span className="text-muted-foreground uppercase tracking-wide" style={{ fontSize: "0.65rem" }}>Complete</span>
+              <span className="font-mono font-bold text-foreground tabular-nums">
+                {Math.round(progress.total > 0 ? (progress.done / progress.total) * 100 : 0)}%
+              </span>
+            </div>
+          </div>
+
+          {/* Footer hint */}
+          <div className="px-4 py-2 text-xs text-muted-foreground border-t border-primary/10">
+            Each file is analysed by AI for document type, fields, named entities &amp; trust score
           </div>
         </div>
       )}
