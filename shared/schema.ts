@@ -173,9 +173,7 @@ export const cdmEntities = pgTable("cdm_entities", {
   entityType: entityTypeEnum("entity_type").notNull(),
   displayName: text("display_name").notNull(),
   canonicalFields: jsonb("canonical_fields").notNull(),
-  // NEW: identifiers linked to this entity (emails, phones, IDs)
   identifiers: jsonb("identifiers"),
-  // NEW: relationships to other entities
   relationships: jsonb("relationships"),
   sourceEvidenceIds: text("source_evidence_ids").array(),
   goldenRecordId: varchar("golden_record_id"),
@@ -184,6 +182,15 @@ export const cdmEntities = pgTable("cdm_entities", {
   confidenceScore: real("confidence_score").notNull().default(0),
   schemaVersion: text("schema_version").notNull().default("1.0"),
   tenantId: text("tenant_id").notNull().default("TENANT-001"),
+  // ── Lifecycle & quality (v2) ────────────────────────────────────────────────
+  // DRAFT → CANDIDATE → GOLDEN | QUARANTINED → REJECTED | MERGED | RETIRED
+  entityLifecycle: text("entity_lifecycle").notNull().default("DRAFT"),
+  lifecycleReason: text("lifecycle_reason"),
+  // Deterministic fingerprint: SHA-256(tenantId:entityType:evidenceId:roleKey)
+  // Prevents duplicate entities on re-extractions of the same file
+  entityFingerprint: text("entity_fingerprint"),
+  // Contact binding audit trail — who owns which contact and why
+  contactBindingAudit: jsonb("contact_binding_audit"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });

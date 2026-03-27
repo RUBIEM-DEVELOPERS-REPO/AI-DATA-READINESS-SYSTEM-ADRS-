@@ -1,0 +1,127 @@
+Improve my existing document intelligence system to production grade without redesigning it.
+
+Preserve current architecture:
+raw docs -> LLM extraction -> CDM mapping -> golden records -> RAG/KG/ML exports
+
+Rules:
+- do not rebuild from scratch
+- do not change core architecture
+- keep core industry-agnostic and department-agnostic
+- use profiles/extensions, not hardcoded department logic
+- prefer patching, wrapping, validating, and normalizing existing code
+
+Current status:
+- tested on 4 CVs
+- ML feature export improved and should be preserved
+- remaining issues: wrong entity typing, wrong contact attribution, shallow KG, weak document naming, permissive CDM, weak golden record logic
+
+Priority fixes:
+
+1. Contact attribution
+Main bug: persons and organizations are being assigned wrong emails, phones, addresses, and other contact details.
+
+Add a strict contact-binding layer before final CDM commit.
+
+Requirements:
+- bind contacts only with strong local evidence
+- use section boundaries, layout/block proximity, label cues, and ownership cues
+- distinguish:
+  - candidate personal contacts
+  - organization contacts
+  - reference contacts
+  - document-level contacts
+- do not assign one contact to multiple entities unless explicitly supported
+- quarantine ambiguous bindings
+- keep evidence and confidence per binding
+
+Rules to enforce:
+- nearest valid owner in same section/block wins
+- reference section contacts must not attach to candidate
+- employer/org contacts must not attach to person unless explicit
+- header/footer repeated contacts must not attach to every entity
+- email/name mismatch lowers confidence
+- invalid ownership = reject or quarantine, not commit
+
+2. Entity typing correction
+Add post-extraction correction before CDM commit.
+Fix confusion between:
+PERSON, ORGANIZATION, PROJECT, ROLE, SKILL, CERTIFICATION, LOCATION, LANGUAGE, DOCUMENT
+Use rules + normalization + ontology hints, with LLM fallback only for ambiguous cases.
+
+3. CDM hardening
+Keep CDM, but make it strict:
+- typed models
+- provenance on every item
+- normalization_state
+- validation_state
+- lifecycle_state
+- reject/quarantine invalid mappings
+- no JSON strings inside scalar fields
+- structured extensions only
+
+CDM must support:
+Document, Evidence, Entity, Relationship, CanonicalRecord, GoldenRecord, DatasetExportRecord
+
+4. Document identity
+Improve:
+- one lineage record per input doc unless deliberately split/rejected
+- deterministic document title selection
+- avoid weak span-derived titles
+- explicit run accounting for input vs output counts
+
+5. KG improvement
+Keep MENTIONED_IN, but add semantic relationships with evidence/confidence.
+For CV-like docs support examples such as:
+WORKED_AT, STUDIED_AT, HAS_SKILL, HAS_CERTIFICATION, SPEAKS_LANGUAGE, PARTICIPATED_IN, REFERENCED_BY, APPLIED_FOR
+Implement this generically through profiles, not hardcoded HR logic.
+
+6. Golden records
+Improve:
+- entity resolution
+- duplicate detection
+- conflict handling
+- source ranking
+- confidence aggregation
+- explanation trail
+- quarantine ambiguous merges
+
+7. Export quality gates
+Before export:
+- RAG: valid chunks, provenance exists, linked entities resolve
+- KG: valid node/edge types, endpoints exist, evidence resolves
+- ML: required features exist, identifiers normalized, consistency checks pass
+
+8. Observability
+Add run summary:
+- documents_ingested
+- documents_mapped_to_cdm
+- documents_exported_to_rag
+- documents_exported_to_kg
+- documents_exported_to_ml
+- documents_quarantined
+- documents_rejected
+- entities_created
+- relationships_created
+- golden_records_created
+- validation_failures
+- contact_binding_failures
+
+Implementation constraints:
+- existing Python codebase in Replit
+- incremental changes only
+- preserve working ML export improvements
+- use pydantic where useful
+- give integration-ready code or patch-style examples
+- prioritize highest-impact, lowest-risk fixes first
+
+Deliver:
+1. root-cause analysis
+2. minimal safe improvements
+3. contact attribution fix design
+4. stricter CDM examples
+5. validation/normalization rules
+6. KG improvements
+7. golden record improvements
+8. export quality gates
+9. run accounting design
+10. prioritized roadmap

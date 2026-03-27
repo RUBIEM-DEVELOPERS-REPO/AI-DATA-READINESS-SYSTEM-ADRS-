@@ -37,8 +37,10 @@ A comprehensive platform that transforms raw, unstructured evidence (PDFs, image
 - `server/services/ai-extraction.ts` — **AI document intelligence** using GPT-5-mini (gpt-5-mini) for structured field/entity extraction + Whisper (gpt-4o-mini-transcribe) for real audio transcription; uses `AI_INTEGRATIONS_OPENAI_API_KEY` + `AI_INTEGRATIONS_OPENAI_BASE_URL` from Replit AI Integration (no personal key); model version: `adrs-ai-v2.0`
 - `server/services/normalization.ts` — ValueNormalizationService + AutoApprovalPolicy + DedupService + QualityGates (imports ADRS_CONFIG)
 - `server/services/publishing.ts` — Multi-artifact generator (ML CSV, KG JSONL, RAG JSONL, Dataset Card JSON, Bundle ZIP via jszip)
-- `server/services/party-inference.ts` — Auto-PARTY + Identifier + Document CDM entity inference; `looksLikePersonName()` heuristic prevents human names (e.g. "John Doe") from being wrongly stored as ORGANIZATION
-- `server/services/golden-records.ts` — Deterministic entity resolution: groups PERSON/ORGANIZATION entities by normalised name + email + phone; selects highest-confidence as golden record; zero hallucination (no AI invention)
+- `server/services/party-inference.ts` — Auto-PARTY + Identifier + Document CDM entity inference; `looksLikePersonName()` heuristic prevents human names from being stored as ORGANIZATION; v2: strict contact binding, entity type correction, SHA-256 fingerprints, lifecycle state assignment
+- `server/services/golden-records.ts` — Deterministic entity resolution v2: field-union merge (confidence-wins per field), singleton promotion to GOLDEN, quarantine ambiguous name-only merges, explanation trail, source ranking
+- `server/services/contact-binding.ts` — NEW: strict contact attribution layer; rules: prefix ownership, ±2 adjacency only, section isolation (reference/employer section), cross-entity contamination quarantine, document-level fallback
+- `server/services/entity-type-correction.ts` — NEW: post-extraction entity type correction; vocabulary-based classifier (SKILL/LANGUAGE/ROLE/CERTIFICATION/LOCATION → skip); prevents skills/titles/certs becoming CDM PERSON/ORGANIZATION entities
 
 ### Database
 PostgreSQL (Replit managed) via `DATABASE_URL` environment variable.
@@ -72,8 +74,9 @@ PostgreSQL (Replit managed) via `DATABASE_URL` environment variable.
 | GET/POST/PATCH | `/api/validation` | HITL validation tasks |
 | GET/POST/PATCH | `/api/cdm` | CDM entities |
 | GET | `/api/cdm/golden-records` | List all golden records with absorbed duplicates |
+| GET | `/api/cdm/run-summary` | Pipeline observability: counts of ingested/extracted/mapped/exported/quarantined entities, contact bindings, trust scores |
 | POST | `/api/cdm/reclassify` | AI-powered fix: corrects PERSON/ORGANIZATION mismatches + reclassifies doc_type=OTHER runs |
-| POST | `/api/cdm/golden-records/compute` | Deterministic entity resolution — groups by name/email/phone, promotes golden records |
+| POST | `/api/cdm/golden-records/compute` | Deterministic entity resolution v2 — field-union merge, singleton GOLDEN promotion, quarantine ambiguous merges, lifecycle updates |
 | GET/POST/PATCH | `/api/datasets` | Published datasets |
 | POST | `/api/datasets/:id/publish` | Publish with multi-artifact generation; returns 422 if qualityScore < 0.60 (unless `override:true` + `overrideReason` provided) |
 | GET | `/api/datasets/:code/artifact` | Download artifact: `type=ml` (CSV), `type=kg_entities/kg_edges/kg_identifiers/rag_chunks` (JSONL), `type=bundle` (ZIP) |

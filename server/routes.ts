@@ -12,13 +12,13 @@ import path from "path";
 import fs from "fs";
 import { passport, hashPassword, requireAuth, requireRole } from "./auth";
 import { normalizeExtractedFields, dedupAttributes, runQualityGates, computeTrustScore, type DedupResult } from "./services/normalization";
-import { buildArtifactContents, buildArtifactUris, checkPublishTrustThreshold, generateMlCsv, generateBundleZip } from "./services/publishing";
-import { inferParties, inferDocument, inferPartiesFromRawEntities } from "./services/party-inference";
+import { buildArtifactContents, buildArtifactUris, checkPublishTrustThreshold, generateMlCsv, generateBundleZip, generateRunSummary } from "./services/publishing";
+import { inferParties, inferDocument, inferPartiesFromRawEntities, resolveDocRelationshipType as resolveDocRelType } from "./services/party-inference";
 import { ADRS_CONFIG } from "./config";
 import { uploadMiddleware, computeFileHash, getMimeType, detectCloudSource, downloadFile, UPLOADS_DIR } from "./upload";
 import { extractTextFromFile, detectDocType, isTextExtractionFailure } from "./services/extraction";
 import { aiExtractDocumentFields, aiTranscribeAudio, aiExtractWithVision, scoreAiExtraction, aiReclassifyDocType, aiClassifyEntityType } from "./services/ai-extraction";
-import { groupEntitiesForMerge } from "./services/golden-records";
+import { groupEntitiesForMerge, getSingletonEntityIds } from "./services/golden-records";
 import unzipper from "unzipper";
 import multer from "multer";
 
@@ -1207,6 +1207,17 @@ export async function registerRoutes(httpServer: any, app: Express): Promise<any
     }));
     res.json(summary);
   });
+  // Run accounting summary — must be BEFORE /api/cdm/:id to avoid param capture
+  app.get("/api/cdm/run-summary", requireAuth, async (_req: any, res: any) => {
+    const [entities, extractions, evidenceFiles] = await Promise.all([
+      storage.getCdmEntities(),
+      storage.getExtractionRuns(),
+      storage.getEvidenceFiles(),
+    ]);
+    const summary = generateRunSummary(entities, extractions, evidenceFiles);
+    res.json(summary);
+  });
+
   app.get("/api/cdm/:id", requireAuth, async (req: any, res: any) => {
     const e = await storage.getCdmEntity(req.params.id);
     if (!e) return res.status(404).json({ error: "Not found" });
@@ -1312,66 +1323,80 @@ export async function registerRoutes(httpServer: any, app: Express): Promise<any
   // Groups entities that share name / email / phone and designates the highest-
   // confidence record as the golden record.  Zero hallucination: only existing
   // field values are compared; the AI is not asked to invent anything.
-  app.post("/api/cdm/golden-records/compute", requireAuth, requireRole("ANALYST"), async (_req: any, res: any) => {
+  app.post("/api/cdm/golden-records/compute", requireAuth, requireRole("ANALYST"), async (req: any, res: any) => {
+    const tenantId = req.user?.tenantId ?? "TENANT-001";
     const entities = await storage.getCdmEntities();
     const groups   = groupEntitiesForMerge(entities);
 
-    let promoted  = 0;
-    let merged    = 0;
-    const detail: Array<{ golden: string; absorbed: string[]; reasons: string[] }> = [];
+    let promoted    = 0;
+    let merged      = 0;
+    let quarantined = 0;
+    let singletonPromoted = 0;
+    const detail: Array<{ golden: string; absorbed: string[]; reasons: string[]; is_quarantined: boolean; explanation: string[] }> = [];
 
     for (const group of groups) {
-      // Collect all sourceEvidenceIds and contact identifiers from absorbed entities
-      // so the golden record aggregates provenance across all source documents.
       const goldenEntity = entities.find(e => e.id === group.goldenEntityId);
       const absorbedEntities = group.mergedEntityIds.map(id => entities.find(e => e.id === id)).filter(Boolean) as typeof entities;
 
-      // Merge sourceEvidenceIds — union of all evidence IDs across the group
+      // Union of all source evidence IDs across the group
       const allEvidenceIds = [
         ...((goldenEntity?.sourceEvidenceIds ?? []) as string[]),
         ...absorbedEntities.flatMap(e => (e.sourceEvidenceIds ?? []) as string[]),
       ];
       const mergedEvidenceIds = [...new Set(allEvidenceIds)];
 
-      // Merge identifiers from absorbed entities into the golden record (no duplicates by id_value)
+      // Merge identifiers (no duplicates by id_value)
       const goldenIds: any[] = (goldenEntity?.identifiers as any[]) ?? [];
       const existingIdValues = new Set(goldenIds.map((id: any) => id.id_value));
       const absorbedIds = absorbedEntities.flatMap(e => (e.identifiers as any[]) ?? []);
       for (const id of absorbedIds) {
-        if (!existingIdValues.has(id.id_value)) {
-          goldenIds.push(id);
-          existingIdValues.add(id.id_value);
-        }
+        if (!existingIdValues.has(id.id_value)) { goldenIds.push(id); existingIdValues.add(id.id_value); }
       }
 
-      // Merge canonical fields from absorbed entities into golden (golden fields take precedence)
-      const mergedFields: Record<string, any> = {};
-      for (const absorbed of absorbedEntities) {
-        Object.assign(mergedFields, absorbed.canonicalFields as Record<string, any>);
-      }
-      Object.assign(mergedFields, goldenEntity?.canonicalFields as Record<string, any>);
+      // Use field-union merge from GoldenGroup (confidence-aware per-field merging)
+      const mergedFields = Object.keys(group.mergedCanonicalFields).length > 0
+        ? group.mergedCanonicalFields
+        : (() => {
+            // Fallback for legacy: golden fields take precedence
+            const f: Record<string, any> = {};
+            for (const abs of absorbedEntities) Object.assign(f, abs.canonicalFields as Record<string, any>);
+            Object.assign(f, goldenEntity?.canonicalFields as Record<string, any>);
+            return f;
+          })();
 
-      // Promote golden record with merged provenance
+      // Determine lifecycle for the golden entity
+      const goldenLifecycle = group.isQuarantined ? "QUARANTINED" : "GOLDEN";
+      const goldenLifecycleReason = group.isQuarantined
+        ? group.quarantineReason
+        : `Golden record computed: merged ${group.mergedEntityIds.length + 1} entities by ${group.matchReasons.join(" + ")}`;
+
+      // Update golden record with merged provenance + lifecycle
       await storage.updateCdmEntity(group.goldenEntityId, {
-        isGoldenRecord: true,
+        isGoldenRecord: !group.isQuarantined,
         goldenRecordId: null,
         sourceEvidenceIds: mergedEvidenceIds,
         identifiers: goldenIds,
         canonicalFields: mergedFields,
+        entityLifecycle: goldenLifecycle,
+        lifecycleReason: goldenLifecycleReason,
       } as any);
-      promoted++;
+      if (group.isQuarantined) quarantined++; else promoted++;
 
-      // Point absorbed entities to the golden record
+      // Point absorbed entities to the golden record + set lifecycle to MERGED
       for (const absorbedId of group.mergedEntityIds) {
         await storage.updateCdmEntity(absorbedId, {
           isGoldenRecord: false,
           goldenRecordId: group.goldenEntityId,
+          entityLifecycle: group.isQuarantined ? "QUARANTINED" : "MERGED",
+          lifecycleReason: group.isQuarantined
+            ? `Absorbed into quarantined golden record: ${group.quarantineReason}`
+            : `Merged into golden record ${group.goldenEntityId}`,
         } as any);
         merged++;
       }
 
       await storage.createAuditLog({
-        action: "GOLDEN_RECORD_COMPUTED",
+        action: group.isQuarantined ? "GOLDEN_RECORD_QUARANTINED" : "GOLDEN_RECORD_COMPUTED",
         resourceType: "CDM",
         resourceId: group.goldenEntityId,
         userId: "system",
@@ -1381,14 +1406,55 @@ export async function registerRoutes(httpServer: any, app: Express): Promise<any
           match_reasons:    group.matchReasons,
           confidence:       group.confidence,
           evidence_sources: mergedEvidenceIds.length,
+          is_quarantined:   group.isQuarantined,
+          quarantine_reason: group.quarantineReason,
+          field_conflicts:  group.fieldMergeDecisions.filter(d => d.conflict).length,
+          explanation:      group.explanation,
         },
-        tenantId: "TENANT-001",
+        tenantId,
       });
 
-      detail.push({ golden: group.goldenDisplayName, absorbed: group.mergedEntityIds, reasons: group.matchReasons });
+      detail.push({ golden: group.goldenDisplayName, absorbed: group.mergedEntityIds, reasons: group.matchReasons, is_quarantined: group.isQuarantined, explanation: group.explanation });
     }
 
-    res.json({ goldenGroupsFound: groups.length, entitiesPromoted: promoted, entitiesMerged: merged, detail });
+    // ── Singleton promotion: entities not in any merge group → GOLDEN ──────────
+    if (ADRS_CONFIG.lifecycle.auto_promote_singletons) {
+      const singletons = getSingletonEntityIds(entities, groups);
+      for (const singleton of singletons) {
+        // Only promote entities that are in CANDIDATE state (not already GOLDEN, QUARANTINED, etc.)
+        const entity = entities.find(e => e.id === singleton.entityId);
+        if (!entity) continue;
+        const currentLifecycle = (entity as any).entityLifecycle as string | null;
+        if (currentLifecycle === "GOLDEN") continue; // already golden, skip
+        if (currentLifecycle === "QUARANTINED" || currentLifecycle === "REJECTED") continue;
+
+        await storage.updateCdmEntity(singleton.entityId, {
+          isGoldenRecord: true,
+          goldenRecordId: null,
+          entityLifecycle: "GOLDEN",
+          lifecycleReason: singleton.lifecycleReason,
+        } as any);
+        singletonPromoted++;
+
+        await storage.createAuditLog({
+          action: "SINGLETON_PROMOTED_TO_GOLDEN",
+          resourceType: "CDM",
+          resourceId: singleton.entityId,
+          userId: "system",
+          details: { display_name: singleton.displayName, entity_type: singleton.entityType, confidence: singleton.confidence },
+          tenantId,
+        });
+      }
+    }
+
+    res.json({
+      goldenGroupsFound:   groups.length,
+      entitiesPromoted:    promoted,
+      entitiesMerged:      merged,
+      entitiesQuarantined: quarantined,
+      singletonsPromotedToGolden: singletonPromoted,
+      detail,
+    });
   });
 
   // ─── Datasets ──────────────────────────────────────────────────────────────

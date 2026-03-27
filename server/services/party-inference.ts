@@ -1,5 +1,8 @@
+import crypto from "crypto";
 import type { NormalizedAttribute, InsertCdmEntity } from "@shared/schema";
 import { ADRS_CONFIG } from "../config";
+import { buildContactBindings, applyContactBindingsToParty } from "./contact-binding";
+import { classifyEntityForCdm } from "./entity-type-correction";
 
 export interface InferredParty {
   entity: InsertCdmEntity;
@@ -13,8 +16,7 @@ export interface InferredDocument {
   sourceAttrKeys: string[];
 }
 
-// ─── Raw entity-type keys that come from extractedEntities mapping (not party roles).
-// These are already captured in prefixed party fields (vendor_email, etc.) so skip them.
+// ─── Raw entity-type keys that are contacts, not party roles ─────────────────
 const SKIP_RAW_ENTITY_PREFIXES = new Set([
   "email", "phone", "address", "location", "money", "date",
   "reference", "organization", "person", "asset", "document",
@@ -22,120 +24,98 @@ const SKIP_RAW_ENTITY_PREFIXES = new Set([
 ]);
 
 // ─── Organisation-indicator tokens ───────────────────────────────────────────
-// If any of these tokens appear in an entity name it is very likely an organisation.
 const ORG_INDICATORS = new Set([
-  // Legal suffixes
   "ltd", "limited", "inc", "incorporated", "corp", "corporation", "co", "llc", "plc",
   "gmbh", "bv", "pty", "pvt", "ngo", "npo", "cbo", "sacco", "lp", "llp",
-  // Non-profits / institutions
   "foundation", "institute", "institution", "association", "trust", "fund", "charity",
-  // Governance
   "bank", "authority", "ministry", "department", "council", "board", "agency",
   "municipality", "commission", "bureau", "office", "cooperative", "co-operative",
-  // Generic org words
   "group", "holdings", "enterprises", "solutions", "services", "industries",
   "technologies", "tech", "international", "africa", "global", "regional", "national",
-  // Education
-  "school", "college", "university", "academy", "polytechnic", "institute",
-  // Health
+  "school", "college", "university", "academy", "polytechnic",
   "hospital", "clinic", "centre", "center", "pharmacy", "health",
-  // Government
   "government", "parliament", "senate", "municipal",
-  // Industry / extraction
   "mine", "mines", "mining", "quarry", "quarries", "colliery",
   "gold", "silver", "platinum", "diamond", "coal", "oil", "gas", "petroleum",
   "steel", "metals", "metallurgy", "chemicals", "pharmaceuticals", "pharma",
-  // Infrastructure / energy
   "energy", "power", "electricity", "utilities", "station", "plant", "works", "dam",
   "pipeline", "grid", "hub", "port", "airport", "railway", "roads",
-  // Projects
   "project", "projects", "programme", "program", "initiative", "scheme", "development",
-  // Property / construction
   "estate", "estates", "properties", "property", "developments", "construction",
   "engineering", "contractors", "contracting", "architects", "architecture",
-  // Professional services
   "consultants", "consulting", "advisors", "advisory", "lawyers", "attorneys",
   "solicitors", "advocates", "law", "legal", "accounting", "auditors",
-  // Agriculture / land
   "farm", "farms", "ranch", "ranches", "agriculture", "agro",
-  // Transport / logistics
   "logistics", "transport", "transportation", "airlines", "airways", "shipping",
   "freight", "cargo", "movers",
-  // Hospitality / real estate
   "lodge", "resort", "camp", "hotel", "motel", "inn", "investments", "ventures",
   "partners", "partnership", "traders", "commerce", "trading", "distributors",
   "suppliers", "manufacturers", "manufacturing",
-  // Media / telecom
   "media", "communications", "networks", "telecoms", "telecom", "systems", "digital",
-  // African gov / parastatals (common abbreviations now handled via ALL-CAPS check too)
   "zesa", "zinwa", "zimra", "nssa", "nust", "zupco", "cabs", "agribank", "posb",
 ]);
 
-/**
- * Returns true when a name looks like an individual human name rather than an
- * organisation — used to correct prefix-map misclassifications.
- *
- * Decision rules (applied in order):
- *  1. If ANY org-indicator token appears → not a person.
- *  2. If ALL original tokens are fully UPPER-CASE (≥ 2 chars) → abbreviation/acronym → not a person.
- *  3. If there are more than 4 tokens → not a person (orgs tend to have longer names).
- *  4. If the name is 2–4 space-separated tokens (title/first/middle/last) → person.
- *  5. Otherwise → ambiguous, leave as-is (caller keeps the prefix-map value).
- */
+const PARTY_PREFIX_TYPES: Record<string, "PERSON" | "ORGANIZATION"> = {
+  vendor: "ORGANIZATION", supplier: "ORGANIZATION", customer: "ORGANIZATION",
+  client: "ORGANIZATION", buyer: "ORGANIZATION", company: "ORGANIZATION",
+  contractor: "ORGANIZATION", employer: "ORGANIZATION", bank: "ORGANIZATION",
+  institution: "ORGANIZATION", lender: "ORGANIZATION", payee: "ORGANIZATION",
+  payer: "ORGANIZATION", issuer: "ORGANIZATION",
+  borrower: "PERSON", signatory: "PERSON", person: "PERSON",
+  employee: "PERSON", director: "PERSON", officer: "PERSON",
+  guarantor: "PERSON", surety: "PERSON", witness: "PERSON",
+  agent: "PERSON", recipient: "PERSON", candidate: "PERSON", applicant: "PERSON",
+};
+
 function looksLikePersonName(name: string): boolean {
   if (!name || name.trim().length === 0) return false;
   const lower = name.toLowerCase();
   const tokens = lower.split(/[\s,.\-&/()+]+/).filter(Boolean);
-
-  // Rule 1: any org-indicator present → organisation
   if (tokens.some(t => ORG_INDICATORS.has(t))) return false;
-
-  // Rule 2: all tokens are ALL-CAPS abbreviations (e.g. ZESA, ZIMRA, ZUPCO, NESARI)
   const origTokens = name.trim().split(/[\s,.\-&/()+]+/).filter(Boolean);
   if (origTokens.length <= 3 && origTokens.every(t => /^[A-Z]{2,}$/.test(t))) return false;
-
-  // Rule 3: too many tokens → almost certainly an organisation / project name
   if (tokens.length > 4) return false;
-
-  // Rule 4: 2–4 token name → likely a person
   return tokens.length >= 2;
 }
 
-// ─── Maps field-key prefixes to CDM entity types ──────────────────────────────
-const PARTY_PREFIX_TYPES: Record<string, "PERSON" | "ORGANIZATION"> = {
-  vendor:      "ORGANIZATION",
-  supplier:    "ORGANIZATION",
-  customer:    "ORGANIZATION",
-  client:      "ORGANIZATION",
-  buyer:       "ORGANIZATION",
-  company:     "ORGANIZATION",
-  contractor:  "ORGANIZATION",
-  employer:    "ORGANIZATION",
-  bank:        "ORGANIZATION",
-  institution: "ORGANIZATION",
-  lender:      "ORGANIZATION",
-  payee:       "ORGANIZATION",
-  payer:       "ORGANIZATION",
-  issuer:      "ORGANIZATION",
-  borrower:    "PERSON",
-  signatory:   "PERSON",
-  person:      "PERSON",
-  employee:    "PERSON",
-  director:    "PERSON",
-  officer:     "PERSON",
-  guarantor:   "PERSON",
-  surety:      "PERSON",
-  witness:     "PERSON",
-  agent:       "PERSON",
-  recipient:   "PERSON",
-};
+// ─── Deterministic fingerprint ────────────────────────────────────────────────
+// SHA-256(tenantId:entityType:evidenceId:roleKey) — prevents re-extraction duplicates
+function computeFingerprint(tenantId: string, entityType: string, evidenceId: string, roleKey: string): string {
+  return crypto
+    .createHash("sha256")
+    .update(`${tenantId}:${entityType}:${evidenceId}:${roleKey}`)
+    .digest("hex")
+    .slice(0, 32);
+}
+
+// ─── Lifecycle assignment from trust score + entity quality ───────────────────
+function assignLifecycle(
+  confidence: number,
+  nameTokenCount: number,
+  entityType: "PERSON" | "ORGANIZATION" | "DOCUMENT"
+): { lifecycle: string; reason: string } {
+  const cfg = ADRS_CONFIG.lifecycle;
+
+  if (confidence < cfg.quarantine_trust_threshold) {
+    return { lifecycle: "QUARANTINED", reason: `Confidence ${(confidence * 100).toFixed(0)}% is below quarantine threshold ${(cfg.quarantine_trust_threshold * 100).toFixed(0)}%` };
+  }
+  if (entityType === "PERSON" && nameTokenCount < cfg.person_min_name_tokens) {
+    return { lifecycle: "QUARANTINED", reason: `Person entity has only ${nameTokenCount} name token(s); minimum is ${cfg.person_min_name_tokens} for CANDIDATE promotion` };
+  }
+  // Documents auto-promoted to CANDIDATE (they represent concrete evidence)
+  if (entityType === "DOCUMENT") {
+    return { lifecycle: "CANDIDATE", reason: "Document entity auto-promoted to CANDIDATE on creation" };
+  }
+  return { lifecycle: "CANDIDATE", reason: `Confidence ${(confidence * 100).toFixed(0)}% meets CANDIDATE threshold` };
+}
 
 // ─── Party inference from normalized attributes ───────────────────────────────
 export function inferParties(
   attrs: NormalizedAttribute[],
   evidenceId: string,
   docType: string,
-  runId: string
+  runId: string,
+  tenantId: string = "TENANT-001"
 ): InferredParty[] {
   if (!ADRS_CONFIG.features.auto_party_creation) return [];
 
@@ -150,11 +130,11 @@ export function inferParties(
 
   if (approvedPartyAttrs.length === 0) return [];
 
-  // ── Group attributes by their field-key prefix ──────────────────────────────
-  // e.g. "vendor_name" → prefix "vendor"; "signatory_name" → prefix "signatory"
-  // Unprefixed attrs (no underscore) get their full key as a single-attr group.
-  const groups = new Map<string, NormalizedAttribute[]>();
+  // ── Build contact bindings for all attributes ────────────────────────────────
+  const contactResult = buildContactBindings(approvedPartyAttrs, [], docType);
 
+  // ── Group attributes by their field-key prefix ──────────────────────────────
+  const groups = new Map<string, NormalizedAttribute[]>();
   for (const attr of approvedPartyAttrs) {
     const underscoreIdx = attr.field_key.indexOf("_");
     const prefix = underscoreIdx > 0 ? attr.field_key.slice(0, underscoreIdx) : attr.field_key;
@@ -166,72 +146,58 @@ export function inferParties(
   let partyIndex = 0;
 
   for (const [prefix, groupAttrs] of groups) {
-    // Skip raw entity-type keys (e.g. "email", "phone", "address") — these are not party roles
     if (SKIP_RAW_ENTITY_PREFIXES.has(prefix)) continue;
 
-    // Find the primary name field for this cluster (needed for heuristic below)
     const nameAttr    = groupAttrs.find(a => a.field_key === `${prefix}_name` || a.field_key === "name");
-    const emailAttr   = groupAttrs.find(a => a.field_key.includes("email"));
-    const phoneAttr   = groupAttrs.find(a => a.field_key.includes("phone") || a.field_key.includes("mobile"));
-    const addressAttr = groupAttrs.find(a => a.field_key.includes("address"));
     const nationalIdAttr = groupAttrs.find(
       a => a.field_key.includes("national_id") || a.field_key.includes("id_number")
     );
 
-    // Skip clusters with no identifying signal at all
-    if (!nameAttr && !emailAttr && !phoneAttr) continue;
+    if (!nameAttr && !groupAttrs.some(a => a.field_key.includes("email") || a.field_key.includes("phone"))) continue;
 
-    // Determine entity type from prefix map; unknown prefixes → ORGANIZATION
+    const displayName = nameAttr?.value_normalized ??
+      groupAttrs.find(a => a.field_key.includes("email"))?.value_normalized ??
+      groupAttrs.find(a => a.field_key.includes("phone"))?.value_normalized ??
+      `${prefix}-${runId.slice(0, 8).toUpperCase()}-${partyIndex}`;
+
+    // ── Entity type correction ────────────────────────────────────────────────
     let entityType: "PERSON" | "ORGANIZATION" = PARTY_PREFIX_TYPES[prefix] ?? "ORGANIZATION";
-
-    // Heuristic override: if prefix says ORGANIZATION but the primary name
-    // looks like a human name (2–4 tokens, no org-indicator words), reclassify
-    // to PERSON so "John Doe" is not stored as an organisation.
     if (entityType === "ORGANIZATION" && nameAttr && looksLikePersonName(nameAttr.value_normalized)) {
       entityType = "PERSON";
     }
+    const typeDecision = classifyEntityForCdm(displayName, entityType, Math.max(...groupAttrs.map(a => a.confidence_score)));
+    if (typeDecision.action === "skip") continue; // e.g. skill/role values used as party name
 
-    const displayName =
-      nameAttr?.value_normalized ??
-      emailAttr?.value_normalized ??
-      phoneAttr?.value_normalized ??
-      `${entityType}-${runId.slice(0, 8).toUpperCase()}-${partyIndex}`;
+    const confidence = Math.max(...groupAttrs.map(a => a.confidence_score));
+    const nameTokenCount = displayName.split(/\s+/).filter(Boolean).length;
+    const { lifecycle, reason: lifecycleReason } = assignLifecycle(confidence, nameTokenCount, entityType);
 
     const entityCode = `AUTO-${entityType.slice(0, 3)}-${runId.slice(0, 8).toUpperCase()}-${partyIndex}`;
+    const fingerprint = computeFingerprint(tenantId, entityType, evidenceId, prefix);
 
-    // Build canonical fields from ALL attrs in this cluster
+    // ── Canonical fields ──────────────────────────────────────────────────────
     const canonicalFields: Record<string, any> = {};
     for (const attr of groupAttrs) {
-      // Strip the common prefix so the field reads naturally (e.g. vendor_name → name)
-      const shortKey = attr.field_key.startsWith(`${prefix}_`)
-        ? attr.field_key.slice(prefix.length + 1)
-        : attr.field_key;
+      const shortKey = attr.field_key.startsWith(`${prefix}_`) ? attr.field_key.slice(prefix.length + 1) : attr.field_key;
       canonicalFields[shortKey] = attr.value_normalized;
     }
 
-    // Build identifiers
-    const identifiers: InferredParty["identifiers"] = [];
-    if (emailAttr) {
-      identifiers.push({
-        id_type_label: "Email",
-        id_value: emailAttr.value_normalized,
-        is_verified: emailAttr.validation_state === "APPROVED",
-      });
-    }
-    if (phoneAttr) {
-      identifiers.push({
-        id_type_label: "Phone",
-        id_value: phoneAttr.value_normalized,
-        is_verified: phoneAttr.validation_state === "APPROVED",
-      });
-    }
+    // ── Contact identifiers from strict contact binding ───────────────────────
+    const boundIdentifiers = applyContactBindingsToParty(prefix, contactResult);
+    const identifiers: InferredParty["identifiers"] = boundIdentifiers.map(b => ({
+      id_type_label: b.id_type_label,
+      id_value: b.id_value,
+      is_verified: b.is_verified,
+    }));
     if (nationalIdAttr) {
-      identifiers.push({
-        id_type_label: "National ID",
-        id_value: nationalIdAttr.value_normalized,
-        is_verified: nationalIdAttr.validation_state === "APPROVED",
-      });
+      identifiers.push({ id_type_label: "National ID", id_value: nationalIdAttr.value_normalized, is_verified: nationalIdAttr.validation_state === "APPROVED" });
     }
+
+    // Sync contact values back to canonicalFields from strict bindings
+    const rc = contactResult.byRole.get(prefix);
+    if (rc?.email) canonicalFields.email = rc.email.contact_value;
+    if (rc?.phone) canonicalFields.phone = rc.phone.contact_value;
+    if (rc?.address) canonicalFields.address = rc.address.contact_value;
 
     const entity: InsertCdmEntity = {
       entityCode,
@@ -242,9 +208,18 @@ export function inferParties(
       relationships: [],
       sourceEvidenceIds: [evidenceId],
       isGoldenRecord: false,
-      confidenceScore: Math.max(...groupAttrs.map(a => a.confidence_score)),
+      confidenceScore: confidence,
       schemaVersion: "1.0",
-      tenantId: "TENANT-001",
+      tenantId,
+      entityLifecycle: lifecycle,
+      lifecycleReason,
+      entityFingerprint: fingerprint,
+      contactBindingAudit: {
+        binding_count: identifiers.length,
+        quarantined_count: contactResult.allQuarantined.length,
+        document_level_count: contactResult.documentLevel.length,
+        summary: contactResult.summary,
+      },
     };
 
     parties.push({ entity, sourceAttrKeys: groupAttrs.map(a => a.field_key), identifiers, relationships: [] });
@@ -256,28 +231,33 @@ export function inferParties(
 
 // ─── Party inference from raw AI entity list ─────────────────────────────────
 /**
- * Converts the raw `extractedEntities` array from the AI extraction result into
- * CDM entities for PERSON and ORGANIZATION entries.
+ * Converts raw extractedEntities into CDM entities for PERSON and ORGANIZATION.
  *
- * This captures every person and organisation the AI detected in the document text
- * that was NOT already promoted via the prefix-based field grouping (inferParties).
- * The `skipNames` set (normalised sorted tokens) prevents creating duplicates of
- * entities already created by inferParties.
- *
- * Zero hallucination: only values already returned by the AI extraction are used.
+ * v2 changes:
+ *  - Entity type correction: skip skills, roles, certs, languages, locations
+ *  - Contact binding: replaced ±4 window with strict contact-binding service (±2 max)
+ *  - Fingerprints: deterministic SHA-256 per (tenantId:type:evidenceId:i)
+ *  - Lifecycle: QUARANTINED if confidence < threshold or single-token name
+ *  - Config-driven min confidence (raw_entity_min_confidence)
  */
 export function inferPartiesFromRawEntities(
   rawEntities: Array<{ entity: string; value: string; confidence: number }>,
   evidenceId: string,
   runId: string,
-  skipNames: Set<string> = new Set()
+  skipNames: Set<string> = new Set(),
+  tenantId: string = "TENANT-001"
 ): InferredParty[] {
   if (!ADRS_CONFIG.features.auto_party_creation) return [];
 
-  const threshold = ADRS_CONFIG.thresholds.party_creation_confidence * 0.8; // slightly lower bar for raw entities
+  const threshold = ADRS_CONFIG.lifecycle.raw_entity_min_confidence;
   const parties: InferredParty[] = [];
   const seenNormalised = new Set<string>();
   let idx = 0;
+
+  // ── Build contact bindings for raw entity list ────────────────────────────────
+  // The contact-binding service handles the strict adjacency (±2) and section isolation.
+  const emptyAttrs: NormalizedAttribute[] = [];
+  const contactResult = buildContactBindings(emptyAttrs, rawEntities, "OTHER");
 
   for (let i = 0; i < rawEntities.length; i++) {
     const ent = rawEntities[i];
@@ -288,45 +268,47 @@ export function inferPartiesFromRawEntities(
     const rawName = String(ent.value ?? "").trim();
     if (!rawName || rawName.length < 2) continue;
 
-    // Normalise: lowercase, sort tokens — used for dedup only, not stored
     const normKey = rawName.toLowerCase().split(/[\s,.\-&/]+/).filter(Boolean).sort().join(" ");
     if (seenNormalised.has(normKey)) continue;
     if (skipNames.has(normKey)) continue;
     seenNormalised.add(normKey);
 
-    // Apply heuristic: re-classify ORGANIZATION if the name looks like a human name
+    // Determine entity type with heuristic correction
     let entityType: "PERSON" | "ORGANIZATION" = rawType === "PERSON" ? "PERSON" : "ORGANIZATION";
     if (entityType === "ORGANIZATION" && looksLikePersonName(rawName)) entityType = "PERSON";
 
+    // ── Entity type correction — skip non-entity values ───────────────────────
+    const typeDecision = classifyEntityForCdm(rawName, entityType, ent.confidence ?? 0.75);
+    if (typeDecision.action === "skip") continue;
+
+    const confidence = Math.min(1, ent.confidence ?? 0.75);
+    const nameTokens = rawName.split(/\s+/).filter(Boolean);
+    const nameTokenCount = nameTokens.length;
+
+    const { lifecycle, reason: lifecycleReason } = assignLifecycle(confidence, nameTokenCount, entityType);
+    // If quarantined by type decision, respect that
+    const finalLifecycle = typeDecision.action === "quarantine" ? "QUARANTINED" : lifecycle;
+    const finalLifecycleReason = typeDecision.action === "quarantine" ? typeDecision.reason : lifecycleReason;
+
     const entityCode = `AUTO-${entityType.slice(0, 3)}-ENT-${runId.slice(0, 8).toUpperCase()}-${idx}`;
+    const fingerprint = computeFingerprint(tenantId, entityType, evidenceId, `raw_${i}`);
 
-    // ── Correlate nearby contact entities (EMAIL, PHONE, ADDRESS) ──────────────
-    // Look within a window of ±4 positions in the raw entity list.
-    const windowStart = Math.max(0, i - 4);
-    const windowEnd   = Math.min(rawEntities.length - 1, i + 4);
-    const windowEnts  = rawEntities.slice(windowStart, windowEnd + 1);
+    // ── Get contacts from the strict contact binding result ───────────────────
+    // The binding service uses a synthetic role key per entity position.
+    const roleKey = `raw_entity_${i}`;
+    const boundIdentifiers = applyContactBindingsToParty(roleKey, contactResult);
+    const identifiers: InferredParty["identifiers"] = boundIdentifiers.map(b => ({
+      id_type_label: b.id_type_label,
+      id_value: b.id_value,
+      is_verified: b.is_verified,
+    }));
 
-    let emailVal: string | undefined;
-    let phoneVal: string | undefined;
-    let addressVal: string | undefined;
-
-    for (const w of windowEnts) {
-      const wt = String(w.entity ?? "").toUpperCase().trim();
-      if (wt === "EMAIL" && !emailVal && w.value?.includes("@")) emailVal = w.value.trim();
-      if (wt === "PHONE" && !phoneVal && w.value?.trim()) phoneVal = w.value.trim();
-      if (wt === "ADDRESS" && !addressVal && w.value?.trim()) addressVal = w.value.trim();
-    }
-
-    // Build canonical fields with contact details
+    // Build canonical fields with strictly-bound contacts only
     const canonicalFields: Record<string, any> = { name: rawName, source: "entity_extraction" };
-    if (emailVal) canonicalFields.email = emailVal;
-    if (phoneVal) canonicalFields.phone = phoneVal;
-    if (addressVal) canonicalFields.address = addressVal;
-
-    // Build identifiers
-    const identifiers: InferredParty["identifiers"] = [];
-    if (emailVal) identifiers.push({ id_type_label: "Email", id_value: emailVal, is_verified: false });
-    if (phoneVal) identifiers.push({ id_type_label: "Phone", id_value: phoneVal, is_verified: false });
+    const rc = contactResult.byRole.get(roleKey);
+    if (rc?.email) canonicalFields.email = rc.email.contact_value;
+    if (rc?.phone) canonicalFields.phone = rc.phone.contact_value;
+    if (rc?.address) canonicalFields.address = rc.address.contact_value;
 
     const entity: InsertCdmEntity = {
       entityCode,
@@ -337,9 +319,16 @@ export function inferPartiesFromRawEntities(
       relationships: [],
       sourceEvidenceIds: [evidenceId],
       isGoldenRecord: false,
-      confidenceScore: Math.min(1, ent.confidence ?? 0.75),
+      confidenceScore: confidence,
       schemaVersion: "1.0",
-      tenantId: "TENANT-001",
+      tenantId,
+      entityLifecycle: finalLifecycle,
+      lifecycleReason: finalLifecycleReason,
+      entityFingerprint: fingerprint,
+      contactBindingAudit: {
+        binding_count: identifiers.length,
+        binding_method: identifiers.length > 0 ? "adjacent_entity" : "none",
+      },
     };
 
     parties.push({ entity, sourceAttrKeys: [], identifiers, relationships: [] });
@@ -349,7 +338,7 @@ export function inferPartiesFromRawEntities(
   return parties;
 }
 
-// ─── Weak display name detector (for document entity naming) ─────────────────
+// ─── Weak display name detector ───────────────────────────────────────────────
 const WEAK_DISPLAY_PATTERNS = [
   /^(available upon request|upon request|on request|see (above|cv|attached|document)|as per cv|as above|same as above|to be (advised|determined|confirmed)|refer to cv)$/i,
   /^(n\/a|na|none|null|undefined|unknown|tbd|pending|not (applicable|specified|stated|provided|available|listed))$/i,
@@ -362,15 +351,13 @@ function isWeakDisplayName(s: string): boolean {
 
 // ─── Document entity inference ────────────────────────────────────────────────
 /**
- * Always creates a DOCUMENT CDM entity — even when no DOCUMENT-typed attributes
- * are present.  This guarantees full evidence → DOCUMENT node coverage so the
- * knowledge graph never misses a document node for an ingested file.
+ * Always creates a DOCUMENT CDM entity — guaranteeing one lineage node per evidence.
  *
  * Display name priority:
  *  1. Explicit title / report_title attribute
  *  2. Reference / invoice / contract number  →  "{DOC_TYPE} #{number}"
- *  3. Subject of the document  →  e.g. "CV — Jane Smith" (candidate_name)
- *  4. Vendor / issuer name  →  financial docs
+ *  3. Subject of document  →  e.g. "CV — Jane Smith"
+ *  4. Vendor / issuer name
  *  5. Evidence file name (extension stripped)
  *  6. Readable doc-type label as last resort
  */
@@ -379,18 +366,17 @@ export function inferDocument(
   evidenceId: string,
   docType: string,
   runId: string,
-  evidenceFileName?: string
+  evidenceFileName?: string,
+  tenantId: string = "TENANT-001"
 ): InferredDocument | null {
   if (!ADRS_CONFIG.features.auto_party_creation) return null;
 
   const approved = (state: string) => state === "AUTO_APPROVED" || state === "APPROVED";
-
   const docAttrs  = attrs.filter(a => a.subject_type === "DOCUMENT" && approved(a.validation_state));
   const allAttrs  = attrs.filter(a => approved(a.validation_state));
 
   const entityCode = `AUTO-DOC-${runId.slice(0, 8).toUpperCase()}`;
 
-  // ── Display name selection ──────────────────────────────────────────────────
   const pick = (keys: string[]): string | undefined => {
     for (const key of keys) {
       const a = allAttrs.find(a => a.field_key === key || a.field_key.endsWith(`_${key}`));
@@ -399,8 +385,8 @@ export function inferDocument(
     return undefined;
   };
 
-  const titleVal  = pick(["title", "report_title", "document_title", "subject"]);
-  const numVal    = pick(["invoice_number", "contract_number", "reference_number", "ref_no", "order_number", "permit_number"]);
+  const titleVal   = pick(["title", "report_title", "document_title", "subject"]);
+  const numVal     = pick(["invoice_number", "contract_number", "reference_number", "ref_no", "order_number", "permit_number"]);
   const subjectVal = pick(["candidate_name", "applicant_name", "employee_name", "patient_name"]);
   const vendorVal  = pick(["vendor_name", "supplier_name", "issuer_name"]);
   const docTypeLabel = docType.replace(/_/g, " ").toLowerCase().replace(/\b\w/g, c => c.toUpperCase());
@@ -415,13 +401,11 @@ export function inferDocument(
   } else if (vendorVal) {
     displayName = vendorVal;
   } else if (evidenceFileName) {
-    // Strip extension and clean up: "Mr B Mbidzo CV.pdf" → "Mr B Mbidzo CV"
     displayName = evidenceFileName.replace(/\.[^.]+$/, "").replace(/[_\-]+/g, " ").trim();
   } else {
     displayName = docTypeLabel;
   }
 
-  // ── Canonical fields ────────────────────────────────────────────────────────
   const canonicalFields: Record<string, any> = { doc_type: docType };
   for (const a of docAttrs) {
     canonicalFields[a.field_key] = a.value_normalized;
@@ -429,7 +413,9 @@ export function inferDocument(
 
   const avgConf = docAttrs.length
     ? docAttrs.reduce((s, a) => s + a.confidence_score, 0) / docAttrs.length
-    : 0.70; // reasonable floor for stub nodes
+    : 0.70;
+
+  const fingerprint = computeFingerprint(tenantId, "DOCUMENT", evidenceId, "document");
 
   const entity: InsertCdmEntity = {
     entityCode,
@@ -442,8 +428,39 @@ export function inferDocument(
     isGoldenRecord: false,
     confidenceScore: Math.max(0.70, avgConf),
     schemaVersion: "1.0",
-    tenantId: "TENANT-001",
+    tenantId,
+    entityLifecycle: "CANDIDATE",
+    lifecycleReason: "Document entity auto-promoted to CANDIDATE on creation",
+    entityFingerprint: fingerprint,
   };
 
   return { entity, sourceAttrKeys: docAttrs.map(a => a.field_key) };
+}
+
+// ─── Doc relationship type resolver (re-exported for routes.ts) ───────────────
+export function resolveDocRelationshipType(sourceAttrKeys: string[], docType: string): string {
+  const docTypeLower = docType.toLowerCase();
+  const profiles = ADRS_CONFIG.doc_type_profiles[docType] ?? ADRS_CONFIG.doc_type_profiles["OTHER"] ?? ["generic"];
+
+  // Check if any active profile has a richer relationship for these keys
+  for (const profileName of profiles) {
+    const profile = ADRS_CONFIG.relationship_profiles[profileName] ?? {};
+    const keyStr = sourceAttrKeys.join(" ").toLowerCase();
+
+    if (profile.EMPLOYED_BY && (keyStr.includes("employer") || keyStr.includes("employee"))) return "EMPLOYED_BY";
+    if (profile.STUDIED_AT && (keyStr.includes("institution") || keyStr.includes("school") || keyStr.includes("university"))) return "STUDIED_AT";
+    if (profile.GRADUATED_FROM && keyStr.includes("graduated")) return "GRADUATED_FROM";
+    if (profile.PAYEE_IN && keyStr.includes("payee")) return "PAYEE_IN";
+    if (profile.PAYER_IN && keyStr.includes("payer")) return "PAYER_IN";
+    if (profile.PARTY_TO && (keyStr.includes("party") || keyStr.includes("contractor") || keyStr.includes("client"))) return "PARTY_TO";
+  }
+
+  // Fallback to core generic types
+  const keyStr = sourceAttrKeys.join(" ").toLowerCase();
+  if (keyStr.includes("candidate") || keyStr.includes("applicant")) return "SUBJECT_OF";
+  if (keyStr.includes("vendor") || keyStr.includes("supplier") || keyStr.includes("issuer")) return "ISSUED_BY";
+  if (keyStr.includes("customer") || keyStr.includes("client") || keyStr.includes("buyer")) return "ISSUED_TO";
+  if (keyStr.includes("signatory") || keyStr.includes("witness")) return "SIGNATORY_OF";
+
+  return "MENTIONED_IN";
 }

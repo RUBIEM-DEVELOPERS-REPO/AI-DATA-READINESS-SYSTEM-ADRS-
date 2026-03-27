@@ -859,21 +859,75 @@ export interface ArtifactContents {
   quality_gates:   ArtifactQualityGates;
 }
 
+// ─── Lifecycle-aware entity filter ───────────────────────────────────────────
+/**
+ * Filter entities for export.
+ * Rules:
+ *  • QUARANTINED and REJECTED entities must never appear in published artifacts.
+ *  • DRAFT entities are not yet validated enough to export; exclude them.
+ *  • GOLDEN, CANDIDATE, MERGED, RETIRED entities are export-eligible.
+ *  • DOCUMENT entities bypass lifecycle filtering (always exported — they represent lineage).
+ *  • If entity_lifecycle is null/undefined (legacy rows), assume CANDIDATE (backward compat).
+ */
+function filterEntitiesForExport(entities: CdmEntity[]): { exportable: CdmEntity[]; excluded: { entity: CdmEntity; reason: string }[] } {
+  const exportable: CdmEntity[] = [];
+  const excluded: { entity: CdmEntity; reason: string }[] = [];
+
+  const EXPORT_LIFECYCLES = new Set(["GOLDEN", "CANDIDATE", "MERGED", "RETIRED"]);
+  const BLOCKED_LIFECYCLES = new Set(["QUARANTINED", "REJECTED"]);
+
+  for (const e of entities) {
+    if (e.entityType === "DOCUMENT") {
+      exportable.push(e); // documents always export
+      continue;
+    }
+    const lifecycle = (e as any).entityLifecycle as string | undefined | null;
+    if (!lifecycle || EXPORT_LIFECYCLES.has(lifecycle)) {
+      exportable.push(e);
+    } else if (BLOCKED_LIFECYCLES.has(lifecycle)) {
+      excluded.push({ entity: e, reason: `Lifecycle is ${lifecycle}; blocked from export` });
+    } else {
+      // DRAFT or unknown → exclude with softer warning
+      excluded.push({ entity: e, reason: `Lifecycle is ${lifecycle ?? "unknown"}; not yet promoted for export` });
+    }
+  }
+
+  return { exportable, excluded };
+}
+
 export function buildArtifactContents(
   dataset: Partial<PublishedDataset>,
   entities: CdmEntity[],
   extractions: ExtractionRun[],
   evidenceMap: Map<string, EvidenceFile>
 ): ArtifactContents {
-  const entityMap     = new Map(entities.map(e => [e.id, e]));
-  const mlFeatures    = generateMlFeatures(entities, extractions);
-  const kgGraph       = generateKgGraph(entities, dataset.datasetCode);
-  const kgEntities    = generateKgEntities(entities);
-  const kgIdentifiers = generateKgIdentifiers(entities);
-  const kgEdges       = generateKgEdges(entities);
+  // Apply lifecycle filter before generating any artifacts
+  const { exportable: exportEntities, excluded: excludedEntities } = filterEntitiesForExport(entities);
+
+  const entityMap     = new Map(exportEntities.map(e => [e.id, e]));
+  const mlFeatures    = generateMlFeatures(exportEntities, extractions);
+  const kgGraph       = generateKgGraph(exportEntities, dataset.datasetCode);
+  const kgEntities    = generateKgEntities(exportEntities);
+  const kgIdentifiers = generateKgIdentifiers(exportEntities);
+  const kgEdges       = generateKgEdges(exportEntities);
   const ragChunks     = generateRagChunks(extractions, evidenceMap, entityMap);
   const qualityGates  = validateArtifacts(mlFeatures, kgGraph, ragChunks);
-  const datasetCard   = generateDatasetCard(dataset, entities, extractions, mlFeatures, kgGraph, kgEntities, kgEdges, ragChunks, qualityGates);
+
+  // Attach lifecycle exclusion summary to quality gates
+  if (excludedEntities.length > 0) {
+    const quarantinedCount = excludedEntities.filter(x => (x.entity as any).entityLifecycle === "QUARANTINED").length;
+    const rejectedCount    = excludedEntities.filter(x => (x.entity as any).entityLifecycle === "REJECTED").length;
+    const draftCount       = excludedEntities.filter(x => !["QUARANTINED","REJECTED"].includes((x.entity as any).entityLifecycle ?? "")).length;
+    (qualityGates as any).lifecycle_exclusions = {
+      total_excluded: excludedEntities.length,
+      quarantined: quarantinedCount,
+      rejected: rejectedCount,
+      draft_or_pending: draftCount,
+      message: `${excludedEntities.length} entity/entities excluded from export due to lifecycle state.`,
+    };
+  }
+
+  const datasetCard = generateDatasetCard(dataset, exportEntities, extractions, mlFeatures, kgGraph, kgEntities, kgEdges, ragChunks, qualityGates);
   return { ml_features: mlFeatures, kg_graph: kgGraph, kg_entities: kgEntities, kg_identifiers: kgIdentifiers, kg_edges: kgEdges, rag_chunks: ragChunks, dataset_card: datasetCard, quality_gates: qualityGates };
 }
 
@@ -917,6 +971,111 @@ export function checkPublishTrustThreshold(
 
 export function generateMlCsv(mlFeatures: MlFeatureRow[]): string {
   return toCsv(mlFeatures);
+}
+
+// ─── Run Accounting / Observability ──────────────────────────────────────────
+export interface RunSummary {
+  documents_ingested: number;
+  documents_extracted: number;
+  documents_mapped_to_cdm: number;
+  documents_exported_to_rag: number;
+  documents_exported_to_kg: number;
+  documents_exported_to_ml: number;
+  documents_quarantined: number;
+  documents_rejected: number;
+  entities_created: number;
+  entities_golden: number;
+  entities_candidate: number;
+  entities_quarantined: number;
+  entities_rejected: number;
+  entities_draft: number;
+  relationships_created: number;
+  golden_records_created: number;
+  contact_bindings_total: number;
+  contact_bindings_quarantined: number;
+  validation_failures: number;
+  avg_trust_score: number;
+  low_trust_runs: number;
+  run_computed_at: string;
+}
+
+/**
+ * Compute a full observability summary across all pipeline data.
+ * Called from GET /api/cdm/run-summary.
+ */
+export function generateRunSummary(
+  entities: CdmEntity[],
+  extractions: ExtractionRun[],
+  evidenceFiles: EvidenceFile[]
+): RunSummary {
+  const evidenceIds = new Set(entities.flatMap(e => e.sourceEvidenceIds ?? []));
+  const docEntities = entities.filter(e => e.entityType === "DOCUMENT");
+  const partyEntities = entities.filter(e => e.entityType !== "DOCUMENT");
+
+  const goldenEntities    = entities.filter(e => (e as any).entityLifecycle === "GOLDEN");
+  const candidateEntities = entities.filter(e => (e as any).entityLifecycle === "CANDIDATE");
+  const quarantinedEnt    = entities.filter(e => (e as any).entityLifecycle === "QUARANTINED");
+  const rejectedEnt       = entities.filter(e => (e as any).entityLifecycle === "REJECTED");
+  const draftEnt          = entities.filter(e => !["GOLDEN","CANDIDATE","QUARANTINED","REJECTED","MERGED","RETIRED"].includes((e as any).entityLifecycle ?? ""));
+
+  const totalRelationships = entities.reduce((s, e) => s + ((e.relationships as any[]) ?? []).length, 0);
+
+  const goldenRecordIds   = new Set(entities.filter(e => e.isGoldenRecord).map(e => e.id));
+  const mergedRecords     = entities.filter(e => e.goldenRecordId);
+
+  const avgTrustScore = extractions.length
+    ? extractions.reduce((s, e) => s + e.trustScore, 0) / extractions.length
+    : 0;
+  const lowTrustRuns = extractions.filter(e => e.trustScore < 0.70).length;
+
+  const validationFailures = extractions.filter(e => !(e.qualityGatesPassed as unknown as boolean)).length;
+
+  // Contact binding audit: count from entity metadata
+  let contactBindingsTotal = 0;
+  let contactBindingsQuarantined = 0;
+  for (const e of entities) {
+    const audit = (e as any).contactBindingAudit as any;
+    if (audit) {
+      contactBindingsTotal += (audit.binding_count ?? 0);
+      contactBindingsQuarantined += (audit.quarantined_count ?? 0);
+    }
+  }
+
+  // Document-level: which evidences have at least one extraction + CDM entity
+  const evidencesWithCdm = evidenceIds.size;
+
+  // Which evidences have QUARANTINED evidence status (failed)
+  const quarantinedEvidence = evidenceFiles.filter(e => e.status === "QUARANTINED" || e.status === "FAILED").length;
+  const rejectedEvidence    = evidenceFiles.filter(e => e.status === "REJECTED").length;
+
+  // Which evidences appear in RAG-eligible extractions (have rawText)
+  const evidencesWithRawText = new Set(extractions.filter(e => e.rawText && e.rawText.length > 0).map(e => e.evidenceId));
+
+  return {
+    documents_ingested:        evidenceFiles.length,
+    documents_extracted:       extractions.length,
+    documents_mapped_to_cdm:   evidencesWithCdm,
+    documents_exported_to_rag: evidencesWithRawText.size,
+    documents_exported_to_kg:  docEntities.length,
+    documents_exported_to_ml:  partyEntities.filter(e => e.confidenceScore >= 0.5 &&
+                                  !["QUARANTINED","REJECTED"].includes((e as any).entityLifecycle ?? "")).length,
+    documents_quarantined:     quarantinedEvidence,
+    documents_rejected:        rejectedEvidence,
+    entities_created:          entities.length,
+    entities_golden:           goldenEntities.length,
+    entities_candidate:        candidateEntities.length,
+    entities_quarantined:      quarantinedEnt.length,
+    entities_rejected:         rejectedEnt.length,
+    entities_draft:            draftEnt.length,
+    relationships_created:     totalRelationships,
+    golden_records_created:    goldenRecordIds.size + mergedRecords.length,
+    contact_bindings_total:    contactBindingsTotal,
+    contact_bindings_quarantined: contactBindingsQuarantined,
+    validation_failures:       validationFailures,
+    avg_trust_score:           Math.round(avgTrustScore * 1000) / 1000,
+    low_trust_runs:            lowTrustRuns,
+    run_computed_at:           new Date().toISOString(),
+  };
 }
 
 // ─── Bundle ZIP ───────────────────────────────────────────────────────────────
