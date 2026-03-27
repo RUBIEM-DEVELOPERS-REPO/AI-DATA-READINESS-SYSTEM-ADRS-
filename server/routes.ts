@@ -32,6 +32,34 @@ function generateHash(input: string): string {
   return "sha256:" + createHash("sha256").update(input + Date.now()).digest("hex");
 }
 
+/**
+ * Resolve a semantic relationship type between a party entity and the document
+ * it was inferred from.  Falls back to MENTIONED_IN for the generic case.
+ *
+ * Relationship taxonomy:
+ *   SUBJECT_OF    — the primary individual / org that the document is about
+ *   ISSUED_BY     — the party that issued/authored the document
+ *   ISSUED_TO     — the party that received/is named as the addressee
+ *   SIGNATORY_OF  — a party who signed the document
+ *   EMPLOYED_BY   — an employee record in an employment doc
+ *   AFFILIATED_WITH — general co-presence with semantic context
+ *   MENTIONED_IN  — fallback: entity appears in the document text
+ */
+function resolveDocRelationshipType(sourceAttrKeys: string[], docType: string): string {
+  const keys = sourceAttrKeys.map(k => k.toLowerCase());
+  if (keys.some(k => ["candidate_name", "applicant_name", "employee_name", "patient_name"].includes(k))) return "SUBJECT_OF";
+  if (keys.some(k => k.startsWith("vendor_") || k.startsWith("supplier_") || k.startsWith("issuer_"))) return "ISSUED_BY";
+  if (keys.some(k => k.startsWith("customer_") || k.startsWith("client_") || k.startsWith("buyer_") || k.startsWith("recipient_"))) return "ISSUED_TO";
+  if (keys.some(k => k.startsWith("signatory_"))) return "SIGNATORY_OF";
+  if (keys.some(k => k.startsWith("employee_") || k.startsWith("director_") || k.startsWith("officer_"))) return "AFFILIATED_WITH";
+  if (keys.some(k => k.startsWith("guarantor_") || k.startsWith("borrower_") || k.startsWith("surety_"))) return "AFFILIATED_WITH";
+  // Doc-type contextual fallback
+  const dt = (docType ?? "").toUpperCase();
+  if (dt === "CV" || dt === "RESUME") return "SUBJECT_OF";
+  if (dt === "INVOICE" || dt === "RECEIPT" || dt === "QUOTATION") return "MENTIONED_IN";
+  return "MENTIONED_IN";
+}
+
 function stripText<T extends { rawText?: string | null }>(run: T): T {
   const { rawText, ...rest } = run as any;
   return rest as T;
@@ -825,11 +853,13 @@ export async function registerRoutes(httpServer: any, app: Express): Promise<any
       // 11. Party inference — field-based + raw-entity-based
       if (ADRS_CONFIG.features.auto_party_creation) {
         const inferredParties = inferParties(dedupedAttrs, run.evidenceId, docType, run.id);
-        const inferredDoc = inferDocument(dedupedAttrs, run.evidenceId, docType, run.id);
+        // Always pass evidenceFile.fileName so every evidence gets a DOCUMENT CDM node
+        const inferredDoc = inferDocument(dedupedAttrs, run.evidenceId, docType, run.id, evidenceFile.fileName);
         let docEntityCode: string | null = null;
         if (inferredDoc) {
           const docEntity = await storage.createCdmEntity(inferredDoc.entity);
           docEntityCode = docEntity.entityCode;
+          await storage.createAuditLog({ action: "AUTO_DOC_INFERRED", resourceType: "CDM", resourceId: docEntity.entityCode, userId: "system", details: { display_name: docEntity.displayName, evidence_id: run.evidenceId }, tenantId: "TENANT-001" });
         }
 
         // Collect normalised display names from field-based inference to avoid duplicates
@@ -843,7 +873,11 @@ export async function registerRoutes(httpServer: any, app: Express): Promise<any
         const rawEntityParties = inferPartiesFromRawEntities(aiResult.entities, run.evidenceId, run.id, fieldInferredNames);
 
         for (const inf of [...inferredParties, ...rawEntityParties]) {
-          if (docEntityCode) inf.entity.relationships = [{ target_entity_id: docEntityCode, relationship_type: "MENTIONED_IN", confidence: inf.entity.confidenceScore }];
+          if (docEntityCode) {
+            // Use semantic relationship type when possible
+            const relType = resolveDocRelationshipType(inf.sourceAttrKeys, docType);
+            inf.entity.relationships = [{ target_entity_id: docEntityCode, relationship_type: relType, confidence: inf.entity.confidenceScore, evidence_id: run.evidenceId }];
+          }
           const party = await storage.createCdmEntity(inf.entity);
           await storage.createAuditLog({ action: "AUTO_PARTY_INFERRED", resourceType: "CDM", resourceId: party.entityCode, userId: "system", details: { display_name: party.displayName, entity_type: party.entityType, evidence_id: run.evidenceId }, tenantId: "TENANT-001" });
         }
@@ -934,7 +968,8 @@ export async function registerRoutes(httpServer: any, app: Express): Promise<any
     // 7. Party inference — field-based + raw-entity-based
     if (ADRS_CONFIG.features.auto_party_creation) {
       const inferredParties = inferParties(dedupedAttrs, run.evidenceId, docType, run.id);
-      const inferredDoc     = inferDocument(dedupedAttrs, run.evidenceId, docType, run.id);
+      const evidenceFile2   = await storage.getEvidenceFile(run.evidenceId);
+      const inferredDoc     = inferDocument(dedupedAttrs, run.evidenceId, docType, run.id, evidenceFile2?.fileName);
       let docEntityCode: string | null = null;
 
       if (inferredDoc) {
@@ -952,7 +987,8 @@ export async function registerRoutes(httpServer: any, app: Express): Promise<any
 
       for (const inferred of [...inferredParties, ...rawEntityParties]) {
         if (docEntityCode) {
-          inferred.entity.relationships = [{ target_entity_id: docEntityCode, relationship_type: "MENTIONED_IN", confidence: inferred.entity.confidenceScore }];
+          const relType = resolveDocRelationshipType(inferred.sourceAttrKeys, docType);
+          inferred.entity.relationships = [{ target_entity_id: docEntityCode, relationship_type: relType, confidence: inferred.entity.confidenceScore, evidence_id: run.evidenceId }];
         }
         const partyEntity = await storage.createCdmEntity(inferred.entity);
         await storage.createAuditLog({ action: "AUTO_PARTY_INFERRED", resourceType: "CDM", resourceId: partyEntity.entityCode, userId: "system", details: { entity_type: partyEntity.entityType, display_name: partyEntity.displayName, identifiers: inferred.identifiers.length, evidence_id: run.evidenceId }, tenantId: "TENANT-001" });

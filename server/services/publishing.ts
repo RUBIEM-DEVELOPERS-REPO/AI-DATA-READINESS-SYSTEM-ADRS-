@@ -89,13 +89,40 @@ export function generateMlFeatures(
 
     const fields = entity.canonicalFields as Record<string, any>;
 
+    const identifiers      = (entity.identifiers as any[]) ?? [];
+    const relationships    = (entity.relationships as any[]) ?? [];
+    const entityTypeRank: Record<string, number> = { PERSON: 1, ORGANIZATION: 2, DOCUMENT: 3, TRANSACTION: 4, ASSET: 5 };
+
+    // Normalization quality: fraction of approved attrs in source extractions
+    let normSuccess = 0; let normTotal = 0;
+    for (const evidenceId of (entity.sourceEvidenceIds ?? [])) {
+      const run = extractionByEvidence.get(evidenceId);
+      if (!run) continue;
+      const attrs = (run.extractedAttributes as any[]) ?? [];
+      for (const a of attrs) {
+        normTotal++;
+        if (a.normalization_status === "SUCCESS") normSuccess++;
+      }
+    }
+    const normalizationQuality = normTotal > 0 ? Math.round((normSuccess / normTotal) * 1000) / 1000 : null;
+
     const row: MlFeatureRow = {
-      entity_id:             entity.entityCode,
-      entity_type:           entity.entityType,
-      confidence_score:      Math.round(entity.confidenceScore * 1000) / 1000,
-      is_golden_record:      entity.isGoldenRecord ? 1 : 0,
-      schema_version:        entity.schemaVersion,
-      source_evidence_count: (entity.sourceEvidenceIds ?? []).length,
+      entity_id:                entity.entityCode,
+      entity_type:              entity.entityType,
+      entity_type_rank:         entityTypeRank[entity.entityType] ?? 9,
+      confidence_score:         Math.round(entity.confidenceScore * 1000) / 1000,
+      is_golden_record:         entity.isGoldenRecord ? 1 : 0,
+      has_golden_record:        (entity.goldenRecordId || entity.isGoldenRecord) ? 1 : 0,
+      schema_version:           entity.schemaVersion,
+      source_evidence_count:    (entity.sourceEvidenceIds ?? []).length,
+      identifier_count:         identifiers.length,
+      has_email:                identifiers.some((i: any) => i.id_type_label === "Email") ? 1 : 0,
+      has_phone:                identifiers.some((i: any) => i.id_type_label === "Phone") ? 1 : 0,
+      relationship_count:       relationships.length,
+      canonical_field_count:    Object.keys(fields).length,
+      name_token_count:         (entity.displayName ?? "").split(/\s+/).filter(Boolean).length,
+      normalization_quality:    normalizationQuality,
+      provenance_quality:       provenanceQuality(entity.confidenceScore) === "HIGH" ? 1 : provenanceQuality(entity.confidenceScore) === "MEDIUM" ? 0.5 : 0,
     };
 
     // Pull ML-safe features from canonical fields (exclude PII)
@@ -347,7 +374,8 @@ export function generateKgGraph(
     }
   }
 
-  // Semantic edges: PARTY → MENTIONED_IN → DOCUMENT
+  // Semantic edges: PARTY → <relationship_type> → DOCUMENT
+  // Use the relationship_type stored on each entity, falling back to MENTIONED_IN
   for (const doc of docEntities) {
     const docId = canonicalIdMap.get(doc.entityCode) ?? doc.entityCode;
     if (!emittedNodeIds.has(docId)) continue;
@@ -363,7 +391,24 @@ export function generateKgGraph(
       );
       if (!sharedEvidence) continue;
 
-      const edgeId = `EDGE-${partyId}-${docId}-MENTIONED_IN`;
+      // Determine the best relationship type across the group (prefer specific over generic)
+      const RELATIONSHIP_PRIORITY: Record<string, number> = {
+        SUBJECT_OF: 10, ISSUED_BY: 9, ISSUED_TO: 9, SIGNATORY_OF: 8,
+        AFFILIATED_WITH: 7, EMPLOYED_BY: 7, MENTIONED_IN: 1,
+      };
+      let bestRelType = "MENTIONED_IN";
+      let bestPriority = 0;
+      for (const e of group) {
+        const rels = (e.relationships as any[]) ?? [];
+        for (const r of rels) {
+          if (r.target_entity_id === doc.entityCode || r.target_entity_id === docId) {
+            const priority = RELATIONSHIP_PRIORITY[r.relationship_type] ?? 0;
+            if (priority > bestPriority) { bestPriority = priority; bestRelType = r.relationship_type; }
+          }
+        }
+      }
+
+      const edgeId = `EDGE-${partyId}-${docId}-${bestRelType}`;
       if (emittedEdges.has(edgeId)) continue;
       emittedEdges.add(edgeId);
 
@@ -371,10 +416,10 @@ export function generateKgGraph(
       records.push({
         record_type: "EDGE",
         id: edgeId,
-        type_label: "MENTIONED_IN",
+        type_label: bestRelType,
         from: partyId,
         to: docId,
-        properties: { confidence, relationship_basis: "shared_evidence" },
+        properties: { confidence, relationship_basis: "shared_evidence", semantic_type: bestRelType !== "MENTIONED_IN" ? "semantic" : "implicit" },
         provenance: {
           evidence_ids: (doc.sourceEvidenceIds ?? []).filter(id =>
             group.some(e => (e.sourceEvidenceIds ?? []).includes(id))
@@ -466,15 +511,41 @@ export function generateKgIdentifiers(entities: CdmEntity[]): Array<{
 
 // ─── RAG Artifact — semantic section chunking ─────────────────────────────────
 
-// Document section patterns ordered by typical invoice/receipt structure
+// Document section patterns — ordered by priority (most specific first).
+// Covers: invoices, receipts, CVs/resumes, contracts, reports, correspondence.
 const SECTION_PATTERNS: Array<{ pattern: RegExp; chunkType: string }> = [
-  { pattern: /^(INVOICE|QUOTATION|QUOTE|TAX INVOICE|RECEIPT|STATEMENT|PROFORMA)/im,                    chunkType: "issuer_header" },
-  { pattern: /^(CUSTOMER DETAILS?|CLIENT DETAILS?|BILL TO|SOLD TO|CUSTOMER INFO)/im,                   chunkType: "customer_details" },
-  { pattern: /^(BANK (TRANSFER|DETAILS?)|PAYMENT (DETAILS?|INFO|INSTRUCTIONS?)|REMITTANCE)/im,         chunkType: "payment_details" },
-  { pattern: /^(LINE ITEMS?|DESCRIPTION|ITEMS?|SERVICES?|PRODUCTS?|SCOPE OF WORK|DELIVERABLE)/im,      chunkType: "line_items" },
-  { pattern: /^(SUBTOTAL|TOTAL|AMOUNT DUE|GRAND TOTAL|BALANCE|TOTAL AMOUNT|AMOUNT IN WORDS)/im,        chunkType: "totals" },
-  { pattern: /^(TERMS?|CONDITIONS?|NOTES?|REMARKS?|PAYMENT TERMS?)/im,                                 chunkType: "terms" },
-  { pattern: /^(ORDER|ORD|ATT|REFERENCE|REF)/im,                                                       chunkType: "reference" },
+  // ── Invoice / financial ────────────────────────────────────────────────────
+  { pattern: /^(INVOICE|QUOTATION|QUOTE|TAX INVOICE|RECEIPT|STATEMENT|PROFORMA|CREDIT NOTE|DEBIT NOTE)/im,  chunkType: "issuer_header" },
+  { pattern: /^(CUSTOMER DETAILS?|CLIENT DETAILS?|BILL TO|SOLD TO|SHIP TO|CUSTOMER INFO|DELIVER TO)/im,     chunkType: "customer_details" },
+  { pattern: /^(BANK (TRANSFER|DETAILS?)|PAYMENT (DETAILS?|INFO|INSTRUCTIONS?)|REMITTANCE|BANKING DETAILS)/im, chunkType: "payment_details" },
+  { pattern: /^(LINE ITEMS?|DESCRIPTION|ITEMS?|SERVICES?|PRODUCTS?|SCOPE OF WORK|DELIVERABLE|PARTICULARS)/im, chunkType: "line_items" },
+  { pattern: /^(SUBTOTAL|TOTAL|AMOUNT DUE|GRAND TOTAL|BALANCE|TOTAL AMOUNT|AMOUNT IN WORDS|SUMMARY OF CHARGES)/im, chunkType: "totals" },
+  { pattern: /^(TERMS?|CONDITIONS?|NOTES?|REMARKS?|PAYMENT TERMS?|DISCLAIMER|IMPORTANT NOTICE)/im,          chunkType: "terms" },
+  { pattern: /^(ORDER|ORD|ATT|REFERENCE|REF|PURCHASE ORDER|PO NUMBER)/im,                                   chunkType: "reference" },
+  // ── CV / resume ────────────────────────────────────────────────────────────
+  { pattern: /^(PERSONAL (DETAILS?|INFORMATION|PROFILE|STATEMENT)|PROFILE|ABOUT ME|SUMMARY|OBJECTIVE|CAREER OBJECTIVE)/im, chunkType: "cv_personal" },
+  { pattern: /^(WORK EXPERIENCE|EMPLOYMENT (HISTORY|RECORD)|EXPERIENCE|PROFESSIONAL EXPERIENCE|CAREER HISTORY)/im,         chunkType: "cv_experience" },
+  { pattern: /^(EDUCATION|ACADEMIC (QUALIFICATIONS?|BACKGROUND|HISTORY)|QUALIFICATIONS?|SCHOOLING|TRAINING)/im,            chunkType: "cv_education" },
+  { pattern: /^(SKILLS?|COMPETENC(Y|IES)|CAPABILITIES?|AREAS? OF EXPERTISE|TECHNICAL SKILLS?|KEY SKILLS?)/im,             chunkType: "cv_skills" },
+  { pattern: /^(CERTIF(ICATE|ICATION)S?|LICEN(C|S)ES?|PROFESSIONAL DEVELOPMENT|ACCREDITATION)/im,                         chunkType: "cv_certifications" },
+  { pattern: /^(REFERENCES?|REFEREE|CHARACTER REFERENCES?|PROFESSIONAL REFERENCES?)/im,                                    chunkType: "cv_references" },
+  { pattern: /^(AWARDS?|ACHIEVEMENT|HONOURS?|RECOGNITION|PUBLICATIONS?|RESEARCH)/im,                                       chunkType: "cv_achievements" },
+  { pattern: /^(LANGUAGES?|LINGUISTIC|SPOKEN LANGUAGES?)/im,                                                               chunkType: "cv_languages" },
+  // ── Contract / legal ───────────────────────────────────────────────────────
+  { pattern: /^(WHEREAS|RECITALS?|BACKGROUND|PREAMBLE)/im,                                                  chunkType: "contract_preamble" },
+  { pattern: /^(PARTIES|PARTY DETAILS?|BETWEEN|SIGNATORIES)/im,                                             chunkType: "contract_parties" },
+  { pattern: /^(OBLIGATIONS?|DUTIES|RESPONSIBILITIES|DELIVERABLES?|SCOPE)/im,                               chunkType: "contract_obligations" },
+  { pattern: /^(TERMINATION|EXPIRY|EXPIRATION|DURATION|TERM OF AGREEMENT)/im,                               chunkType: "contract_term" },
+  { pattern: /^(GOVERNING LAW|JURISDICTION|DISPUTE RESOLUTION|ARBITRATION)/im,                              chunkType: "contract_legal" },
+  { pattern: /^(SIGNATURES?|SIGNED BY|EXECUTION|IN WITNESS)/im,                                             chunkType: "contract_signature" },
+  // ── Report / correspondence ────────────────────────────────────────────────
+  { pattern: /^(EXECUTIVE SUMMARY|ABSTRACT|INTRODUCTION|BACKGROUND INFORMATION)/im,                         chunkType: "report_intro" },
+  { pattern: /^(FINDINGS?|RESULTS?|ANALYSIS|OBSERVATIONS?|RECOMMENDATIONS?)/im,                             chunkType: "report_findings" },
+  { pattern: /^(CONCLUSION|SUMMARY|CLOSING REMARKS?|NEXT STEPS?|WAY FORWARD)/im,                            chunkType: "report_conclusion" },
+  { pattern: /^(APPENDIX|ANNEX|ATTACHMENT|EXHIBIT|SCHEDULE)/im,                                             chunkType: "report_appendix" },
+  // ── Email / correspondence ─────────────────────────────────────────────────
+  { pattern: /^(DEAR|TO WHOM IT MAY CONCERN|HI |HELLO |GOOD (MORNING|AFTERNOON|EVENING))/im,                chunkType: "correspondence_salutation" },
+  { pattern: /^(YOURS (SINCERELY|FAITHFULLY|TRULY)|BEST REGARDS?|REGARDS?|THANK YOU|THANKS?)/im,            chunkType: "correspondence_closing" },
 ];
 
 // Boilerplate patterns (repeated across many documents from same supplier)

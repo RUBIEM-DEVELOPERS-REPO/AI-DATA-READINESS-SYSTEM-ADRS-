@@ -24,14 +24,51 @@ const SKIP_RAW_ENTITY_PREFIXES = new Set([
 // ─── Organisation-indicator tokens ───────────────────────────────────────────
 // If any of these tokens appear in an entity name it is very likely an organisation.
 const ORG_INDICATORS = new Set([
+  // Legal suffixes
   "ltd", "limited", "inc", "incorporated", "corp", "corporation", "co", "llc", "plc",
-  "gmbh", "bv", "pty", "pvt", "ngo", "npo", "cbo", "sacco",
-  "foundation", "institute", "association", "trust", "fund",
+  "gmbh", "bv", "pty", "pvt", "ngo", "npo", "cbo", "sacco", "lp", "llp",
+  // Non-profits / institutions
+  "foundation", "institute", "institution", "association", "trust", "fund", "charity",
+  // Governance
   "bank", "authority", "ministry", "department", "council", "board", "agency",
+  "municipality", "commission", "bureau", "office", "cooperative", "co-operative",
+  // Generic org words
   "group", "holdings", "enterprises", "solutions", "services", "industries",
-  "technologies", "tech", "international", "africa", "global",
-  "school", "college", "university", "hospital", "clinic", "government",
-  "municipality", "commission", "bureau", "office",
+  "technologies", "tech", "international", "africa", "global", "regional", "national",
+  // Education
+  "school", "college", "university", "academy", "polytechnic", "institute",
+  // Health
+  "hospital", "clinic", "centre", "center", "pharmacy", "health",
+  // Government
+  "government", "parliament", "senate", "municipal",
+  // Industry / extraction
+  "mine", "mines", "mining", "quarry", "quarries", "colliery",
+  "gold", "silver", "platinum", "diamond", "coal", "oil", "gas", "petroleum",
+  "steel", "metals", "metallurgy", "chemicals", "pharmaceuticals", "pharma",
+  // Infrastructure / energy
+  "energy", "power", "electricity", "utilities", "station", "plant", "works", "dam",
+  "pipeline", "grid", "hub", "port", "airport", "railway", "roads",
+  // Projects
+  "project", "projects", "programme", "program", "initiative", "scheme", "development",
+  // Property / construction
+  "estate", "estates", "properties", "property", "developments", "construction",
+  "engineering", "contractors", "contracting", "architects", "architecture",
+  // Professional services
+  "consultants", "consulting", "advisors", "advisory", "lawyers", "attorneys",
+  "solicitors", "advocates", "law", "legal", "accounting", "auditors",
+  // Agriculture / land
+  "farm", "farms", "ranch", "ranches", "agriculture", "agro",
+  // Transport / logistics
+  "logistics", "transport", "transportation", "airlines", "airways", "shipping",
+  "freight", "cargo", "movers",
+  // Hospitality / real estate
+  "lodge", "resort", "camp", "hotel", "motel", "inn", "investments", "ventures",
+  "partners", "partnership", "traders", "commerce", "trading", "distributors",
+  "suppliers", "manufacturers", "manufacturing",
+  // Media / telecom
+  "media", "communications", "networks", "telecoms", "telecom", "systems", "digital",
+  // African gov / parastatals (common abbreviations now handled via ALL-CAPS check too)
+  "zesa", "zinwa", "zimra", "nssa", "nust", "zupco", "cabs", "agribank", "posb",
 ]);
 
 /**
@@ -40,15 +77,28 @@ const ORG_INDICATORS = new Set([
  *
  * Decision rules (applied in order):
  *  1. If ANY org-indicator token appears → not a person.
- *  2. If the name is 2–4 space-separated tokens (title/first/middle/last) → person.
- *  3. Otherwise → ambiguous, leave as-is (caller keeps the prefix-map value).
+ *  2. If ALL original tokens are fully UPPER-CASE (≥ 2 chars) → abbreviation/acronym → not a person.
+ *  3. If there are more than 4 tokens → not a person (orgs tend to have longer names).
+ *  4. If the name is 2–4 space-separated tokens (title/first/middle/last) → person.
+ *  5. Otherwise → ambiguous, leave as-is (caller keeps the prefix-map value).
  */
 function looksLikePersonName(name: string): boolean {
   if (!name || name.trim().length === 0) return false;
   const lower = name.toLowerCase();
-  const tokens = lower.split(/[\s,.\-&/]+/).filter(Boolean);
+  const tokens = lower.split(/[\s,.\-&/()+]+/).filter(Boolean);
+
+  // Rule 1: any org-indicator present → organisation
   if (tokens.some(t => ORG_INDICATORS.has(t))) return false;
-  return tokens.length >= 2 && tokens.length <= 4;
+
+  // Rule 2: all tokens are ALL-CAPS abbreviations (e.g. ZESA, ZIMRA, ZUPCO, NESARI)
+  const origTokens = name.trim().split(/[\s,.\-&/()+]+/).filter(Boolean);
+  if (origTokens.length <= 3 && origTokens.every(t => /^[A-Z]{2,}$/.test(t))) return false;
+
+  // Rule 3: too many tokens → almost certainly an organisation / project name
+  if (tokens.length > 4) return false;
+
+  // Rule 4: 2–4 token name → likely a person
+  return tokens.length >= 2;
 }
 
 // ─── Maps field-key prefixes to CDM entity types ──────────────────────────────
@@ -299,32 +349,87 @@ export function inferPartiesFromRawEntities(
   return parties;
 }
 
+// ─── Weak display name detector (for document entity naming) ─────────────────
+const WEAK_DISPLAY_PATTERNS = [
+  /^(available upon request|upon request|on request|see (above|cv|attached|document)|as per cv|as above|same as above|to be (advised|determined|confirmed)|refer to cv)$/i,
+  /^(n\/a|na|none|null|undefined|unknown|tbd|pending|not (applicable|specified|stated|provided|available|listed))$/i,
+  /^[.\-_\s]+$/,
+];
+function isWeakDisplayName(s: string): boolean {
+  if (!s || s.trim().length < 3) return true;
+  return WEAK_DISPLAY_PATTERNS.some(p => p.test(s.trim()));
+}
+
 // ─── Document entity inference ────────────────────────────────────────────────
+/**
+ * Always creates a DOCUMENT CDM entity — even when no DOCUMENT-typed attributes
+ * are present.  This guarantees full evidence → DOCUMENT node coverage so the
+ * knowledge graph never misses a document node for an ingested file.
+ *
+ * Display name priority:
+ *  1. Explicit title / report_title attribute
+ *  2. Reference / invoice / contract number  →  "{DOC_TYPE} #{number}"
+ *  3. Subject of the document  →  e.g. "CV — Jane Smith" (candidate_name)
+ *  4. Vendor / issuer name  →  financial docs
+ *  5. Evidence file name (extension stripped)
+ *  6. Readable doc-type label as last resort
+ */
 export function inferDocument(
   attrs: NormalizedAttribute[],
   evidenceId: string,
   docType: string,
-  runId: string
+  runId: string,
+  evidenceFileName?: string
 ): InferredDocument | null {
   if (!ADRS_CONFIG.features.auto_party_creation) return null;
 
-  const docAttrs = attrs.filter(
-    a =>
-      a.subject_type === "DOCUMENT" &&
-      (a.validation_state === "AUTO_APPROVED" || a.validation_state === "APPROVED")
-  );
-  if (docAttrs.length === 0) return null;
+  const approved = (state: string) => state === "AUTO_APPROVED" || state === "APPROVED";
 
-  const titleAttr  = docAttrs.find(a => a.field_key.includes("title") || a.field_key.includes("report_title"));
-  const numberAttr = docAttrs.find(a => a.field_key.includes("number") || a.field_key.includes("ref") || a.field_key.includes("code"));
+  const docAttrs  = attrs.filter(a => a.subject_type === "DOCUMENT" && approved(a.validation_state));
+  const allAttrs  = attrs.filter(a => approved(a.validation_state));
 
-  const displayName = titleAttr?.value_normalized ?? numberAttr?.value_normalized ?? `${docType}-${runId.slice(0, 8)}`;
-  const entityCode  = `AUTO-DOC-${runId.slice(0, 8).toUpperCase()}`;
+  const entityCode = `AUTO-DOC-${runId.slice(0, 8).toUpperCase()}`;
 
+  // ── Display name selection ──────────────────────────────────────────────────
+  const pick = (keys: string[]): string | undefined => {
+    for (const key of keys) {
+      const a = allAttrs.find(a => a.field_key === key || a.field_key.endsWith(`_${key}`));
+      if (a && !isWeakDisplayName(a.value_normalized)) return a.value_normalized;
+    }
+    return undefined;
+  };
+
+  const titleVal  = pick(["title", "report_title", "document_title", "subject"]);
+  const numVal    = pick(["invoice_number", "contract_number", "reference_number", "ref_no", "order_number", "permit_number"]);
+  const subjectVal = pick(["candidate_name", "applicant_name", "employee_name", "patient_name"]);
+  const vendorVal  = pick(["vendor_name", "supplier_name", "issuer_name"]);
+  const docTypeLabel = docType.replace(/_/g, " ").toLowerCase().replace(/\b\w/g, c => c.toUpperCase());
+
+  let displayName: string;
+  if (titleVal) {
+    displayName = titleVal;
+  } else if (numVal) {
+    displayName = `${docTypeLabel} #${numVal}`;
+  } else if (subjectVal) {
+    displayName = `${docTypeLabel} — ${subjectVal}`;
+  } else if (vendorVal) {
+    displayName = vendorVal;
+  } else if (evidenceFileName) {
+    // Strip extension and clean up: "Mr B Mbidzo CV.pdf" → "Mr B Mbidzo CV"
+    displayName = evidenceFileName.replace(/\.[^.]+$/, "").replace(/[_\-]+/g, " ").trim();
+  } else {
+    displayName = docTypeLabel;
+  }
+
+  // ── Canonical fields ────────────────────────────────────────────────────────
   const canonicalFields: Record<string, any> = { doc_type: docType };
   for (const a of docAttrs) {
     canonicalFields[a.field_key] = a.value_normalized;
   }
+
+  const avgConf = docAttrs.length
+    ? docAttrs.reduce((s, a) => s + a.confidence_score, 0) / docAttrs.length
+    : 0.70; // reasonable floor for stub nodes
 
   const entity: InsertCdmEntity = {
     entityCode,
@@ -335,10 +440,7 @@ export function inferDocument(
     relationships: [],
     sourceEvidenceIds: [evidenceId],
     isGoldenRecord: false,
-    confidenceScore:
-      docAttrs.length
-        ? docAttrs.reduce((s, a) => s + a.confidence_score, 0) / docAttrs.length
-        : 0,
+    confidenceScore: Math.max(0.70, avgConf),
     schemaVersion: "1.0",
     tenantId: "TENANT-001",
   };

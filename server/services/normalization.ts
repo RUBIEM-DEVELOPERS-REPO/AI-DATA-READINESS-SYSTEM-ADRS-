@@ -7,6 +7,11 @@ export const AUTO_APPROVAL_THRESHOLDS = ADRS_CONFIG.thresholds.auto_approval;
 // Generic/weak values that should never be auto-approved
 const WEAK_VALUE_PATTERNS = [
   /^(foundation|note|address|text|value|unknown|n\/a|na|none|null|undefined|tbd|placeholder|sample|test|example|foo|bar|baz)$/i,
+  /^(available upon request|upon request|on request|see (above|cv|attached|document|resume)|as per cv|as above|same as above)$/i,
+  /^(to be (advised|determined|confirmed|discussed|negotiated|provided)|refer to cv|refer to resume)$/i,
+  /^(not (applicable|specified|stated|provided|available|listed|given|disclosed|mentioned))$/i,
+  /^(as applicable|contact for details|details to follow|see attached|see document|see overleaf|as required|as agreed)$/i,
+  /^(various|multiple|all|general|other|miscellaneous|many|several|different|mixed)$/i,
   /^[.\s\-_]+$/, // Only punctuation/whitespace/underscore
 ];
 
