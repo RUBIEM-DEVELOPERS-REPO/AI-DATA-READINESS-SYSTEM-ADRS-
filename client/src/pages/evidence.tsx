@@ -1,5 +1,5 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { useState, useRef, useCallback, useMemo } from "react";
+import { useState, useRef, useCallback, useMemo, useEffect } from "react";
 import { useAuth } from "@/context/auth";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -53,6 +53,15 @@ function formatDuration(secs: number): string {
   return `${s}s`;
 }
 
+function fmtMs(ms: number): string {
+  if (ms <= 0) return "—";
+  if (ms < 1000) return `${Math.round(ms)}ms`;
+  if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`;
+  const m = Math.floor(ms / 60000);
+  const s = Math.round((ms % 60000) / 1000);
+  return `${m}m ${s}s`;
+}
+
 const sourceIcons: Record<string, React.ComponentType<{ className?: string }>> = {
   SCAN: FileText, SHAREPOINT: HardDrive, GOOGLE_DRIVE: HardDrive, EMAIL: FileText,
   FTP: HardDrive, ERP: HardDrive, DATABASE: HardDrive, RECORDING: Mic, DEVICE: Video,
@@ -74,6 +83,10 @@ function EvidenceCard({ file, isDuplicate }: { file: EvidenceFile; isDuplicate?:
   const sizeMb = (file.fileSizeBytes / 1024 / 1024).toFixed(2);
   const isAV = derivedMediaType === "AUDIO" || derivedMediaType === "VIDEO";
 
+  const extractStartRef = useRef<number | null>(null);
+  const [extractElapsed, setExtractElapsed] = useState(0);
+  const [lastDuration, setLastDuration] = useState<number | null>(null);
+
   const extractMutation = useMutation({
     mutationFn: () => apiRequest("POST", `/api/evidence/${file.id}/extract`, {}).then(r => r.json()),
     onSuccess: (data: any) => {
@@ -89,6 +102,24 @@ function EvidenceCard({ file, isDuplicate }: { file: EvidenceFile; isDuplicate?:
     },
     onError: (e: any) => toast({ title: "Extraction failed", description: e?.message ?? "Could not process this file.", variant: "destructive" }),
   });
+
+  useEffect(() => {
+    if (!extractMutation.isPending) {
+      if (extractStartRef.current !== null) {
+        setLastDuration(Date.now() - extractStartRef.current);
+        extractStartRef.current = null;
+      }
+      return;
+    }
+    extractStartRef.current = Date.now();
+    setExtractElapsed(0);
+    const id = setInterval(() => {
+      if (extractStartRef.current !== null) {
+        setExtractElapsed(Date.now() - extractStartRef.current);
+      }
+    }, 200);
+    return () => clearInterval(id);
+  }, [extractMutation.isPending]);
 
   return (
     <Card data-testid={`card-evidence-${file.id}`} className="flex flex-col">
@@ -153,6 +184,28 @@ function EvidenceCard({ file, isDuplicate }: { file: EvidenceFile; isDuplicate?:
             {formatDistanceToNow(new Date(file.createdAt), { addSuffix: true })}
           </span>
         </div>
+        {extractMutation.isPending && (
+          <div className="flex items-center justify-between gap-2 px-2 py-1.5 rounded-lg bg-primary/5 border border-primary/20 text-xs">
+            <div className="flex items-center gap-1.5 text-primary">
+              <RefreshCw className="w-3 h-3 animate-spin" />
+              <span className="font-medium">AI extraction running…</span>
+            </div>
+            <span className="font-mono font-semibold text-primary tabular-nums" data-testid={`timer-extract-${file.id}`}>
+              {fmtMs(extractElapsed)}
+            </span>
+          </div>
+        )}
+        {!extractMutation.isPending && lastDuration !== null && (
+          <div className="flex items-center justify-between gap-2 px-2 py-1.5 rounded-lg bg-chart-3/5 border border-chart-3/20 text-xs">
+            <div className="flex items-center gap-1.5 text-chart-3">
+              <CheckCircle2 className="w-3 h-3" />
+              <span>Extraction completed</span>
+            </div>
+            <span className="font-mono font-semibold text-chart-3 tabular-nums">
+              {fmtMs(lastDuration)}
+            </span>
+          </div>
+        )}
         <div className="flex items-center gap-2">
           {file.storedUri?.startsWith("local://") && (
             <a href={`/api/evidence/${file.id}/file`} target="_blank" rel="noopener noreferrer" data-testid={`link-view-file-${file.id}`}>
@@ -170,7 +223,7 @@ function EvidenceCard({ file, isDuplicate }: { file: EvidenceFile; isDuplicate?:
             data-testid={`button-extract-${file.id}`}
           >
             {extractMutation.isPending || file.status === "PROCESSING"
-              ? <><RefreshCw className="w-3 h-3 animate-spin" /> Extracting...</>
+              ? <><RefreshCw className="w-3 h-3 animate-spin" /> Extracting…</>
               : file.status === "PROCESSED"
                 ? <><RefreshCw className="w-3 h-3" /> Re-extract</>
                 : <><AlertCircle className="w-3 h-3" /> Run Extraction</>
