@@ -13,6 +13,7 @@ export interface AuthUser {
   role: UserRole;
   tenantId: string;
   isActive: boolean;
+  mustChangePassword: boolean;
   lastLoginAt: string | null;
   createdAt: string;
 }

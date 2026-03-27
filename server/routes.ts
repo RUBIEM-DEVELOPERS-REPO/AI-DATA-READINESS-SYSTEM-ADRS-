@@ -6,7 +6,7 @@ import {
   insertValidationTaskSchema, insertCdmEntitySchema, insertDatasetSchema,
   registerSchema, loginSchema
 } from "@shared/schema";
-import { sendAccessApprovedEmail, sendAccessRejectedEmail, testSmtpConnection, resetEmailTransport } from "./services/email";
+import { sendAccessApprovedEmail, sendAccessRejectedEmail, sendRolePromotionEmail, sendPasswordChangedEmail, testSmtpConnection, resetEmailTransport } from "./services/email";
 import { createHash, randomUUID } from "crypto";
 import path from "path";
 import fs from "fs";
@@ -167,12 +167,99 @@ export async function registerRoutes(httpServer: any, app: Express): Promise<any
   });
 
   app.patch("/api/auth/users/:id", requireAuth, requireRole("ADMIN"), async (req: any, res: any) => {
+    const ROLE_LEVEL: Record<string, number> = { SUPER_ADMIN: 5, ADMIN: 4, ANALYST: 3, REVIEWER: 2, VIEWER: 1 };
+    const adminUser = req.user as any;
+    const existing = await storage.getUser(req.params.id);
+    if (!existing) return res.status(404).json({ error: "User not found" });
+
     const allowed = ["isActive", "role", "firstName", "lastName"];
     const updates = Object.fromEntries(Object.entries(req.body).filter(([k]) => allowed.includes(k)));
     const user = await storage.updateUser(req.params.id, updates as any);
     if (!user) return res.status(404).json({ error: "User not found" });
+
+    // Audit log for role changes
+    if (updates.role && updates.role !== existing.role) {
+      const oldLevel = ROLE_LEVEL[existing.role] ?? 0;
+      const newLevel = ROLE_LEVEL[updates.role as string] ?? 0;
+      const isPromotion = newLevel > oldLevel;
+
+      await storage.createAuditLog({
+        action: isPromotion ? "USER_ROLE_PROMOTED" : "USER_ROLE_CHANGED",
+        resourceType: "USER",
+        resourceId: user.id,
+        userId: adminUser?.id ?? "system",
+        details: { username: user.username, oldRole: existing.role, newRole: updates.role, isPromotion },
+        tenantId: "TENANT-001",
+      });
+
+      // Send email notification for role promotion
+      if (isPromotion && user.email) {
+        const adminName = adminUser ? `${adminUser.firstName} ${adminUser.lastName}`.trim() || adminUser.username : "System Administrator";
+        sendRolePromotionEmail({
+          to: user.email,
+          firstName: user.firstName,
+          oldRole: existing.role,
+          newRole: updates.role as string,
+          promotedBy: adminName,
+        }).catch(err => console.error("[EMAIL] Role promotion email failed:", err));
+      }
+    }
+
+    // Audit log for activation/deactivation
+    if (typeof updates.isActive !== "undefined" && updates.isActive !== existing.isActive) {
+      await storage.createAuditLog({
+        action: updates.isActive ? "USER_ACTIVATED" : "USER_DEACTIVATED",
+        resourceType: "USER",
+        resourceId: user.id,
+        userId: adminUser?.id ?? "system",
+        details: { username: user.username, isActive: updates.isActive },
+        tenantId: "TENANT-001",
+      });
+    }
+
     const { password: _, ...safeUser } = user;
     res.json(safeUser);
+  });
+
+  // Change password (authenticated user changes their own password)
+  app.post("/api/auth/change-password", requireAuth, async (req: any, res: any) => {
+    const { currentPassword, newPassword } = req.body;
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({ error: "Current password and new password are required" });
+    }
+    if (newPassword.length < 8) {
+      return res.status(400).json({ error: "New password must be at least 8 characters" });
+    }
+    const authUser = req.user as any;
+    const user = await storage.getUser(authUser.id);
+    if (!user) return res.status(404).json({ error: "User not found" });
+
+    const { verifyPassword } = await import("./auth");
+    const valid = await verifyPassword(currentPassword, user.password);
+    if (!valid) return res.status(401).json({ error: "Current password is incorrect" });
+
+    const hashed = await hashPassword(newPassword);
+    await storage.updateUser(user.id, { password: hashed, mustChangePassword: false } as any);
+
+    await storage.createAuditLog({
+      action: "PASSWORD_CHANGED",
+      resourceType: "USER",
+      resourceId: user.id,
+      userId: user.id,
+      details: { username: user.username, selfService: true },
+      tenantId: "TENANT-001",
+    });
+
+    // Notify user via email (fire-and-forget)
+    sendPasswordChangedEmail({ to: user.email, firstName: user.firstName })
+      .catch(err => console.error("[EMAIL] Password changed email failed:", err));
+
+    // Refresh the session user object
+    req.login({ ...req.user, mustChangePassword: false }, (err: any) => {
+      if (err) console.error("Session refresh error:", err);
+    });
+
+    res.json({ message: "Password changed successfully" });
   });
 
   // ─── Access Requests ────────────────────────────────────────────────────────
@@ -260,7 +347,8 @@ export async function registerRoutes(httpServer: any, app: Express): Promise<any
       role: accessReq.requestedRole,
       tenantId: accessReq.tenantId,
       isActive: true,
-    });
+      mustChangePassword: true,
+    } as any);
 
     await storage.updateAccessRequest(req.params.id, {
       status: "APPROVED",

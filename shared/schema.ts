@@ -73,6 +73,7 @@ export const users = pgTable("users", {
   role: userRoleEnum("role").notNull().default("VIEWER"),
   tenantId: text("tenant_id").notNull().default("TENANT-001"),
   isActive: boolean("is_active").notNull().default(true),
+  mustChangePassword: boolean("must_change_password").notNull().default(false),
   lastLoginAt: timestamp("last_login_at"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),

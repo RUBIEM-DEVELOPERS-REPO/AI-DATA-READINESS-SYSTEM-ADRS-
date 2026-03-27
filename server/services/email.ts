@@ -175,6 +175,81 @@ export async function sendAccessApprovedEmail(opts: {
   return sendEmail(opts.to, subject, html);
 }
 
+export async function sendRolePromotionEmail(opts: {
+  to: string;
+  firstName: string;
+  oldRole: string;
+  newRole: string;
+  promotedBy: string;
+}): Promise<{ previewUrl?: string }> {
+  const subject = "Your ADRS Role Has Been Upgraded";
+  const html = `
+  <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; background: #f9fafb; padding: 32px; border-radius: 12px;">
+    <div style="background: white; border-radius: 8px; padding: 32px; border: 1px solid #e5e7eb;">
+      <div style="margin-bottom: 24px;">
+        <h1 style="color: #111827; font-size: 22px; margin: 0 0 4px 0;">Role Upgrade Notification</h1>
+        <p style="color: #6b7280; font-size: 14px; margin: 0;">AI Data Readiness System (ADRS)</p>
+      </div>
+      <p style="color: #374151; font-size: 15px;">Hi <strong>${opts.firstName}</strong>,</p>
+      <p style="color: #374151; font-size: 15px;">
+        Your account role on the ADRS platform has been upgraded. Here is a summary of the change:
+      </p>
+      <div style="background: #f3f4f6; border-radius: 8px; padding: 20px; margin: 24px 0; border-left: 4px solid #10b981;">
+        <table style="width: 100%; border-collapse: collapse;">
+          <tr>
+            <td style="padding: 6px 0; color: #6b7280; font-size: 13px; width: 40%;">Previous Role</td>
+            <td style="padding: 6px 0; color: #6b7280; font-size: 13px; text-decoration: line-through;">${opts.oldRole.replace(/_/g, " ")}</td>
+          </tr>
+          <tr>
+            <td style="padding: 6px 0; color: #6b7280; font-size: 13px;">New Role</td>
+            <td style="padding: 6px 0; color: #059669; font-size: 13px; font-weight: 700;">${opts.newRole.replace(/_/g, " ")}</td>
+          </tr>
+          <tr>
+            <td style="padding: 6px 0; color: #6b7280; font-size: 13px;">Updated by</td>
+            <td style="padding: 6px 0; color: #111827; font-size: 13px;">${opts.promotedBy}</td>
+          </tr>
+        </table>
+      </div>
+      <p style="color: #374151; font-size: 14px;">
+        Your new role grants you additional access in the platform. Sign in to explore the features now available to you.
+      </p>
+      <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 24px 0;" />
+      <p style="color: #9ca3af; font-size: 12px; margin: 0;">AI Institute Africa · ADRS Platform · Tenant TENANT-001</p>
+    </div>
+  </div>
+  `;
+  return sendEmail(opts.to, subject, html);
+}
+
+export async function sendPasswordChangedEmail(opts: {
+  to: string;
+  firstName: string;
+}): Promise<{ previewUrl?: string }> {
+  const subject = "Your ADRS Password Was Changed";
+  const html = `
+  <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; background: #f9fafb; padding: 32px; border-radius: 12px;">
+    <div style="background: white; border-radius: 8px; padding: 32px; border: 1px solid #e5e7eb;">
+      <div style="margin-bottom: 24px;">
+        <h1 style="color: #111827; font-size: 22px; margin: 0 0 4px 0;">Password Changed</h1>
+        <p style="color: #6b7280; font-size: 14px; margin: 0;">AI Data Readiness System (ADRS)</p>
+      </div>
+      <p style="color: #374151; font-size: 15px;">Hi <strong>${opts.firstName}</strong>,</p>
+      <p style="color: #374151; font-size: 15px;">
+        Your ADRS account password was successfully changed. If you did not make this change, please contact your system administrator immediately.
+      </p>
+      <div style="background: #fef3c7; border-radius: 8px; padding: 16px; margin: 24px 0; border: 1px solid #f59e0b;">
+        <p style="color: #92400e; font-size: 13px; margin: 0;">
+          <strong>Not you?</strong> Contact your administrator right away to secure your account.
+        </p>
+      </div>
+      <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 24px 0;" />
+      <p style="color: #9ca3af; font-size: 12px; margin: 0;">AI Institute Africa · ADRS Platform · Tenant TENANT-001</p>
+    </div>
+  </div>
+  `;
+  return sendEmail(opts.to, subject, html);
+}
+
 export async function sendAccessRejectedEmail(opts: {
   to: string;
   firstName: string;

@@ -17,10 +17,11 @@ import AuditLog from "@/pages/audit";
 import UserManagement from "@/pages/users";
 import AuthPage from "@/pages/auth";
 import { useEffect, useState } from "react";
-import { Moon, Sun, LogOut, ChevronDown, Shield, Lock } from "lucide-react";
+import { Moon, Sun, LogOut, ChevronDown, Shield, Lock, KeyRound } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Link } from "wouter";
+import { ChangePasswordDialog } from "@/components/change-password-dialog";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem,
   DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger
@@ -104,6 +105,7 @@ const ROLE_COLORS: Record<string, string> = {
 function UserMenu() {
   const { user, logout } = useAuth();
   const [signingOut, setSigningOut] = useState(false);
+  const [showChangePassword, setShowChangePassword] = useState(false);
 
   if (!user) return null;
 
@@ -119,44 +121,72 @@ function UserMenu() {
   };
 
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <Button variant="ghost" size="sm" className="gap-2 h-8 px-2" data-testid="button-user-menu">
-          <div className="w-6 h-6 rounded-full bg-primary/15 flex items-center justify-center text-xs font-bold text-primary">
-            {initials}
-          </div>
-          <div className="hidden sm:flex flex-col items-start">
-            <span className="text-xs font-medium leading-none">{user.firstName} {user.lastName}</span>
-          </div>
-          <ChevronDown className="w-3 h-3 text-muted-foreground" />
-        </Button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-56">
-        <DropdownMenuLabel className="py-2">
-          <p className="font-medium">{user.firstName} {user.lastName}</p>
-          <p className="text-xs text-muted-foreground font-normal truncate">{user.email}</p>
-          <Badge variant="outline" className={`text-xs mt-1 ${ROLE_COLORS[user.role] ?? ""}`} data-testid="badge-user-role">
-            <Shield className="w-2.5 h-2.5 mr-1" />
-            {user.role.replace("_", " ")}
-          </Badge>
-        </DropdownMenuLabel>
-        <DropdownMenuSeparator />
-        <DropdownMenuItem className="text-xs text-muted-foreground cursor-default" data-testid="menu-tenant">
-          <span className="w-1.5 h-1.5 rounded-full bg-chart-3 mr-2" />
-          Tenant: {user.tenantId}
-        </DropdownMenuItem>
-        <DropdownMenuSeparator />
-        <DropdownMenuItem
-          onClick={handleLogout}
-          className="text-destructive focus:text-destructive cursor-pointer"
-          data-testid="button-logout"
-          disabled={signingOut}
-        >
-          <LogOut className="w-4 h-4 mr-2" />
-          {signingOut ? "Signing out…" : "Sign out"}
-        </DropdownMenuItem>
-      </DropdownMenuContent>
-    </DropdownMenu>
+    <>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button variant="ghost" size="sm" className="gap-2 h-8 px-2" data-testid="button-user-menu">
+            <div className="w-6 h-6 rounded-full bg-primary/15 flex items-center justify-center text-xs font-bold text-primary">
+              {initials}
+            </div>
+            <div className="hidden sm:flex flex-col items-start">
+              <span className="text-xs font-medium leading-none">{user.firstName} {user.lastName}</span>
+            </div>
+            <ChevronDown className="w-3 h-3 text-muted-foreground" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="w-56">
+          <DropdownMenuLabel className="py-2">
+            <p className="font-medium">{user.firstName} {user.lastName}</p>
+            <p className="text-xs text-muted-foreground font-normal truncate">{user.email}</p>
+            <Badge variant="outline" className={`text-xs mt-1 ${ROLE_COLORS[user.role] ?? ""}`} data-testid="badge-user-role">
+              <Shield className="w-2.5 h-2.5 mr-1" />
+              {user.role.replace("_", " ")}
+            </Badge>
+          </DropdownMenuLabel>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem className="text-xs text-muted-foreground cursor-default" data-testid="menu-tenant">
+            <span className="w-1.5 h-1.5 rounded-full bg-chart-3 mr-2" />
+            Tenant: {user.tenantId}
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem
+            onClick={() => setShowChangePassword(true)}
+            className="cursor-pointer"
+            data-testid="button-change-password"
+          >
+            <KeyRound className="w-4 h-4 mr-2" />
+            Change Password
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem
+            onClick={handleLogout}
+            className="text-destructive focus:text-destructive cursor-pointer"
+            data-testid="button-logout"
+            disabled={signingOut}
+          >
+            <LogOut className="w-4 h-4 mr-2" />
+            {signingOut ? "Signing out…" : "Sign out"}
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+
+      <ChangePasswordDialog
+        open={showChangePassword}
+        onClose={() => setShowChangePassword(false)}
+        mandatory={false}
+      />
+    </>
+  );
+}
+
+function MandatoryPasswordChangeGate({ children }: { children: React.ReactNode }) {
+  const { user } = useAuth();
+  if (!user) return <>{children}</>;
+  return (
+    <>
+      {children}
+      <ChangePasswordDialog open={!!user.mustChangePassword} mandatory={true} />
+    </>
   );
 }
 
@@ -190,50 +220,52 @@ function ProtectedApp() {
   };
 
   return (
-    <SidebarProvider style={sidebarStyle as React.CSSProperties}>
-      <div className="flex h-screen w-full bg-background">
-        <AppSidebar />
-        <div className="flex flex-col flex-1 min-w-0">
-          <header className="flex items-center justify-between px-4 py-2 border-b border-border bg-background/80 backdrop-blur sticky top-0 z-50 h-12">
-            <div className="flex items-center gap-2">
-              <SidebarTrigger data-testid="button-sidebar-toggle" className="h-8 w-8" />
-              <span className="text-xs text-muted-foreground hidden sm:block">AI Institute Africa</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <ThemeToggle />
-              <UserMenu />
-            </div>
-          </header>
-          <main className="flex-1 overflow-auto">
-            <Switch>
-              <Route path="/" component={Dashboard} />
-              <Route path="/evidence">
-                {() => <RoleGuard minRole="ANALYST" component={Evidence} />}
-              </Route>
-              <Route path="/intelligence">
-                {() => <RoleGuard minRole="ANALYST" component={Intelligence} />}
-              </Route>
-              <Route path="/validation">
-                {() => <RoleGuard minRole="REVIEWER" component={Validation} />}
-              </Route>
-              <Route path="/cdm">
-                {() => <RoleGuard minRole="ANALYST" component={CdmExplorer} />}
-              </Route>
-              <Route path="/publishing">
-                {() => <RoleGuard minRole="ADMIN" component={Publishing} />}
-              </Route>
-              <Route path="/audit">
-                {() => <RoleGuard minRole="ADMIN" component={AuditLog} />}
-              </Route>
-              <Route path="/users">
-                {() => <RoleGuard minRole="ADMIN" component={UserManagement} />}
-              </Route>
-              <Route component={NotFound} />
-            </Switch>
-          </main>
+    <MandatoryPasswordChangeGate>
+      <SidebarProvider style={sidebarStyle as React.CSSProperties}>
+        <div className="flex h-screen w-full bg-background">
+          <AppSidebar />
+          <div className="flex flex-col flex-1 min-w-0">
+            <header className="flex items-center justify-between px-4 py-2 border-b border-border bg-background/80 backdrop-blur sticky top-0 z-50 h-12">
+              <div className="flex items-center gap-2">
+                <SidebarTrigger data-testid="button-sidebar-toggle" className="h-8 w-8" />
+                <span className="text-xs text-muted-foreground hidden sm:block">AI Institute Africa</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <ThemeToggle />
+                <UserMenu />
+              </div>
+            </header>
+            <main className="flex-1 overflow-auto">
+              <Switch>
+                <Route path="/" component={Dashboard} />
+                <Route path="/evidence">
+                  {() => <RoleGuard minRole="ANALYST" component={Evidence} />}
+                </Route>
+                <Route path="/intelligence">
+                  {() => <RoleGuard minRole="ANALYST" component={Intelligence} />}
+                </Route>
+                <Route path="/validation">
+                  {() => <RoleGuard minRole="REVIEWER" component={Validation} />}
+                </Route>
+                <Route path="/cdm">
+                  {() => <RoleGuard minRole="ANALYST" component={CdmExplorer} />}
+                </Route>
+                <Route path="/publishing">
+                  {() => <RoleGuard minRole="ADMIN" component={Publishing} />}
+                </Route>
+                <Route path="/audit">
+                  {() => <RoleGuard minRole="ADMIN" component={AuditLog} />}
+                </Route>
+                <Route path="/users">
+                  {() => <RoleGuard minRole="ADMIN" component={UserManagement} />}
+                </Route>
+                <Route component={NotFound} />
+              </Switch>
+            </main>
+          </div>
         </div>
-      </div>
-    </SidebarProvider>
+      </SidebarProvider>
+    </MandatoryPasswordChangeGate>
   );
 }
 
