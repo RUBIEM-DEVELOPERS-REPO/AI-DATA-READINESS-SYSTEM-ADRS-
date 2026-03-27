@@ -35,23 +35,23 @@ const navGroups: NavGroup[] = [
   {
     group: "Core Pipeline",
     items: [
-      { title: "Dashboard", url: "/", icon: LayoutDashboard },
-      { title: "Evidence", url: "/evidence", icon: FolderOpen },
-      { title: "Intelligence", url: "/intelligence", icon: Brain },
-      { title: "Validation", url: "/validation", icon: CheckSquare, badge: "pending" },
+      { title: "Dashboard",    url: "/",            icon: LayoutDashboard },
+      { title: "Evidence",     url: "/evidence",    icon: FolderOpen,  minRole: "ANALYST" },
+      { title: "Intelligence", url: "/intelligence",icon: Brain,        minRole: "ANALYST" },
+      { title: "Validation",   url: "/validation",  icon: CheckSquare, minRole: "REVIEWER", badge: "pending" },
     ],
   },
   {
     group: "Data Layer",
     items: [
-      { title: "CDM Explorer", url: "/cdm", icon: Database },
-      { title: "Publishing", url: "/publishing", icon: Upload },
+      { title: "CDM Explorer", url: "/cdm",        icon: Database, minRole: "ANALYST" },
+      { title: "Publishing",   url: "/publishing", icon: Upload,   minRole: "ADMIN"  },
     ],
   },
   {
     group: "Governance",
     items: [
-      { title: "Audit Log", url: "/audit", icon: Shield },
+      { title: "Audit Log", url: "/audit", icon: Shield, minRole: "ADMIN" },
     ],
   },
   {

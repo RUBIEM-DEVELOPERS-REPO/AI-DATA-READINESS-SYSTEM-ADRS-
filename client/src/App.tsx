@@ -5,7 +5,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/app-sidebar";
-import { AuthProvider, useAuth } from "@/context/auth";
+import { AuthProvider, useAuth, type UserRole } from "@/context/auth";
 import NotFound from "@/pages/not-found";
 import Dashboard from "@/pages/dashboard";
 import Evidence from "@/pages/evidence";
@@ -17,13 +17,56 @@ import AuditLog from "@/pages/audit";
 import UserManagement from "@/pages/users";
 import AuthPage from "@/pages/auth";
 import { useEffect, useState } from "react";
-import { Moon, Sun, LogOut, ChevronDown, Shield } from "lucide-react";
+import { Moon, Sun, LogOut, ChevronDown, Shield, Lock } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Link } from "wouter";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem,
   DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger
 } from "@/components/ui/dropdown-menu";
+
+const ROLE_LABEL: Record<UserRole, string> = {
+  SUPER_ADMIN: "Super Admin",
+  ADMIN: "Admin",
+  ANALYST: "Analyst",
+  REVIEWER: "Reviewer",
+  VIEWER: "Viewer",
+};
+
+function AccessDenied({ requiredRole }: { requiredRole: UserRole }) {
+  const { user } = useAuth();
+  return (
+    <div className="flex items-center justify-center min-h-full p-8">
+      <div className="text-center max-w-sm space-y-5">
+        <div className="w-16 h-16 rounded-full bg-destructive/10 flex items-center justify-center mx-auto">
+          <Lock className="w-7 h-7 text-destructive" />
+        </div>
+        <div>
+          <h2 className="text-xl font-semibold">Access Restricted</h2>
+          <p className="text-sm text-muted-foreground mt-2">
+            This section requires at least the <strong>{ROLE_LABEL[requiredRole]}</strong> role.
+            Your current role is <strong>{user ? ROLE_LABEL[user.role] : "Unknown"}</strong>.
+          </p>
+        </div>
+        <p className="text-xs text-muted-foreground">
+          Contact your system administrator if you believe you should have access.
+        </p>
+        <Link href="/">
+          <Button variant="outline" size="sm" data-testid="button-go-to-dashboard">
+            Go to Dashboard
+          </Button>
+        </Link>
+      </div>
+    </div>
+  );
+}
+
+function RoleGuard({ minRole, component: Component }: { minRole: UserRole; component: React.ComponentType }) {
+  const { can } = useAuth();
+  if (!can(minRole)) return <AccessDenied requiredRole={minRole} />;
+  return <Component />;
+}
 
 function ThemeToggle() {
   const [dark, setDark] = useState(() => {
@@ -164,13 +207,27 @@ function ProtectedApp() {
           <main className="flex-1 overflow-auto">
             <Switch>
               <Route path="/" component={Dashboard} />
-              <Route path="/evidence" component={Evidence} />
-              <Route path="/intelligence" component={Intelligence} />
-              <Route path="/validation" component={Validation} />
-              <Route path="/cdm" component={CdmExplorer} />
-              <Route path="/publishing" component={Publishing} />
-              <Route path="/audit" component={AuditLog} />
-              <Route path="/users" component={UserManagement} />
+              <Route path="/evidence">
+                {() => <RoleGuard minRole="ANALYST" component={Evidence} />}
+              </Route>
+              <Route path="/intelligence">
+                {() => <RoleGuard minRole="ANALYST" component={Intelligence} />}
+              </Route>
+              <Route path="/validation">
+                {() => <RoleGuard minRole="REVIEWER" component={Validation} />}
+              </Route>
+              <Route path="/cdm">
+                {() => <RoleGuard minRole="ANALYST" component={CdmExplorer} />}
+              </Route>
+              <Route path="/publishing">
+                {() => <RoleGuard minRole="ADMIN" component={Publishing} />}
+              </Route>
+              <Route path="/audit">
+                {() => <RoleGuard minRole="ADMIN" component={AuditLog} />}
+              </Route>
+              <Route path="/users">
+                {() => <RoleGuard minRole="ADMIN" component={UserManagement} />}
+              </Route>
               <Route component={NotFound} />
             </Switch>
           </main>
