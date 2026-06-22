@@ -1,4 +1,4 @@
-import { sql } from "drizzle-orm";
+import { sql, relations } from "drizzle-orm";
 import { pgTable, text, varchar, integer, real, boolean, jsonb, timestamp, pgEnum, customType } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
@@ -298,6 +298,41 @@ export const auditLogs = pgTable("audit_logs", {
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
+// ─── Layer 7: Knowledge Graph (Live Graph) ──────────────────────────────────
+
+export const kgNodes = pgTable("kg_nodes", {
+  id: varchar("id").primaryKey(), // Using entityCode as the node ID
+  label: varchar("label").notNull(), // e.g. "PARTY", "DOCUMENT", "TRANSACTION"
+  displayName: text("display_name").notNull(),
+  properties: jsonb("properties").default({}),
+  confidenceScore: real("confidence_score").notNull().default(0),
+  tenantId: text("tenant_id").notNull().default("TENANT-001"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export const kgEdges = pgTable("kg_edges", {
+  id: varchar("id").primaryKey(), // Deterministic ID based on source+target+type
+  sourceId: varchar("source_id").notNull().references(() => kgNodes.id, { onDelete: "cascade" }),
+  targetId: varchar("target_id").notNull().references(() => kgNodes.id, { onDelete: "cascade" }),
+  relationshipType: text("relationship_type").notNull(),
+  confidence: real("confidence").notNull().default(0),
+  properties: jsonb("properties").default({}),
+  tenantId: text("tenant_id").notNull().default("TENANT-001"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export const kgNodesRelations = relations(kgNodes, ({ many }) => ({
+  outgoingEdges: many(kgEdges, { relationName: "sourceNode" }),
+  incomingEdges: many(kgEdges, { relationName: "targetNode" }),
+}));
+
+export const kgEdgesRelations = relations(kgEdges, ({ one }) => ({
+  source: one(kgNodes, { fields: [kgEdges.sourceId], references: [kgNodes.id], relationName: "sourceNode" }),
+  target: one(kgNodes, { fields: [kgEdges.targetId], references: [kgNodes.id], relationName: "targetNode" }),
+}));
+
 export const insertAccessRequestSchema = createInsertSchema(accessRequests).omit({ id: true, createdAt: true, updatedAt: true });
 
 export const insertExtractionTextSchema = createInsertSchema(extractionTexts).omit({ id: true, createdAt: true });
@@ -355,6 +390,8 @@ export type ChunkEmbedding = typeof chunkEmbeddings.$inferSelect;
 export type InsertChunkEmbedding = z.infer<typeof insertChunkEmbeddingSchema>;
 export type EntityEmbedding = typeof entityEmbeddings.$inferSelect;
 export type InsertEntityEmbedding = z.infer<typeof insertEntityEmbeddingSchema>;
+export type KgNode = typeof kgNodes.$inferSelect;
+export type KgEdge = typeof kgEdges.$inferSelect;
 
 // ─── Normalized Attribute type used in extractedAttributes ───────────────────
 export interface NormalizedAttribute {

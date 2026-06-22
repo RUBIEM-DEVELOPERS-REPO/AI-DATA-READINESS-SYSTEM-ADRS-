@@ -18,6 +18,9 @@ import { ADRS_CONFIG } from "./config";
 import { uploadMiddleware, computeFileHash, getMimeType, detectCloudSource, downloadFile, UPLOADS_DIR } from "./upload";
 import { extractTextFromFile, detectDocType, isTextExtractionFailure } from "./services/extraction";
 import { aiExtractDocumentFields, aiTranscribeAudio, aiExtractWithVision, scoreAiExtraction, aiReclassifyDocType, aiClassifyEntityType } from "./services/ai-extraction";
+import { syncLiveKnowledgeGraph } from "./services/graph-sync";
+import { db } from "./db";
+import { kgNodes, kgEdges } from "@shared/schema";
 import { generateEmbedding, semanticSearch } from "./services/embeddings";
 import { groupEntitiesForMerge, getSingletonEntityIds } from "./services/golden-records";
 import unzipper from "unzipper";
@@ -438,6 +441,49 @@ export async function registerRoutes(httpServer: any, app: Express): Promise<any
     });
 
     res.json({ message: "Request rejected", emailPreviewUrl: rejectPreviewUrl ?? null });
+  });
+
+  // ─── Layer 7: Live Knowledge Graph ───────────────────────────────────────────
+  app.get("/api/graph/live", requireAuth, async (req: any, res: any) => {
+    try {
+      const nodes = await db.select().from(kgNodes).limit(1000); // hard limit to 1000 nodes for MVP UI performance
+      const edges = await db.select().from(kgEdges);
+
+      // Filter edges to only include those whose nodes are in the limit
+      const nodeIds = new Set(nodes.map(n => n.id));
+      const validEdges = edges.filter(e => nodeIds.has(e.sourceId) && nodeIds.has(e.targetId));
+
+      const graphData = {
+        nodes: nodes.map(n => ({
+          id: n.id,
+          name: n.displayName,
+          val: n.confidenceScore * 10,
+          group: n.label,
+          properties: n.properties,
+        })),
+        links: validEdges.map(e => ({
+          source: e.sourceId,
+          target: e.targetId,
+          name: e.relationshipType,
+          properties: e.properties,
+        }))
+      };
+
+      res.json(graphData);
+    } catch (err) {
+      console.error("Live graph error:", err);
+      res.status(500).json({ error: "Failed to fetch live graph" });
+    }
+  });
+
+  app.post("/api/graph/sync", requireAuth, requireRole("ADMIN"), async (req: any, res: any) => {
+    try {
+      // Background sync trigger
+      syncLiveKnowledgeGraph();
+      res.json({ message: "Live Graph Synchronisation triggered." });
+    } catch (err) {
+      res.status(500).json({ error: "Failed to trigger sync" });
+    }
   });
 
   // ─── SMTP / Email Settings ─────────────────────────────────────────────────
