@@ -23,6 +23,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Link } from "wouter";
 import { ChangePasswordDialog } from "@/components/change-password-dialog";
+import { AiCopilot } from "@/components/ai-copilot";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem,
   DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger
@@ -276,6 +277,7 @@ function ProtectedApp() {
               </Switch>
             </main>
           </div>
+          <AiCopilot />
         </div>
       </SidebarProvider>
     </MandatoryPasswordChangeGate>
