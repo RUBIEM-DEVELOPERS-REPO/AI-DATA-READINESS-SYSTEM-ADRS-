@@ -1,0 +1,4 @@
+Generate tests verifying:
+* payload correct
+* output document_id shown
+

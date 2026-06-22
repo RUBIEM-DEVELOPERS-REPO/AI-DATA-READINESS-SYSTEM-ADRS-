@@ -1,0 +1,5 @@
+Generate tests verifying:
+* dashboard renders cards
+* API mock data displayed
+* error states handled
+
