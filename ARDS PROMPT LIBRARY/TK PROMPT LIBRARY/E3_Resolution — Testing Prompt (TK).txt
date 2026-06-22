@@ -1,0 +1,3 @@
+
+Test golden record generation and audit event logging.
+

@@ -1,0 +1,41 @@
+Context
+Publishing layer exports AI-ready datasets + dataset cards.
+Goal
+Implement dataset publishing endpoints.
+Inputs
+* dataset_name
+* schema_version
+* source_batches
+* formats
+Outputs
+DatasetVersionMetadata created.
+Constraints
+Endpoints must match ICD:
+* POST /api/v1/publish/dataset
+* GET /api/v1/publish/datasets
+* GET /api/v1/publish/dataset/{dataset_version_id}/download?format=CSV|JSON
+* GET /api/v1/publish/dataset/{dataset_version_id}/card
+DatasetVersionMetadata fields:
+* dataset_version_id
+* tenant_id
+* dataset_name
+* dataset_version
+* schema_version
+* generated_at
+* lineage_evidence_batches
+* validation_summary
+* approvals
+* download_uris
+Audit events:
+* PUBLISH_DATASET
+* DOWNLOAD_DATASET
+RBAC:
+* Compliance Officer / Admin
+Deliverables required
+* dataset export generator
+* dataset card generator
+* endpoints
+* tests
+DO NOT DO
+* DO NOT export unvalidated attributes by default
+

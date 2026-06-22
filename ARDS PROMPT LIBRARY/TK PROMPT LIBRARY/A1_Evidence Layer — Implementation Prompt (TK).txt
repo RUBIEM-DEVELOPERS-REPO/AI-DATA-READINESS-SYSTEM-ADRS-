@@ -1,0 +1,63 @@
+Context
+Evidence Layer handles ingestion (upload/register external), hashing, immutability lock, metadata retrieval, and download.
+Goal
+Generate Python FastAPI backend code implementing Evidence ingestion endpoints using MySQL persistence.
+Inputs
+* Multipart upload file
+* Optional metadata: batch_id, folder_id, document_type_hint
+* External evidence reference (external_file_id)
+Outputs
+EvidenceObject stored with exact fields:
+* evidence_id
+* tenant_id
+* batch_id
+* folder_id
+* source_type
+* source_reference
+* file_name
+* file_hash
+* file_format
+* file_uri
+* ingested_at
+* ingested_by
+* document_type_hint
+* status
+* immutability_status
+Constraints (CDM/ICD enforcement)
+* Endpoint paths MUST match ICD:
+o POST /api/v1/evidence/upload
+o POST /api/v1/evidence/register-external
+o GET /api/v1/evidence/{evidence_id}/metadata
+o GET /api/v1/evidence/{evidence_id}/download
+* SHA256 hashing required (file_hash = sha256:<hex>)
+* Must enforce Idempotency-Key on upload
+* Must store file_uri (local filesystem ok for MVP)
+* immutability_status must be LOCKED
+* RBAC must restrict upload/register
+* Must log audit event UPLOAD_EVIDENCE
+Deliverables required
+* FastAPI routes
+* SQLAlchemy models
+* Service layer
+* MySQL migration script
+* Unit tests
+Examples
+Example upload response:
+{
+  "success": true,
+  "data": {
+    "evidence_id": "EVID-001",
+    "file_hash": "sha256:abc...",
+    "file_uri": "/storage/evidence/EVID-001.pdf",
+    "immutability_status": "LOCKED"
+  },
+  "error": null,
+  "request_id": "req-123"
+}
+DO NOT DO
+* DO NOT rename evidence_id
+* DO NOT use PostgreSQL
+* DO NOT return camelCase JSON keys
+* DO NOT skip immutability locking
+* DO NOT create an Invoice table
+

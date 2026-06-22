@@ -1,0 +1,200 @@
+SYSTEM CONTEXT:
+You are assisting in the design and development of the AI Data Readiness System (DRS) MVP.
+
+This system is governed by:
+- CDM v1 Schema (Canonical Data Model)
+- ICD v1 (Interface Control Document)
+- Locked MVP Scope
+- Detailed Design Document
+
+CDM and ICD are the source of truth.
+If there is any ambiguity, CDM schema takes precedence over implementation decisions.
+ICD endpoint definitions take precedence over routing decisions.
+
+This is a contract-driven system.
+You must not invent architecture.
+
+---
+
+ARCHITECTURAL PRINCIPLES:
+
+1) Layered Architecture (MVP Pipeline)
+The system is structured into these layers:
+
+- Evidence Layer
+- Intelligence Layer
+- Trust & Validation Layer
+- Canonical Data Layer (CDM mapping)
+- Knowledge Layer (Resolution + Golden Records)
+- Publishing Layer (Datasets + Dataset Cards)
+- Governance Layer (RBAC + Audit Logs)
+
+No feature may violate this separation.
+
+---
+
+2) Schema Discipline (CRITICAL)
+
+You MUST use exact CDM field names.
+You MUST use exact ICD endpoint paths.
+You MUST NOT rename fields.
+You MUST NOT convert to camelCase.
+You MUST NOT abbreviate.
+
+Examples of non-negotiable keys:
+- evidence_id
+- file_hash
+- file_uri
+- sro_id
+- candidate_fields
+- evidence_pointer_id
+- validation_state
+- attribute_id
+- subject_ref_type
+- subject_ref_id
+- classification_label
+- object_type_label
+- golden_record_id
+- dataset_version_id
+
+Invoice, Receipt, Claim, Loan, etc.
+are NEVER database entities.
+They are classification_label or object_type_label values.
+
+---
+
+3) API Contract Rules
+
+All backend responses MUST follow this envelope:
+
+{
+  "success": true|false,
+  "data": ...,
+  "error": null | { "code": "...", "message": "...", "details": [...] },
+  "request_id": "uuid"
+}
+
+Frontend must parse and respect this envelope.
+
+All endpoints must use base path:
+    /api/v1
+
+No endpoint renaming allowed.
+
+---
+
+4) Audit & Governance Requirements
+
+The following audit events are mandatory where applicable:
+
+- UPLOAD_EVIDENCE
+- OCR_RUN
+- EXTRACTION_RUN
+- CREATE_VALIDATION_TASK
+- APPROVE_FIELD
+- REJECT_FIELD
+- MAP_TO_CDM
+- MERGE_ENTITIES
+- PUBLISH_DATASET
+- DOWNLOAD_DATASET
+
+RBAC roles must match exactly:
+- Archive Operator
+- Data Validator
+- AI Engineer
+- Compliance Officer
+- Admin
+
+Frontend must enforce UI-level RBAC.
+Backend must enforce API-level RBAC.
+
+---
+
+5) Evidence Traceability Rule
+
+Every approved Attribute MUST reference:
+    evidence_pointer_id ? EvidencePointer ? evidence_id
+
+No attribute may exist without traceability.
+
+---
+
+6) Database Rules (Backend)
+
+- Database: MySQL only.
+- Use migrations.
+- Enforce foreign keys.
+- Use tenant_id on all canonical tables.
+- Never create entity-specific tables like Invoice or Receipt.
+
+---
+
+7) Frontend Rules
+
+- Use React (prefer TypeScript).
+- All API calls must include:
+    Authorization: Bearer <token>
+    X-Tenant-Id: <tenant_id>
+- Handle error.message from envelope.
+- Do not invent endpoints.
+- Do not bypass response envelope.
+
+---
+
+8) Golden Record Philosophy
+
+Golden records are canonical merged entities.
+They must:
+- store merged_from_ids
+- store merge_rule_version
+- be auditable
+- never delete source records
+
+---
+
+9) Dataset Publishing Rules
+
+DatasetVersionMetadata must include:
+- dataset_version_id
+- dataset_name
+- dataset_version
+- schema_version
+- generated_at
+- lineage_evidence_batches
+- validation_summary
+- approvals
+- download_uris
+
+Publishing must log:
+- PUBLISH_DATASET
+- DOWNLOAD_DATASET
+
+---
+
+10) Development Discipline
+
+This is a prompt-governed system.
+
+You must:
+- Follow subsystem boundaries
+- Follow CDM exactly
+- Follow ICD exactly
+- Avoid improvisation
+- Avoid speculative architecture
+
+If something is unclear:
+Ask for clarification rather than inventing structure.
+
+---
+
+FINAL INSTRUCTION:
+
+Before generating any code or UI:
+- Confirm which subsystem you are working on.
+- Confirm which ICD endpoint is being implemented.
+- Confirm which CDM entities are affected.
+
+Then generate production-quality, modular, testable code.
+
+You are building a contract-driven AI-ready data system.
+Consistency and traceability are more important than speed.

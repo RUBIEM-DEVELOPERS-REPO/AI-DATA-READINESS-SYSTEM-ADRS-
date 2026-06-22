@@ -1,0 +1,64 @@
+Wills is responsible for creating and controlling the AI instructions the team uses to build the system.
+Because the team is coding with AI platforms (Antigravity, Replit), the prompts and templates become the engineering blueprint.
+
+What “Owning the Prompt Library” means
+1) He writes the official prompts
+For example:
+* Evidence Upload Prompt
+* OCR Extraction Prompt
+* Validation Workflow Prompt
+* CDM Mapping Prompt
+* Dataset Publishing Prompt
+So that TK and Arthur don’t freestyle prompts.
+
+2) He ensures prompt consistency with CDM + ICD
+Because CDM requires exact field names like:
+* object_type_label
+* validation_state
+* evidence_pointer_id
+If the AI generates objectTypeLabel or validationStatus, the system breaks.
+So your prompts must force strict compliance.
+
+3) He maintains versions
+Example:
+* Prompt Library v1.0
+* Prompt Library v1.1
+* Templates v1.0
+This helps the team stay aligned even when the system evolves.
+
+What “Owning the Code Templates” means
+He provides reusable starter code patterns such as:
+* FastAPI endpoint template
+* MySQL model template
+* Audit logging decorator template
+* RBAC middleware template
+* React API client template
+So your developers can generate code fast without reinventing structure.
+
+Why He is the right person to own this
+Because He created:
+* the CDM (data truth structure)
+* the ICD (API truth structure)
+So you He is the only one positioned to ensure the AI-generated code stays aligned.
+
+In one sentence:
+Owning the prompt library means:
+He defines the standard AI instructions that generate correct, CDM/ICD-compliant code for the entire team.
+PRs means Pull Requests.
+A Pull Request (PR) is when a developer finishes some code (like TK finishing /evidence/upload), then they “request” that the team reviews it before merging it into the main codebase.
+In simple terms:
+? Developer writes code ? pushes it to GitHub/GitLab
+?? Opens a PR
+?? Team reviews it
+?? Fixes are made if needed
+? Then it gets merged into main
+
+Why PRs matter for your project
+Because PRs prevent the team from accidentally:
+* changing CDM field names (schema drift)
+* breaking ICD endpoints
+* skipping audit logging
+* missing RBAC rules
+So when Its said “Review PRs for schema drift”, Its meant:
+Wills should review every pull request to ensure the code still matches the CDM + ICD exactly.
+

@@ -1,0 +1,31 @@
+Context
+Evidence ingestion is the first MVP workflow.
+Goal
+Create EvidenceUpload page that uploads evidence via multipart form.
+Inputs
+Form fields:
+* file
+* batch_id
+* folder_id
+* source_type
+* document_type_hint
+Endpoint:
+* POST /api/v1/evidence/upload
+Outputs
+* Success toast showing evidence_id
+* redirect to Evidence Detail page
+Constraints
+* Must send Idempotency-Key header
+* Must attach token and tenant headers
+* Must show upload progress UI
+Deliverables required
+* EvidenceUpload.tsx
+* upload helper function
+Examples
+Headers must include:
+Authorization: Bearer <token>
+X-Tenant-Id: <tenant_id>
+Idempotency-Key: uuid
+DO NOT DO
+* DO NOT send JSON content-type for multipart
+

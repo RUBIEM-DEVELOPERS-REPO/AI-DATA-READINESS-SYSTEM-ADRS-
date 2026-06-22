@@ -1,0 +1,25 @@
+Context
+Users need to browse evidence.
+Goal
+Create EvidenceList page showing evidence items.
+Inputs
+Endpoint:
+* GET /api/v1/evidence/list (if exists)
+Fallback:
+* Use recent upload cache in frontend state
+Outputs
+Table with:
+* evidence_id
+* file_name
+* ingested_at
+* status
+* document_type_hint
+Constraints
+* Search/filter by batch_id and status
+* Click row navigates to detail view
+Deliverables required
+* EvidenceList.tsx
+* table component
+DO NOT DO
+* DO NOT hardcode dummy evidence IDs
+

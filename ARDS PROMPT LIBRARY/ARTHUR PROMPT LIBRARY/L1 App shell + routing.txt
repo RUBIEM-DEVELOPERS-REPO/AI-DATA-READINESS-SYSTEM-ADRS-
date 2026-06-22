@@ -1,0 +1,13 @@
+Generate a React app with routes:
+- /login
+- /dashboard
+- /evidence (list)
+- /evidence/:evidence_id (detail + preview + metadata + download)
+- /validation (tasks)
+- /validation/:validation_id (review approve/reject)
+- /cdm/documents/:document_id (canonical view)
+- /publish (publish dataset form)
+- /datasets (list + download)
+- /datasets/:dataset_version_id/card
+- /audit (audit log viewer)
+Add protected routes based on token presence and role.

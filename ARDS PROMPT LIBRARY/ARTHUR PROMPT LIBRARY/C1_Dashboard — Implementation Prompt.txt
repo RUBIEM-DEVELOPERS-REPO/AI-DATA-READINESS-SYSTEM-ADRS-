@@ -1,0 +1,23 @@
+Context
+Dashboard is landing page showing system status and quick links.
+Goal
+Build Dashboard UI showing:
+* counts of evidence uploaded
+* validation tasks pending
+* datasets published
+Inputs
+Call:
+* GET /api/v1/evidence/recent (if exists) OR local state
+* GET /api/v1/validation/tasks?status=PENDING_VALIDATION
+* GET /api/v1/publish/datasets
+Outputs
+Dashboard UI with cards.
+Constraints
+* Must handle API absence gracefully
+* Must show "Coming soon" if endpoint missing
+Deliverables required
+* Dashboard.tsx
+* reusable Card component
+DO NOT DO
+* DO NOT crash app if endpoint is not yet implemented
+

@@ -1,0 +1,15 @@
+Context
+Compliance Officer/AI Engineer needs to view golden record results.
+Goal
+Build GoldenRecordDetail page.
+Inputs
+Endpoint:
+* GET /api/v1/resolution/golden-records/{golden_record_id}
+Outputs
+Show:
+* canonical_subject_id
+* merged_from_ids
+* merge_rule_version
+Deliverables required
+* GoldenRecordDetail.tsx
+

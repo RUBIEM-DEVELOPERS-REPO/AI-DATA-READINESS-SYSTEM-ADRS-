@@ -1,0 +1,5 @@
+Generate tests verifying:
+* list renders
+* search filter works
+* clicking row navigates
+

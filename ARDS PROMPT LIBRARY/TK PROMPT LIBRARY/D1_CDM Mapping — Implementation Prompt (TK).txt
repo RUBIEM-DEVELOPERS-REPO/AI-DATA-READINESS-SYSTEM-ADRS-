@@ -1,0 +1,64 @@
+Context
+CDM mapping converts validated candidate fields into canonical CDM entities.
+Goal
+Implement /api/v1/cdm/map mapping engine.
+Inputs
+* sro_id
+* schema_version
+Outputs
+CDM entities created:
+* Document
+* Object
+* Attribute
+* Party (optional)
+* Identifier (optional)
+* Event (optional)
+* Relationship (optional)
+Constraints
+Endpoint must match ICD:
+* POST /api/v1/cdm/map
+Document fields must include:
+* document_id
+* tenant_id
+* evidence_id
+* document_type_hint
+* classification_label
+* classification_confidence
+* status
+Object fields must include:
+* object_id
+* tenant_id
+* object_type_label
+* object_type_confidence
+* source_document_id
+* status
+Attribute fields must include:
+* attribute_id
+* tenant_id
+* subject_ref_type
+* subject_ref_id
+* attribute_key
+* value_type
+* value_raw
+* value_normalized
+* unit
+* currency
+* confidence_score
+* evidence_pointer_id
+* validation_state
+* validated_by
+* validated_at
+Audit event required:
+* MAP_TO_CDM
+Important rule:
+Invoice/Receipt/etc must be stored as classification_label/object_type_label NOT hardcoded tables.
+Deliverables required
+* Mapping service
+* FastAPI route
+* ORM models
+* migrations
+* tests
+DO NOT DO
+* DO NOT create Invoice entity
+* DO NOT map unapproved fields into Attribute
+

@@ -1,0 +1,25 @@
+Context
+Evidence ingestion must be verifiable.
+Goal
+Generate pytest + Postman tests for Evidence endpoints.
+Inputs
+* sample PDF file
+* JWT token header
+* X-Tenant-Id header
+Outputs
+* pytest tests
+* Postman collection JSON
+Constraints
+Tests must verify:
+* response envelope format
+* immutability_status = LOCKED
+* file_hash starts with sha256:
+* idempotency returns same evidence_id
+* audit event UPLOAD_EVIDENCE exists
+Deliverables required
+* pytest test module
+* Postman collection export
+DO NOT DO
+* DO NOT skip audit verification
+* DO NOT hardcode random endpoints
+

@@ -1,0 +1,75 @@
+name: Backend CI
+
+on:
+  pull_request:
+    paths:
+      - "backend/**"
+  push:
+    branches: ["dev", "main"]
+    paths:
+      - "backend/**"
+
+jobs:
+  backend-tests:
+    runs-on: ubuntu-latest
+
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: drs_test
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -proot"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=15
+
+    env:
+      # Adjust these to match your backend config expectations
+      DB_HOST: 127.0.0.1
+      DB_PORT: 3306
+      DB_USER: root
+      DB_PASSWORD: root
+      DB_NAME: drs_test
+      # If you use a single DATABASE_URL string, add it too
+      DATABASE_URL: mysql+pymysql://root:root@127.0.0.1:3306/drs_test
+
+      # Make tests deterministic
+      ENV: test
+      PYTHONUNBUFFERED: "1"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          cd backend
+          pip install -r requirements.txt
+
+      - name: Run lint (optional but recommended)
+        run: |
+          cd backend
+          # If you use ruff/flake8/mypy, keep the one(s) you actually use
+          # ruff check .
+          echo "Lint step placeholder (enable ruff/flake8 when ready)."
+
+      - name: Apply migrations
+        run: |
+          cd backend
+          # If you use Alembic:
+          alembic upgrade head
+
+      - name: Run unit + integration tests
+        run: |
+          cd backend
+          pytest -q
