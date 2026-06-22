@@ -18,7 +18,7 @@ import { ADRS_CONFIG } from "./config";
 import { uploadMiddleware, computeFileHash, getMimeType, detectCloudSource, downloadFile, UPLOADS_DIR } from "./upload";
 import { extractTextFromFile, detectDocType, isTextExtractionFailure } from "./services/extraction";
 import { aiExtractDocumentFields, aiTranscribeAudio, aiExtractWithVision, scoreAiExtraction, aiReclassifyDocType, aiClassifyEntityType } from "./services/ai-extraction";
-import { generateEmbedding } from "./services/embeddings";
+import { generateEmbedding, semanticSearch } from "./services/embeddings";
 import { groupEntitiesForMerge, getSingletonEntityIds } from "./services/golden-records";
 import unzipper from "unzipper";
 import multer from "multer";
@@ -1602,5 +1602,64 @@ export async function registerRoutes(httpServer: any, app: Express): Promise<any
   // ─── Audit ─────────────────────────────────────────────────────────────────
   app.get("/api/audit", requireAuth, async (_req: any, res: any) => res.json(await storage.getAuditLogs(200)));
 
+  // ─── Layer 9: AI Copilot & RAG (Agentic Layer) ────────────────────────────
+  app.post("/api/copilot/chat", async (req, res) => {
+    try {
+      const { message, conversationHistory = [] } = req.body;
+      if (!message || typeof message !== "string") {
+        return res.status(400).json({ error: "Message is required" });
+      }
+
+      // 1. Retrieve context using Vector Search
+      const searchResults = await semanticSearch(message, 5);
+      
+      // 2. Format context for the LLM
+      let contextString = "";
+      if (searchResults.length > 0) {
+        contextString = "CONTEXT DOCUMENTS:\n" + searchResults.map((r, i) => 
+          `[Doc ${i+1}: ${r.fileName} (Confidence: ${(r.score * 100).toFixed(1)}%)]\n${r.text.slice(0, 1500)}`
+        ).join("\n\n");
+      } else {
+        contextString = "No relevant context documents found in the system for this query.";
+      }
+
+      // 3. System Prompt for RAG Copilot
+      const systemPrompt = `You are ADRS Copilot, an AI assistant for the African Data Readiness System.
+Your job is to answer the user's questions based strictly on the provided Context Documents.
+If the context documents do not contain the answer, say "I don't have enough information in the ingested documents to answer that."
+Do not hallucinate or invent information outside of the provided context.
+When providing an answer, cite the source document name if possible.
+
+${contextString}`;
+
+      // 4. Generate Answer via OpenAI API
+      const OpenAI = require("openai").default;
+      const openai = new OpenAI({
+        apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
+        baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
+      });
+
+      const messages = [
+        { role: "system", content: systemPrompt },
+        ...conversationHistory.slice(-5), // Keep last 5 messages for conversation flow
+        { role: "user", content: message }
+      ];
+
+      const response = await openai.chat.completions.create({
+        model: process.env.AI_TEXT_MODEL || "gpt-4o-mini",
+        messages,
+        temperature: 0.2, // Low temperature for factual RAG
+      });
+
+      const reply = response.choices[0]?.message?.content || "Sorry, I couldn't generate a response.";
+      
+      res.json({ reply, sources: searchResults.map(r => r.fileName) });
+    } catch (err: any) {
+      console.error("[Copilot] Chat error:", err);
+      res.status(500).json({ error: "Failed to process chat request" });
+    }
+  });
+
+  const httpServer = createServer(app);
   return httpServer;
 }
