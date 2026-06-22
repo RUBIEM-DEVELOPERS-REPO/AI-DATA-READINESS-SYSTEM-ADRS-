@@ -18,6 +18,7 @@ import { ADRS_CONFIG } from "./config";
 import { uploadMiddleware, computeFileHash, getMimeType, detectCloudSource, downloadFile, UPLOADS_DIR } from "./upload";
 import { extractTextFromFile, detectDocType, isTextExtractionFailure } from "./services/extraction";
 import { aiExtractDocumentFields, aiTranscribeAudio, aiExtractWithVision, scoreAiExtraction, aiReclassifyDocType, aiClassifyEntityType } from "./services/ai-extraction";
+import { generateEmbedding } from "./services/embeddings";
 import { groupEntitiesForMerge, getSingletonEntityIds } from "./services/golden-records";
 import unzipper from "unzipper";
 import multer from "multer";
@@ -775,8 +776,8 @@ export async function registerRoutes(httpServer: any, app: Express): Promise<any
       const docTypeConfidence = aiResult.docTypeConfidence;
       const fieldCount = Object.keys(aiResult.fields).length;
 
-      // 4. AI-based scores (deterministic from field coverage)
-      const scores = scoreAiExtraction(fieldCount, docType);
+      // 4. AI-based scores (using actual AI self-reported confidence)
+      const scores = scoreAiExtraction(aiResult.fields, docType, docTypeConfidence);
 
       // 5. Convert AI fields to plain string map for DB storage; keep typed fields for normalization
       const plainFields: Record<string, string> = {};
@@ -823,10 +824,20 @@ export async function registerRoutes(httpServer: any, app: Express): Promise<any
 
       const run = await storage.createExtractionRun(parse.data);
 
-      // 8. Store text
+      // 8. Store text and generate embeddings (Layer 4)
       if (rawText) {
         const etxt = await storage.createExtractionText({ evidenceId: run.evidenceId, extractionRunId: run.id, text: rawText, charCount: rawText.length });
         await storage.updateExtractionRun(run.id, { extractionTextId: etxt.id } as any);
+        
+        // Generate embedding in the background to not block the response
+        generateEmbedding(rawText).then(async (vector) => {
+          await storage.createChunkEmbedding({
+            extractionTextId: etxt.id,
+            evidenceId: run.evidenceId,
+            embedding: vector,
+            tokenCount: Math.ceil(rawText.length / 4) // Rough estimate
+          });
+        }).catch(err => console.error("[Layer 4] Embedding generation failed:", err));
       }
 
       // 9. Audit + field events

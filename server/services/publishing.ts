@@ -130,14 +130,16 @@ export function generateMlFeatures(
       if (v == null || isIdentifierField(k)) continue;
       const kl = k.toLowerCase();
 
-      if (ML_NUMERIC_KEYS.test(kl)) {
-        const n = normalizeNumeric(v);
-        if (n !== null) row[`feat_${kl}`] = n;
-      } else if (ML_DATE_KEYS.test(kl)) {
+      if (typeof v === "number" || typeof v === "boolean") {
+        row[`feat_${kl}`] = typeof v === "boolean" ? (v ? 1 : 0) : v;
+      } else {
         const s = String(v).trim();
-        if (s.length >= 8) row[`feat_${kl}`] = s.slice(0, 10);
-      } else if (ML_CATEGORY_KEYS.test(kl)) {
-        row[`feat_${kl}`] = normalizeCategory(v);
+        const n = normalizeNumeric(s);
+        if (n !== null && /^[\d.,$€£%\s]+$/.test(s)) {
+          row[`feat_${kl}`] = n;
+        } else {
+          row[`feat_${kl}`] = s;
+        }
       }
     }
 
@@ -152,14 +154,16 @@ export function generateMlFeatures(
         const val = attr.value_normalized ?? attr.value_raw;
         if (!val) continue;
 
-        if (ML_NUMERIC_KEYS.test(kl)) {
-          const n = normalizeNumeric(val);
-          if (n !== null && !(`feat_${kl}` in row)) row[`feat_${kl}`] = n;
-        } else if (ML_DATE_KEYS.test(kl)) {
+        if (typeof val === "number" || typeof val === "boolean") {
+          if (!(`feat_${kl}` in row)) row[`feat_${kl}`] = typeof val === "boolean" ? (val ? 1 : 0) : val;
+        } else {
           const s = String(val).trim();
-          if (s.length >= 8 && !(`feat_${kl}` in row)) row[`feat_${kl}`] = s.slice(0, 10);
-        } else if (ML_CATEGORY_KEYS.test(kl)) {
-          if (!(`feat_${kl}` in row)) row[`feat_${kl}`] = normalizeCategory(val);
+          const n = normalizeNumeric(s);
+          if (n !== null && /^[\d.,$€£%\s]+$/.test(s)) {
+            if (!(`feat_${kl}` in row)) row[`feat_${kl}`] = n;
+          } else {
+            if (!(`feat_${kl}` in row)) row[`feat_${kl}`] = s;
+          }
         }
       }
     }
@@ -210,8 +214,16 @@ function deduplicateEntities(entities: CdmEntity[]): Map<string, CdmEntity[]> {
     const fields = entity.canonicalFields as Record<string, any>;
     const email = (fields.email ?? "").toLowerCase().trim();
     const phone = (fields.phone ?? "").replace(/\D/g, "").slice(-9);
-    // Key: same email + same phone last 9 digits → likely same party
-    const key = email && phone ? `${email}::${phone}` : `unique::${entity.id}`;
+    const reg = (fields.registration_number ?? fields.national_id ?? "").toLowerCase().replace(/[^a-z0-9]/g, "");
+    const name = (entity.displayName ?? fields.name ?? "").toLowerCase().trim();
+
+    // Cascading deduplication key
+    let key = `unique::${entity.id}`;
+    if (reg && reg.length > 3) key = `reg::${reg}`;
+    else if (email && email.includes("@")) key = `email::${email}`;
+    else if (phone && phone.length >= 7) key = `phone::${phone}`;
+    else if (name && name.length > 2) key = `name::${name}`;
+
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key)!.push(entity);
   }

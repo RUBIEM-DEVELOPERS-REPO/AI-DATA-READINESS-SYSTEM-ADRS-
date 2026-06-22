@@ -26,13 +26,14 @@ function StatCard({ title, value, subtitle, icon: Icon, trend, color, href }: {
   trend?: string; color: string; href?: string;
 }) {
   return (
-    <Card className="relative" data-testid={`card-stat-${title.toLowerCase().replace(/\s+/g, '-')}`}>
-      <CardContent className="p-5">
+    <Card className="relative glass-panel hover:shadow-2xl hover:-translate-y-1 transition-all duration-500 border-0 overflow-hidden group" data-testid={`card-stat-${title.toLowerCase().replace(/\s+/g, '-')}`}>
+      <div className="absolute -right-10 -top-10 w-32 h-32 rounded-full bg-foreground opacity-[0.03] blur-3xl group-hover:opacity-[0.06] transition-opacity duration-500 pointer-events-none" />
+      <CardContent className="p-6 relative z-10">
         <div className="flex items-start justify-between">
-          <div className="flex flex-col gap-1">
-            <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">{title}</span>
-            <span className="text-3xl font-bold text-foreground">{value}</span>
-            {subtitle && <span className="text-xs text-muted-foreground">{subtitle}</span>}
+          <div className="flex flex-col gap-1.5">
+            <span className="text-[11px] font-bold text-muted-foreground uppercase tracking-widest">{title}</span>
+            <span className="text-4xl font-extrabold text-foreground tracking-tight">{value}</span>
+            {subtitle && <span className="text-[13px] text-muted-foreground font-medium">{subtitle}</span>}
             {trend && (
               <span className="text-xs text-muted-foreground flex items-center gap-1 mt-1">
                 <TrendingUp className="w-3 h-3 text-chart-3" />
@@ -40,14 +41,15 @@ function StatCard({ title, value, subtitle, icon: Icon, trend, color, href }: {
               </span>
             )}
           </div>
-          <div className={`w-10 h-10 rounded-md flex items-center justify-center flex-shrink-0 ${color}`}>
-            <Icon className="w-5 h-5" />
+          <div className={`w-12 h-12 rounded-xl flex items-center justify-center flex-shrink-0 shadow-inner relative group-hover:scale-110 transition-transform duration-500 ${color}`}>
+            <div className="absolute inset-0 bg-current opacity-20 blur-md group-hover:opacity-40 transition-opacity" />
+            <Icon className="w-6 h-6 relative z-10" />
           </div>
         </div>
         {href && (
           <Link href={href}>
-            <span className="mt-3 flex items-center gap-1 text-xs text-muted-foreground cursor-pointer group-hover:text-foreground transition-colors">
-              View all <ArrowRight className="w-3 h-3" />
+            <span className="mt-4 flex items-center gap-1.5 text-xs font-semibold text-muted-foreground cursor-pointer group-hover:text-primary transition-colors">
+              View details <ArrowRight className="w-3.5 h-3.5 transition-transform group-hover:translate-x-1" />
             </span>
           </Link>
         )}
@@ -138,7 +140,7 @@ export default function Dashboard() {
               value={stats?.totalEvidence ?? 0}
               subtitle="Ingested & immutable"
               icon={FolderOpen}
-              color="bg-primary/10 text-primary"
+              color="bg-primary/20 text-primary border border-primary/30"
               href="/evidence"
             />
             <StatCard
@@ -146,7 +148,7 @@ export default function Dashboard() {
               value={stats?.pendingValidation ?? 0}
               subtitle="Awaiting human review"
               icon={CheckSquare}
-              color="bg-destructive/10 text-destructive"
+              color="bg-destructive/20 text-destructive border border-destructive/30"
               href="/validation"
             />
             <StatCard
@@ -154,7 +156,7 @@ export default function Dashboard() {
               value={stats?.cdmEntities ?? 0}
               subtitle="Canonical records"
               icon={Database}
-              color="bg-chart-2/10 text-chart-2"
+              color="bg-chart-2/20 text-chart-2 border border-chart-2/30"
               href="/cdm"
             />
             <StatCard
@@ -162,7 +164,7 @@ export default function Dashboard() {
               value={stats?.publishedDatasets ?? 0}
               subtitle="AI-ready exports"
               icon={Upload}
-              color="bg-chart-3/10 text-chart-3"
+              color="bg-chart-3/20 text-chart-3 border border-chart-3/30"
               href="/publishing"
             />
           </>
@@ -170,7 +172,7 @@ export default function Dashboard() {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <Card className="lg:col-span-2">
+        <Card className="lg:col-span-2 glass-panel border-0 relative overflow-hidden">
           <CardHeader className="pb-3">
             <CardTitle className="text-sm font-semibold flex items-center gap-2">
               <Activity className="w-4 h-4 text-primary" />
@@ -194,8 +196,8 @@ export default function Dashboard() {
           </CardContent>
         </Card>
 
-        <div className="space-y-4">
-          <Card>
+        <div className="space-y-6">
+          <Card className="glass-panel border-0 relative overflow-hidden">
             <CardHeader className="pb-2">
               <CardTitle className="text-sm font-semibold flex items-center gap-2">
                 <Brain className="w-4 h-4 text-chart-2" />
@@ -221,7 +223,7 @@ export default function Dashboard() {
             </CardContent>
           </Card>
 
-          <Card>
+          <Card className="glass-panel border-0 relative overflow-hidden">
             <CardHeader className="pb-2">
               <CardTitle className="text-sm font-semibold flex items-center gap-2">
                 <Clock className="w-4 h-4 text-chart-4" />
@@ -255,7 +257,7 @@ export default function Dashboard() {
         </div>
       </div>
 
-      <Card>
+      <Card className="glass-panel border-0 relative overflow-hidden">
         <CardHeader className="pb-3">
           <CardTitle className="text-sm font-semibold flex items-center gap-2">
             <BarChart3 className="w-4 h-4 text-primary" />
@@ -271,14 +273,16 @@ export default function Dashboard() {
               { label: "Publish Dataset", icon: Upload, href: "/publishing", desc: "Export AI-ready data" },
             ].map((action) => (
               <Link key={action.label} href={action.href}>
-                <div
-                  className="flex flex-col gap-2 p-4 rounded-md border border-border cursor-pointer hover-elevate transition-colors"
+                  <div
+                  className="flex flex-col gap-3 p-5 rounded-xl bg-background/50 border border-border/50 cursor-pointer hover:bg-primary/5 hover:border-primary/30 hover:-translate-y-1 hover:shadow-lg transition-all duration-300 group"
                   data-testid={`button-quickaction-${action.label.toLowerCase().replace(/\s+/g, '-')}`}
                 >
-                  <action.icon className="w-5 h-5 text-primary" />
+                  <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center group-hover:scale-110 transition-transform duration-300">
+                    <action.icon className="w-5 h-5 text-primary" />
+                  </div>
                   <div>
-                    <p className="text-xs font-semibold text-foreground">{action.label}</p>
-                    <p className="text-xs text-muted-foreground">{action.desc}</p>
+                    <p className="text-sm font-bold text-foreground group-hover:text-primary transition-colors">{action.label}</p>
+                    <p className="text-xs text-muted-foreground mt-0.5 font-medium">{action.desc}</p>
                   </div>
                 </div>
               </Link>

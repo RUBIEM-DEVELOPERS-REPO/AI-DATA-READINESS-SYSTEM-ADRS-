@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, integer, real, boolean, jsonb, timestamp, pgEnum } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, integer, real, boolean, jsonb, timestamp, pgEnum, customType } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -42,6 +42,16 @@ export const docTypeEnum = pgEnum("doc_type", [
 export const mediaTypeEnum = pgEnum("media_type", [
   "DOCUMENT", "IMAGE", "AUDIO", "VIDEO"
 ]);
+
+// ─── Vector Type Definition ──────────────────────────────────────────────────
+export const vector = customType<{ data: number[]; driverData: string }>({
+  dataType() {
+    return 'vector(1536)'; // Standard for OpenAI text-embedding-3-small
+  },
+  toDriver(value: number[]): string {
+    return JSON.stringify(value);
+  },
+});
 
 // ─── ExtractionText — deduplicated text store, one row per extraction run ─────
 export const extractionTexts = pgTable("extraction_texts", {
@@ -224,6 +234,27 @@ export const publishedDatasets = pgTable("published_datasets", {
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 
+// ─── Layer 4: AI Feature & Representation (Embeddings) ──────────────────────
+export const chunkEmbeddings = pgTable("chunk_embeddings", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  extractionTextId: varchar("extraction_text_id").references(() => extractionTexts.id).notNull(),
+  evidenceId: varchar("evidence_id").references(() => evidenceFiles.id).notNull(),
+  embedding: vector("embedding").notNull(),
+  modelVersion: text("model_version").notNull().default("text-embedding-3-small"),
+  tokenCount: integer("token_count").notNull().default(0),
+  tenantId: text("tenant_id").notNull().default("TENANT-001"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export const entityEmbeddings = pgTable("entity_embeddings", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  entityId: varchar("entity_id").references(() => cdmEntities.id).notNull(),
+  embedding: vector("embedding").notNull(),
+  modelVersion: text("model_version").notNull().default("text-embedding-3-small"),
+  tenantId: text("tenant_id").notNull().default("TENANT-001"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
 // ─── Access Request Status Enum ───────────────────────────────────────────
 export const accessRequestStatusEnum = pgEnum("access_request_status", [
   "PENDING", "APPROVED", "REJECTED"
@@ -278,6 +309,8 @@ export const insertCdmEntitySchema = createInsertSchema(cdmEntities).omit({ id: 
 export const insertDatasetSchema = createInsertSchema(publishedDatasets).omit({ id: true, createdAt: true, updatedAt: true });
 export const insertAuditLogSchema = createInsertSchema(auditLogs).omit({ id: true, createdAt: true });
 export const insertUserSchema = createInsertSchema(users).omit({ id: true, createdAt: true, updatedAt: true, lastLoginAt: true });
+export const insertChunkEmbeddingSchema = createInsertSchema(chunkEmbeddings).omit({ id: true, createdAt: true });
+export const insertEntityEmbeddingSchema = createInsertSchema(entityEmbeddings).omit({ id: true, createdAt: true });
 
 // Zod schema for registration form (client-side validation)
 export const registerSchema = z.object({
@@ -318,6 +351,10 @@ export type PublishedDataset = typeof publishedDatasets.$inferSelect;
 export type InsertDataset = z.infer<typeof insertDatasetSchema>;
 export type AuditLog = typeof auditLogs.$inferSelect;
 export type InsertAuditLog = z.infer<typeof insertAuditLogSchema>;
+export type ChunkEmbedding = typeof chunkEmbeddings.$inferSelect;
+export type InsertChunkEmbedding = z.infer<typeof insertChunkEmbeddingSchema>;
+export type EntityEmbedding = typeof entityEmbeddings.$inferSelect;
+export type InsertEntityEmbedding = z.infer<typeof insertEntityEmbeddingSchema>;
 
 // ─── Normalized Attribute type used in extractedAttributes ───────────────────
 export interface NormalizedAttribute {

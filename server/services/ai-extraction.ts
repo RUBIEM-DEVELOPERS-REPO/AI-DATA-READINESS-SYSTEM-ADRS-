@@ -166,7 +166,7 @@ export async function aiExtractDocumentFields(
 
   try {
     const response = await openai.chat.completions.create({
-      model: "gpt-5-mini",
+      model: process.env.AI_TEXT_MODEL || "gpt-5-mini",
       messages: [
         { role: "system", content: EXTRACTION_SYSTEM_PROMPT },
         {
@@ -242,7 +242,7 @@ export async function aiReclassifyDocType(
   }
   try {
     const response = await openai.chat.completions.create({
-      model: "gpt-5-mini",
+      model: process.env.AI_TEXT_MODEL || "gpt-5-mini",
       messages: [
         {
           role: "system",
@@ -308,7 +308,7 @@ export async function aiClassifyEntityType(
     .join("; ");
   try {
     const response = await openai.chat.completions.create({
-      model: "gpt-5-mini",
+      model: process.env.AI_TEXT_MODEL || "gpt-5-mini",
       messages: [
         {
           role: "system",
@@ -356,7 +356,7 @@ export async function aiTranscribeAudio(storedUri: string, fileName: string): Pr
 
     const transcription = await openai.audio.transcriptions.create({
       file: audioFile,
-      model: "gpt-4o-mini-transcribe",
+      model: process.env.AI_AUDIO_MODEL || "gpt-4o-mini-transcribe",
       response_format: "text",
     });
 
@@ -430,12 +430,27 @@ function normalizeDocType(raw: string): string {
   return map[upper] ?? "OTHER";
 }
 
-export function scoreAiExtraction(fieldCount: number, docType: string): {
+export function scoreAiExtraction(
+  fields: Record<string, { confidence: number }>,
+  docType: string,
+  docTypeConfidence: number
+): {
   ocrConfidence: number;
   extractionConfidence: number;
   consistencyScore: number;
   docQualityScore: number;
 } {
+  const fieldValues = Object.values(fields);
+  const fieldCount = fieldValues.length;
+
+  let avgAiConfidence = 0;
+  if (fieldCount > 0) {
+    const sum = fieldValues.reduce((acc, f) => acc + (Number(f.confidence) || 0), 0);
+    avgAiConfidence = sum / fieldCount;
+  } else {
+    avgAiConfidence = docTypeConfidence;
+  }
+
   const expected: Record<string, number> = {
     INVOICE: 7, QUOTATION: 6, PURCHASE_ORDER: 6, RECEIPT: 5,
     CONTRACT: 6, AGREEMENT: 5, LEASE: 5, DEED: 4,
@@ -448,16 +463,16 @@ export function scoreAiExtraction(fieldCount: number, docType: string): {
   const exp = expected[docType] ?? 3;
   const coverage = Math.min(1.0, fieldCount / exp);
 
-  const ocrConfidence = 0.88 + (coverage * 0.10);
-  const extractionConfidence = 0.75 + (coverage * 0.22);
-  const consistencyScore = 0.82 + (coverage * 0.12);
-  const docQualityScore = 0.80 + (coverage * 0.15);
+  const ocrConfidence = 0.85 + (coverage * 0.10);
+  const extractionConfidence = avgAiConfidence;
+  const consistencyScore = 0.70 + (avgAiConfidence * 0.20) + (coverage * 0.10);
+  const docQualityScore = 0.75 + (coverage * 0.15) + (avgAiConfidence * 0.10);
 
   return {
-    ocrConfidence: Math.min(0.98, ocrConfidence),
-    extractionConfidence: Math.min(0.97, extractionConfidence),
-    consistencyScore: Math.min(0.97, consistencyScore),
-    docQualityScore: Math.min(0.98, docQualityScore),
+    ocrConfidence: Math.min(0.98, Math.max(0, ocrConfidence)),
+    extractionConfidence: Math.min(0.99, Math.max(0, extractionConfidence)),
+    consistencyScore: Math.min(0.98, Math.max(0, consistencyScore)),
+    docQualityScore: Math.min(0.98, Math.max(0, docQualityScore)),
   };
 }
 
@@ -585,7 +600,7 @@ Be thorough — extract everything you can read. Return confidence 0.95+ for cle
   try {
     const messageContent = buildImageContent(images, visionPrompt);
     const response = await openai.chat.completions.create({
-      model: "gpt-4o",
+      model: process.env.AI_VISION_MODEL || "gpt-4o",
       messages: [{ role: "user", content: messageContent }],
       response_format: { type: "json_object" },
       max_completion_tokens: 4096,

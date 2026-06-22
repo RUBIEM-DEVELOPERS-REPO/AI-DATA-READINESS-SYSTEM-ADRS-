@@ -16,6 +16,7 @@ import { Separator } from "@/components/ui/separator";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import type { PublishedDataset, DatasetCard } from "@shared/schema";
+import { Link } from "wouter";
 import {
   Upload, Plus, Download, Archive, Globe, FileText, Package, GitBranch, Star, Database,
   Network, Layers, Brain, CheckCircle2, AlertTriangle, BarChart3, ChevronRight, Eye, Shield, Zap
@@ -37,10 +38,11 @@ const artifactColors = {
   bundle: { icon: Package, color: "text-chart-5", bg: "bg-chart-5/10", label: "Bundle ZIP",       desc: "All artifacts + dataset card + quality report in one download", ext: "ZIP" },
 };
 
-function ArtifactRow({ type, uri, counts }: {
+function ArtifactRow({ type, uri, counts, datasetCode }: {
   type: keyof typeof artifactColors;
   uri?: string;
   counts?: { rows?: number; count?: number };
+  datasetCode?: string;
 }) {
   const config = artifactColors[type];
   const Icon = config.icon;
@@ -60,17 +62,24 @@ function ArtifactRow({ type, uri, counts }: {
         <p className="text-xs text-muted-foreground mt-0.5">{config.desc}</p>
       </div>
       {uri ? (
-        <Button
-          size="sm"
-          variant="outline"
-          className="h-7 text-xs gap-1 flex-shrink-0"
-          asChild
-          data-testid={`button-download-${type}`}
-        >
-          <a href={uri} target="_blank" rel="noopener noreferrer">
-            <Download className="w-3 h-3" /> Download
-          </a>
-        </Button>
+        <div className="flex items-center gap-2 flex-shrink-0">
+          {type === "kg" && datasetCode && (
+            <Button size="sm" variant="default" className="h-7 text-xs gap-1" asChild>
+              <Link href={`/graph/${datasetCode}`}><Network className="w-3 h-3" /> Visualise</Link>
+            </Button>
+          )}
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-7 text-xs gap-1"
+            asChild
+            data-testid={`button-download-${type}`}
+          >
+            <a href={uri} target="_blank" rel="noopener noreferrer">
+              <Download className="w-3 h-3" /> Download
+            </a>
+          </Button>
+        </div>
       ) : (
         <Badge variant="outline" className="text-xs text-muted-foreground flex-shrink-0">Not generated</Badge>
       )}
@@ -433,12 +442,13 @@ function DatasetCard({ dataset }: { dataset: PublishedDataset }) {
                       </div>
 
                       {/* ── Primary trio: ML · RAG · KG ── */}
-                      <ArtifactRow type="ml" uri={artifactUris?.ml} counts={{ rows: counts.ml }} />
-                      <ArtifactRow type="rag" uri={artifactUris?.rag_chunks} counts={{ count: counts.rag_chunks }} />
+                      <ArtifactRow type="ml" uri={artifactUris?.ml} counts={{ rows: counts.ml }} datasetCode={dataset.datasetCode} />
+                      <ArtifactRow type="rag" uri={artifactUris?.rag_chunks} counts={{ count: counts.rag_chunks }} datasetCode={dataset.datasetCode} />
                       <ArtifactRow
                         type="kg"
                         uri={artifactUris?.kg_graph ?? artifactUris?.kg_entities}
                         counts={{ count: kgGraph.length > 0 ? (counts.kg_nodes ?? 0) + (counts.kg_edges ?? 0) : (counts.kg_entities ?? 0) }}
+                        datasetCode={dataset.datasetCode}
                       />
 
                       {/* ── KG record breakdown ── */}

@@ -11,11 +11,11 @@ import { useQuery } from "@tanstack/react-query";
 import { useAuth, type UserRole } from "@/context/auth";
 
 const ROLE_COLORS: Record<UserRole, string> = {
-  SUPER_ADMIN: "border-red-500/40 text-red-600 dark:text-red-400 bg-red-500/5",
-  ADMIN: "border-orange-500/40 text-orange-600 dark:text-orange-400 bg-orange-500/5",
-  ANALYST: "border-blue-500/40 text-blue-600 dark:text-blue-400 bg-blue-500/5",
-  REVIEWER: "border-purple-500/40 text-purple-600 dark:text-purple-400 bg-purple-500/5",
-  VIEWER: "border-green-500/40 text-green-600 dark:text-green-400 bg-green-500/5",
+  SUPER_ADMIN: "border-destructive/40 text-destructive bg-destructive/10",
+  ADMIN: "border-primary/40 text-primary bg-primary/10",
+  ANALYST: "border-blue-500/40 text-blue-500 bg-blue-500/10",
+  REVIEWER: "border-accent/40 text-accent bg-accent/10",
+  VIEWER: "border-green-500/40 text-green-500 bg-green-500/10",
 };
 
 interface NavItem {
@@ -74,20 +74,21 @@ export function AppSidebar() {
     : "??";
 
   return (
-    <Sidebar>
-      <SidebarHeader className="p-4 border-b border-sidebar-border">
+    <Sidebar variant="floating" className="m-4 h-[calc(100vh-2rem)] rounded-2xl glass-panel overflow-hidden border-0 shadow-2xl">
+      <SidebarHeader className="p-5 border-b border-border/20">
         <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-md bg-sidebar-primary flex items-center justify-center flex-shrink-0">
-            <BarChart3 className="w-4 h-4 text-sidebar-primary-foreground" />
+          <div className="w-10 h-10 rounded-xl bg-primary/10 border border-primary/20 flex items-center justify-center flex-shrink-0 shadow-inner relative group overflow-hidden">
+            <div className="absolute inset-0 bg-primary/20 blur-md group-hover:bg-primary/40 transition-colors duration-500" />
+            <BarChart3 className="w-5 h-5 text-primary relative z-10 animate-pulse-slow" />
           </div>
           <div className="flex flex-col min-w-0">
-            <span className="text-sm font-semibold text-sidebar-foreground leading-tight truncate">AI Data Readiness</span>
-            <span className="text-xs text-muted-foreground leading-tight">ADRS Platform</span>
+            <span className="text-sm font-bold text-foreground leading-tight truncate tracking-wide">AI Data Readiness</span>
+            <span className="text-[10px] text-primary font-semibold tracking-widest uppercase leading-tight mt-0.5">ADRS Platform</span>
           </div>
         </div>
       </SidebarHeader>
 
-      <SidebarContent className="py-2">
+      <SidebarContent className="py-4">
         {navGroups.map((group) => {
           const visibleItems = group.items.filter(item =>
             !item.minRole || can(item.minRole)
@@ -108,15 +109,17 @@ export function AppSidebar() {
                         <SidebarMenuButton
                           asChild
                           data-active={isActive}
-                          className="data-[active=true]:bg-sidebar-accent data-[active=true]:text-sidebar-accent-foreground"
+                          className={`data-[active=true]:bg-primary/10 data-[active=true]:text-primary data-[active=true]:font-semibold hover:bg-muted/40 rounded-xl transition-all duration-300 py-6 my-1 relative group overflow-hidden ${isActive ? 'shadow-[inset_4px_0_0_0_hsl(var(--primary))]' : ''}`}
                         >
-                          <Link href={item.url} className="flex items-center justify-between">
-                            <span className="flex items-center gap-2">
-                              <item.icon className="w-4 h-4 flex-shrink-0" />
-                              <span>{item.title}</span>
+                          <Link href={item.url} className="flex items-center justify-between w-full relative z-10 px-2">
+                            <span className="flex items-center gap-3">
+                              <div className={`p-2 rounded-lg transition-all duration-300 ${isActive ? 'bg-primary/20 text-primary scale-110 shadow-[0_0_15px_rgba(var(--primary),0.3)]' : 'bg-transparent text-muted-foreground group-hover:bg-muted group-hover:text-foreground group-hover:scale-105'}`}>
+                                <item.icon className="w-[18px] h-[18px] flex-shrink-0" />
+                              </div>
+                              <span className="text-[13px] tracking-wide">{item.title}</span>
                             </span>
                             {item.badge === "pending" && stats?.pendingValidation ? (
-                              <Badge variant="destructive" className="text-xs px-1.5 py-0 h-5 min-w-5 flex items-center justify-center">
+                              <Badge variant="destructive" className="text-[10px] px-2 py-0.5 h-5 min-w-5 flex items-center justify-center rounded-full animate-pulse">
                                 {stats.pendingValidation}
                               </Badge>
                             ) : null}
@@ -133,37 +136,38 @@ export function AppSidebar() {
         })}
       </SidebarContent>
 
-      <SidebarFooter className="border-t border-sidebar-border p-3">
+      <SidebarFooter className="border-t border-border/20 p-4">
         {user ? (
-          <div className="space-y-1.5">
-            <div className="flex items-center gap-2 px-1 py-1">
-              <div className="w-7 h-7 rounded-full bg-primary flex items-center justify-center flex-shrink-0">
-                <span className="text-xs font-bold text-primary-foreground">{initials}</span>
+          <div className="space-y-3">
+            <div className="flex items-center gap-3 px-2 py-1">
+              <div className="w-9 h-9 rounded-full bg-primary/20 border border-primary/30 flex items-center justify-center flex-shrink-0 shadow-sm">
+                <span className="text-sm font-bold text-primary">{initials}</span>
               </div>
               <div className="flex flex-col min-w-0 flex-1">
-                <span className="text-xs font-medium text-sidebar-foreground truncate">
+                <span className="text-sm font-semibold text-foreground truncate tracking-wide">
                   {user.firstName} {user.lastName}
                 </span>
-                <span className="text-xs text-muted-foreground truncate">{user.email}</span>
+                <span className="text-[11px] text-muted-foreground truncate">{user.email}</span>
               </div>
-              <div className="w-2 h-2 rounded-full bg-green-500 flex-shrink-0" />
+              <div className="w-2.5 h-2.5 rounded-full bg-green-500 flex-shrink-0 shadow-[0_0_8px_rgba(34,197,94,0.6)]" />
             </div>
             <Badge
               variant="outline"
-              className={`text-[10px] w-full justify-center py-0.5 ${ROLE_COLORS[user.role] ?? ""}`}
+              className={`text-[10px] uppercase tracking-wider w-full justify-center py-1 rounded-lg ${ROLE_COLORS[user.role] ?? ""}`}
               data-testid="badge-sidebar-role"
             >
-              <Shield className="w-2.5 h-2.5 mr-1" />
+              <Shield className="w-3 h-3 mr-1.5" />
               {user.role.replace("_", " ")}
             </Badge>
           </div>
         ) : (
-          <div className="flex items-center gap-2 px-1 py-1">
-            <div className="w-7 h-7 rounded-full bg-muted flex items-center justify-center flex-shrink-0">
-              <span className="text-xs text-muted-foreground">?</span>
+          <div className="flex items-center gap-3 px-2 py-1">
+            <div className="w-9 h-9 rounded-full bg-muted flex items-center justify-center flex-shrink-0 animate-pulse">
+              <span className="text-sm text-muted-foreground">?</span>
             </div>
-            <div className="flex flex-col min-w-0 flex-1">
-              <span className="text-xs text-muted-foreground">Loading…</span>
+            <div className="flex flex-col min-w-0 flex-1 space-y-1">
+              <div className="h-3 w-20 bg-muted rounded animate-pulse" />
+              <div className="h-2 w-24 bg-muted rounded animate-pulse" />
             </div>
           </div>
         )}

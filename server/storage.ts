@@ -9,7 +9,9 @@ import {
   type PublishedDataset, type InsertDataset,
   type AuditLog, type InsertAuditLog,
   type AccessRequest, type InsertAccessRequest,
-  users, batches, evidenceFiles, extractionRuns, extractionTexts, validationTasks, cdmEntities, publishedDatasets, auditLogs, accessRequests, systemConfig
+  type ChunkEmbedding, type InsertChunkEmbedding,
+  type EntityEmbedding, type InsertEntityEmbedding,
+  users, batches, evidenceFiles, extractionRuns, extractionTexts, validationTasks, cdmEntities, publishedDatasets, auditLogs, accessRequests, systemConfig, chunkEmbeddings, entityEmbeddings
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, desc, and, sql } from "drizzle-orm";
@@ -75,6 +77,9 @@ export interface IStorage {
     avgTrustScore: number;
     recentActivity: AuditLog[];
   }>;
+
+  createChunkEmbedding(embedding: InsertChunkEmbedding): Promise<ChunkEmbedding>;
+  createEntityEmbedding(embedding: InsertEntityEmbedding): Promise<EntityEmbedding>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -289,6 +294,16 @@ export class DatabaseStorage implements IStorage {
       avgTrustScore:     Number(avgTrust.avg) || 0,
       recentActivity,
     };
+  }
+
+  async createChunkEmbedding(embedding: InsertChunkEmbedding): Promise<ChunkEmbedding> {
+    const [created] = await db.insert(chunkEmbeddings).values(embedding).returning();
+    return created;
+  }
+
+  async createEntityEmbedding(embedding: InsertEntityEmbedding): Promise<EntityEmbedding> {
+    const [created] = await db.insert(entityEmbeddings).values(embedding).returning();
+    return created;
   }
 }
 

@@ -17,7 +17,7 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import type { ValidationTask, ExtractionRun, EvidenceFile, ConflictDetail, ConflictResolution } from "@shared/schema";
 import {
   CheckSquare, CheckCircle2, XCircle, AlertTriangle, Clock, User, ArrowUpRight,
-  Eye, Shield, ScanLine, Info, GitMerge, CheckCheck, ChevronDown, ChevronUp, Pencil
+  Eye, Shield, ScanLine, Info, GitMerge, CheckCheck, ChevronDown, ChevronUp, Pencil, Database
 } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 
@@ -50,8 +50,8 @@ function ValidationCard({ task, extraction, evidence, onAction }: {
   const isPending = task.status === "PENDING_VALIDATION" || task.status === "ESCALATED";
 
   return (
-    <Card data-testid={`card-validation-${task.id}`} className={`flex flex-col ${isPending ? "border-chart-5/40" : ""}`}>
-      <CardContent className="p-4 space-y-3 flex flex-col h-full">
+    <Card data-testid={`card-validation-${task.id}`} className={`flex flex-col glass-panel border-0 hover:-translate-y-1 hover:shadow-xl transition-all duration-300 group ${isPending ? "ring-1 ring-chart-5/40" : ""}`}>
+      <CardContent className="p-5 space-y-4 flex flex-col h-full relative z-10">
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
             <p className="text-sm font-semibold text-foreground font-mono">{task.taskCode}</p>
@@ -64,9 +64,9 @@ function ValidationCard({ task, extraction, evidence, onAction }: {
         </div>
 
         <div className="space-y-1.5">
-          <div className="flex items-center justify-between text-xs">
-            <span className="text-muted-foreground">Trust Score</span>
-            <span className={`font-bold ${trustPct >= 75 ? "text-chart-3" : trustPct >= 50 ? "text-chart-5" : "text-destructive"}`}>{trustPct}%</span>
+          <div className="flex items-center justify-between text-xs mb-1">
+            <span className="text-muted-foreground font-medium uppercase tracking-widest text-[10px]">Trust Score</span>
+            <span className={`font-bold text-sm ${trustPct >= 75 ? "text-chart-3" : trustPct >= 50 ? "text-chart-5" : "text-destructive"}`}>{trustPct}%</span>
           </div>
           <Progress value={trustPct} className="h-1.5" />
         </div>
@@ -345,31 +345,35 @@ function ReviewDialog({ task, extraction, evidence, open, onClose }: {
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-w-2xl max-h-[85vh] overflow-auto">
-        <DialogHeader>
-          <DialogTitle className="text-sm flex items-center gap-2">
-            <CheckSquare className="w-4 h-4 text-primary" />
-            Human Validation — {task.taskCode}
+      <DialogContent className="max-w-5xl max-h-[90vh] p-0 overflow-hidden flex flex-col glass-panel border-0 shadow-2xl">
+        <DialogHeader className="p-6 pb-4 border-b border-border/50 bg-background/50 backdrop-blur-sm z-10 relative">
+          <DialogTitle className="text-lg font-bold flex items-center gap-3">
+            <div className="p-2 bg-primary/10 rounded-lg">
+              <CheckSquare className="w-5 h-5 text-primary" />
+            </div>
+            Human Validation — <span className="font-mono text-primary">{task.taskCode}</span>
             {unresolvedCount > 0 && (
-              <Badge variant="outline" className="ml-2 text-xs border-destructive/40 text-destructive bg-destructive/5">
+              <Badge variant="outline" className="ml-auto text-xs border-destructive/40 text-destructive bg-destructive/5 animate-pulse">
                 {unresolvedCount} conflict{unresolvedCount !== 1 ? "s" : ""}
               </Badge>
             )}
           </DialogTitle>
         </DialogHeader>
 
-        <div className="space-y-4">
-          {/* Summary */}
-          <div className="grid grid-cols-2 gap-3 p-3 rounded-md bg-muted text-xs">
-            <div><span className="text-muted-foreground">File:</span> <span className="font-medium">{evidence?.fileName ?? "—"}</span></div>
-            <div><span className="text-muted-foreground">Type:</span> <span className="font-medium">{extraction?.docType ?? "—"}</span></div>
-            <div><span className="text-muted-foreground">Trust Score:</span>
-              <span className={`font-medium ml-1 ${Math.round(task.trustScore * 100) >= 70 ? "text-chart-3" : "text-destructive"}`}>
-                {Math.round(task.trustScore * 100)}%
-              </span>
+        <div className="flex-1 overflow-hidden flex flex-col md:flex-row relative z-0">
+          {/* Left Column: Summary, Conflicts, Notes */}
+          <div className="p-6 md:w-1/2 space-y-6 overflow-y-auto border-r border-border/50">
+            {/* Summary */}
+            <div className="grid grid-cols-2 gap-4 p-4 rounded-xl bg-muted/30 text-xs shadow-inner">
+              <div className="space-y-1"><span className="text-muted-foreground uppercase tracking-widest text-[10px] font-bold block">File</span> <span className="font-semibold text-foreground text-sm">{evidence?.fileName ?? "—"}</span></div>
+              <div className="space-y-1"><span className="text-muted-foreground uppercase tracking-widest text-[10px] font-bold block">Type</span> <span className="font-semibold text-foreground text-sm">{extraction?.docType ?? "—"}</span></div>
+              <div className="space-y-1"><span className="text-muted-foreground uppercase tracking-widest text-[10px] font-bold block">Trust Score</span>
+                <span className={`font-bold text-sm block ${Math.round(task.trustScore * 100) >= 70 ? "text-chart-3" : "text-destructive"}`}>
+                  {Math.round(task.trustScore * 100)}%
+                </span>
+              </div>
+              <div className="space-y-1"><span className="text-muted-foreground uppercase tracking-widest text-[10px] font-bold block">Policy</span> <span className="font-semibold text-foreground text-sm">{task.approvalPolicyRule ?? "—"}</span></div>
             </div>
-            <div><span className="text-muted-foreground">Policy:</span> <span className="font-medium">{task.approvalPolicyRule ?? "—"}</span></div>
-          </div>
 
           {task.approvalPolicyReason && (
             <div className="flex items-start gap-2 p-2.5 rounded-md border border-chart-5/30 bg-chart-5/5 text-xs text-chart-5">
@@ -393,67 +397,78 @@ function ReviewDialog({ task, extraction, evidence, open, onClose }: {
             </>
           )}
 
-          {/* ── Fields ── */}
-          {Object.keys(fields).length > 0 && (
+            {/* ── Validator Notes ── */}
             <div>
-              <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Extracted Fields</h4>
-              <div className="space-y-1.5">
-                {Object.entries(fields).map(([key, val]) => {
-                  const needsValidation = task.fieldsToValidate?.includes(key);
-                  const isConflict = hasConflicts && (displayTask.conflictDetails as ConflictDetail[]).some(d => d.field_key === key);
-                  return (
-                    <div
-                      key={key}
-                      className={`flex items-center justify-between p-2.5 rounded-md border text-xs ${
-                        isConflict ? "border-destructive/30 bg-destructive/5" :
-                        needsValidation ? "border-chart-5/40 bg-chart-5/5" : "border-border"
-                      }`}
-                      data-testid={`field-row-${key}`}
-                    >
-                      <div className="min-w-0 flex-1">
-                        <p className="font-medium capitalize">{key.replace(/_/g, " ")}</p>
-                        <p className="text-muted-foreground truncate">{String(val)}</p>
-                      </div>
-                      {isConflict && <Badge variant="outline" className="text-xs border-destructive/40 text-destructive bg-destructive/5 ml-2 flex-shrink-0">Conflict</Badge>}
-                      {!isConflict && needsValidation && <Badge variant="outline" className="text-xs border-chart-5/40 text-chart-5 bg-chart-5/5 ml-2 flex-shrink-0">Review</Badge>}
-                    </div>
-                  );
-                })}
-              </div>
+              <Label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-2 block">Validator Notes</Label>
+              <Textarea
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
+                rows={3}
+                placeholder="Add notes about this validation decision..."
+                className="text-sm rounded-xl bg-background/50"
+                data-testid="input-validator-notes"
+              />
             </div>
-          )}
-
-          {/* ── Entities ── */}
-          {entities.length > 0 && (
-            <div>
-              <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Extracted Entities</h4>
-              <div className="space-y-1">
-                {entities.slice(0, 5).map((e: any, i: number) => (
-                  <div key={i} className="flex items-center justify-between text-xs p-2 rounded bg-muted">
-                    <span className="text-muted-foreground">{e.entity}</span>
-                    <span className="font-medium text-foreground">{e.value}</span>
-                    <Badge variant="outline" className="text-xs">{Math.round(e.confidence * 100)}%</Badge>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* ── Validator Notes ── */}
-          <div>
-            <Label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2 block">Validator Notes</Label>
-            <Textarea
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-              rows={3}
-              placeholder="Add notes about this validation decision..."
-              className="text-sm"
-              data-testid="input-validator-notes"
-            />
           </div>
 
-          {/* ── Actions ── */}
-          <div className="flex items-center gap-2 pt-2 border-t border-border flex-wrap">
+          {/* Right Column: Fields & Entities */}
+          <div className="p-6 md:w-1/2 space-y-8 overflow-y-auto bg-muted/10">
+            {/* ── Fields ── */}
+            {Object.keys(fields).length > 0 && (
+              <div>
+                <h4 className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-3 flex items-center gap-2">
+                  <Database className="w-3.5 h-3.5" /> Extracted Fields
+                </h4>
+                <div className="space-y-2">
+                  {Object.entries(fields).map(([key, val]) => {
+                    const needsValidation = task.fieldsToValidate?.includes(key);
+                    const isConflict = hasConflicts && (displayTask.conflictDetails as ConflictDetail[]).some(d => d.field_key === key);
+                    return (
+                      <div
+                        key={key}
+                        className={`flex flex-col p-3 rounded-xl border transition-all ${
+                          isConflict ? "border-destructive/40 bg-destructive/5 shadow-[0_0_10px_rgba(var(--destructive),0.1)]" :
+                          needsValidation ? "border-chart-5/50 bg-chart-5/5 shadow-sm" : "border-border/50 bg-background/50 hover:bg-background"
+                        }`}
+                        data-testid={`field-row-${key}`}
+                      >
+                        <div className="flex items-start justify-between mb-1">
+                          <p className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider">{key.replace(/_/g, " ")}</p>
+                          <div className="flex gap-1">
+                            {isConflict && <Badge variant="destructive" className="text-[9px] uppercase px-1.5 py-0 h-4">Conflict</Badge>}
+                            {!isConflict && needsValidation && <Badge variant="outline" className="text-[9px] border-chart-5/50 text-chart-5 bg-chart-5/10 uppercase px-1.5 py-0 h-4">Review</Badge>}
+                          </div>
+                        </div>
+                        <p className={`font-mono text-base break-all ${isConflict ? 'text-destructive font-bold' : 'text-foreground font-medium'}`}>{String(val)}</p>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* ── Entities ── */}
+            {entities.length > 0 && (
+              <div>
+                <h4 className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-3">Extracted Entities</h4>
+                <div className="space-y-2">
+                  {entities.slice(0, 5).map((e: any, i: number) => (
+                    <div key={i} className="flex flex-col p-3 rounded-xl border border-border/50 bg-background/50">
+                       <div className="flex justify-between items-center mb-1">
+                          <span className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider">{e.entity}</span>
+                          <Badge variant="outline" className={`text-[9px] h-4 ${e.confidence >= 0.8 ? 'text-chart-3 border-chart-3/30 bg-chart-3/5' : 'text-chart-5 border-chart-5/30 bg-chart-5/5'}`}>{Math.round(e.confidence * 100)}%</Badge>
+                       </div>
+                       <span className="font-mono text-base font-medium text-foreground">{e.value}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* ── Actions ── */}
+        <div className="flex items-center gap-3 p-5 border-t border-border/50 bg-background/80 backdrop-blur flex-wrap relative z-10">
             <Button
               size="sm"
               className="gap-2 bg-chart-3 text-white border-chart-3"
@@ -493,8 +508,7 @@ function ReviewDialog({ task, extraction, evidence, open, onClose }: {
             >
               <ArrowUpRight className="w-3.5 h-3.5" /> Escalate
             </Button>
-            <Button size="sm" variant="ghost" onClick={onClose} className="ml-auto">Cancel</Button>
-          </div>
+            <Button size="sm" variant="ghost" onClick={onClose} className="ml-auto rounded-xl">Cancel</Button>
         </div>
       </DialogContent>
     </Dialog>
@@ -554,22 +568,27 @@ export default function Validation() {
         </div>
       </div>
 
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
         {[
-          { label: "Total Tasks", value: counts.all, icon: CheckSquare, color: "text-foreground" },
-          { label: "Pending Review", value: counts.pending, icon: AlertTriangle, color: "text-chart-5" },
-          { label: "Approved", value: counts.approved, icon: CheckCircle2, color: "text-chart-3" },
-          { label: "Rejected / Rescan", value: counts.rejected, icon: XCircle, color: "text-destructive" },
+          { label: "Total Tasks", value: counts.all, icon: CheckSquare, color: "text-foreground bg-primary/5" },
+          { label: "Pending Review", value: counts.pending, icon: AlertTriangle, color: "text-chart-5 bg-chart-5/5" },
+          { label: "Approved", value: counts.approved, icon: CheckCircle2, color: "text-chart-3 bg-chart-3/5" },
+          { label: "Rejected / Rescan", value: counts.rejected, icon: XCircle, color: "text-destructive bg-destructive/5" },
         ].map((s) => (
-          <Card key={s.label}><CardContent className="p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-xs text-muted-foreground">{s.label}</p>
-                <p className={`text-2xl font-bold ${s.color}`}>{isLoading ? "—" : s.value}</p>
+          <Card key={s.label} className="glass-panel border-0 relative overflow-hidden group">
+            <div className="absolute -right-4 -top-4 w-16 h-16 rounded-full bg-current opacity-5 blur-xl group-hover:opacity-10 transition-opacity duration-500 pointer-events-none" style={{ color: "var(--foreground)" }} />
+            <CardContent className="p-5 relative z-10">
+              <div className="flex items-center justify-between">
+                <div className="flex flex-col gap-1">
+                  <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">{s.label}</p>
+                  <p className={`text-3xl font-extrabold ${s.color.split(' ')[0]}`}>{isLoading ? "—" : s.value}</p>
+                </div>
+                <div className={`p-2 rounded-xl ${s.color.split(' ')[1]}`}>
+                  <s.icon className={`w-6 h-6 ${s.color.split(' ')[0]}`} />
+                </div>
               </div>
-              <s.icon className={`w-6 h-6 ${s.color} opacity-70`} />
-            </div>
-          </CardContent></Card>
+            </CardContent>
+          </Card>
         ))}
       </div>
 

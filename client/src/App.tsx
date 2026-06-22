@@ -13,6 +13,7 @@ import Intelligence from "@/pages/intelligence";
 import Validation from "@/pages/validation";
 import CdmExplorer from "@/pages/cdm";
 import Publishing from "@/pages/publishing";
+import KgVisualizer from "@/pages/kg-visualizer";
 import AuditLog from "@/pages/audit";
 import UserManagement from "@/pages/users";
 import AuthPage from "@/pages/auth";
@@ -95,11 +96,11 @@ function ThemeToggle() {
 }
 
 const ROLE_COLORS: Record<string, string> = {
-  SUPER_ADMIN: "border-red-500/40 text-red-600 dark:text-red-400 bg-red-500/5",
-  ADMIN: "border-orange-500/40 text-orange-600 dark:text-orange-400 bg-orange-500/5",
-  ANALYST: "border-blue-500/40 text-blue-600 dark:text-blue-400 bg-blue-500/5",
-  REVIEWER: "border-purple-500/40 text-purple-600 dark:text-purple-400 bg-purple-500/5",
-  VIEWER: "border-green-500/40 text-green-600 dark:text-green-400 bg-green-500/5",
+  SUPER_ADMIN: "border-destructive/40 text-destructive bg-destructive/10",
+  ADMIN: "border-primary/40 text-primary bg-primary/10",
+  ANALYST: "border-blue-500/40 text-blue-500 bg-blue-500/10",
+  REVIEWER: "border-accent/40 text-accent bg-accent/10",
+  VIEWER: "border-green-500/40 text-green-500 bg-green-500/10",
 };
 
 function UserMenu() {
@@ -124,14 +125,15 @@ function UserMenu() {
     <>
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
-          <Button variant="ghost" size="sm" className="gap-2 h-8 px-2" data-testid="button-user-menu">
-            <div className="w-6 h-6 rounded-full bg-primary/15 flex items-center justify-center text-xs font-bold text-primary">
+          <Button variant="ghost" size="sm" className="gap-3 h-10 px-3 hover:bg-primary/5 rounded-xl transition-all" data-testid="button-user-menu">
+            <div className="w-8 h-8 rounded-full bg-primary/10 border border-primary/20 flex items-center justify-center text-sm font-bold text-primary shadow-sm">
               {initials}
             </div>
             <div className="hidden sm:flex flex-col items-start">
-              <span className="text-xs font-medium leading-none">{user.firstName} {user.lastName}</span>
+              <span className="text-sm font-semibold leading-none">{user.firstName} {user.lastName}</span>
+              <span className="text-[10px] uppercase tracking-wider text-muted-foreground mt-1 font-medium">{user.role.replace("_", " ")}</span>
             </div>
-            <ChevronDown className="w-3 h-3 text-muted-foreground" />
+            <ChevronDown className="w-4 h-4 text-muted-foreground opacity-50" />
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="w-56">
@@ -222,15 +224,20 @@ function ProtectedApp() {
   return (
     <MandatoryPasswordChangeGate>
       <SidebarProvider style={sidebarStyle as React.CSSProperties}>
-        <div className="flex h-screen w-full bg-background">
+        <div className="flex h-screen w-full bg-background relative overflow-hidden">
+          {/* Animated Background Mesh */}
+          <div className="absolute inset-0 z-0 overflow-hidden pointer-events-none">
+            <div className="absolute -top-[20%] -left-[10%] w-[50%] h-[50%] rounded-full bg-primary/10 blur-[120px] animate-float" />
+            <div className="absolute top-[60%] -right-[10%] w-[40%] h-[60%] rounded-full bg-accent/10 blur-[120px] animate-float" style={{ animationDelay: '2s' }} />
+          </div>
           <AppSidebar />
-          <div className="flex flex-col flex-1 min-w-0">
-            <header className="flex items-center justify-between px-4 py-2 border-b border-border bg-background/80 backdrop-blur sticky top-0 z-50 h-12">
+          <div className="flex flex-col flex-1 min-w-0 relative z-10">
+            <header className="flex items-center justify-between px-6 py-3 border-b border-border/50 bg-background/40 backdrop-blur-xl sticky top-0 z-50 h-16 shadow-sm">
               <div className="flex items-center gap-2">
                 <SidebarTrigger data-testid="button-sidebar-toggle" className="h-8 w-8" />
-                <span className="text-xs text-muted-foreground hidden sm:block">AI Institute Africa</span>
+                <span className="text-sm font-medium text-muted-foreground hidden sm:block ml-2">AI Institute Africa</span>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-3">
                 <ThemeToggle />
                 <UserMenu />
               </div>
@@ -252,6 +259,12 @@ function ProtectedApp() {
                 </Route>
                 <Route path="/publishing">
                   {() => <RoleGuard minRole="ADMIN" component={Publishing} />}
+                </Route>
+                <Route path="/graph">
+                  {() => <RoleGuard minRole="ANALYST" component={KgVisualizer} />}
+                </Route>
+                <Route path="/graph/:datasetId">
+                  {() => <RoleGuard minRole="ANALYST" component={KgVisualizer} />}
                 </Route>
                 <Route path="/audit">
                   {() => <RoleGuard minRole="ADMIN" component={AuditLog} />}

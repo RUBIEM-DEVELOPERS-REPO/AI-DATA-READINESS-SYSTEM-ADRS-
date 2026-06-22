@@ -3,6 +3,7 @@ import path from "path";
 import { execSync } from "child_process";
 import { UPLOADS_DIR } from "../upload";
 import * as XLSX from "xlsx";
+import JSZip from "jszip";
 
 // ─── PDF Text Extraction ─────────────────────────────────────────────────────
 
@@ -93,7 +94,7 @@ function extractPdfText(filePath: string): string {
         }
       }
     }
-    const result = texts.join(" ").replace(/\s+/g, " ").trim();
+    const result = texts.join(" ").replace(/\s+/g, " ").replace(/\0/g, "").trim();
     return result.length > 0 ? result.slice(0, 50000) : "[No extractable text in PDF]";
   } catch {
     return "[PDF parsing failed]";
@@ -127,7 +128,7 @@ export async function extractTextFromFile(storedUri: string, fileFormat: string)
     }
 
     if (["docx", "doc"].includes(fmt)) {
-      return extractDocxText(filePath);
+      return await extractDocxText(filePath);
     }
 
     // For images, audio, video — return empty (handled by vision/transcription)
@@ -139,7 +140,8 @@ export async function extractTextFromFile(storedUri: string, fileFormat: string)
 
 function extractXlsxText(filePath: string): string {
   try {
-    const workbook = XLSX.readFile(filePath, { type: "file", dense: true });
+    const buf = fs.readFileSync(filePath);
+    const workbook = XLSX.read(buf, { type: "buffer", dense: true });
     const lines: string[] = [];
     for (const sheetName of workbook.SheetNames) {
       lines.push(`--- Sheet: ${sheetName} ---`);
@@ -158,12 +160,14 @@ function extractXlsxText(filePath: string): string {
   }
 }
 
-function extractDocxText(filePath: string): string {
+async function extractDocxText(filePath: string): Promise<string> {
   try {
-    // Read raw XML from docx (it's a zip)
-    const zip = XLSX.utils.book_new();
     const raw = fs.readFileSync(filePath);
-    const textMatches = raw.toString("utf-8").match(/<w:t[^>]*>([^<]+)<\/w:t>/g) ?? [];
+    const zip = await JSZip.loadAsync(raw);
+    const docXml = await zip.file("word/document.xml")?.async("string");
+    if (!docXml) return "[DOCX has no readable text content]";
+
+    const textMatches = docXml.match(/<w:t[^>]*>([^<]+)<\/w:t>/g) ?? [];
     const text = textMatches
       .map((m) => m.replace(/<[^>]+>/g, ""))
       .join(" ")
@@ -182,6 +186,8 @@ function extractDocxText(filePath: string): string {
 export function isTextExtractionFailure(text: string): boolean {
   if (!text || text.length < 10) return true;
   if (text.startsWith("[")) return true;
+  const unprintable = (text.match(/[^\x20-\x7E\s\u00A0-\uFFFF]/g) || []).length;
+  if (unprintable / text.length > 0.05) return true;
   return false;
 }
 
