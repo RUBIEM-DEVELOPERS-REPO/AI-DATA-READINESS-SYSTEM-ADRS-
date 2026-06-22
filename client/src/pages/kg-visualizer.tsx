@@ -40,7 +40,7 @@ export default function KgVisualizer({ datasetId: propDatasetId }: { datasetId?:
     return () => observer.disconnect();
   }, []);
 
-  // Fetch and parse JSONL
+  // Fetch and parse JSONL or fetch Live Graph
   useEffect(() => {
     if (!datasetId) {
       setGraphData(null);
@@ -49,38 +49,45 @@ export default function KgVisualizer({ datasetId: propDatasetId }: { datasetId?:
     const loadGraph = async () => {
       setLoadingGraph(true);
       try {
-        const res = await fetch(`/api/datasets/${datasetId}/artifact?type=kg_graph`);
-        if (!res.ok) throw new Error("Failed to fetch graph data");
-        const text = await res.text();
-        const lines = text.split("\n").filter((l) => l.trim().length > 0);
-        
-        const nodes: any[] = [];
-        const links: any[] = [];
-        
-        for (const line of lines) {
-          try {
-            const record = JSON.parse(line);
-            if (record.record_type === "NODE") {
-              nodes.push({
-                id: record.id,
-                name: record.properties?.display_name || record.label,
-                val: record.properties?.confidence_score ? record.properties.confidence_score * 10 : 5,
-                group: record.label,
-                ...record
-              });
-            } else if (record.record_type === "EDGE") {
-              links.push({
-                source: record.from,
-                target: record.to,
-                name: record.type_label,
-                ...record
-              });
+        if (datasetId === "live") {
+          const res = await fetch("/api/graph/live");
+          if (!res.ok) throw new Error("Failed to fetch live graph");
+          const data = await res.json();
+          setGraphData({ nodes: data.nodes || [], links: data.links || [] });
+        } else {
+          const res = await fetch(`/api/datasets/${datasetId}/artifact?type=kg_graph`);
+          if (!res.ok) throw new Error("Failed to fetch graph data");
+          const text = await res.text();
+          const lines = text.split("\n").filter((l) => l.trim().length > 0);
+          
+          const nodes: any[] = [];
+          const links: any[] = [];
+          
+          for (const line of lines) {
+            try {
+              const record = JSON.parse(line);
+              if (record.record_type === "NODE") {
+                nodes.push({
+                  id: record.id,
+                  name: record.properties?.display_name || record.label,
+                  val: record.properties?.confidence_score ? record.properties.confidence_score * 10 : 5,
+                  group: record.label,
+                  ...record
+                });
+              } else if (record.record_type === "EDGE") {
+                links.push({
+                  source: record.from,
+                  target: record.to,
+                  name: record.type_label,
+                  ...record
+                });
+              }
+            } catch (e) {
+              // ignore parse errors for individual lines
             }
-          } catch (e) {
-            // ignore parse errors for individual lines
           }
+          setGraphData({ nodes, links });
         }
-        setGraphData({ nodes, links });
       } catch (err) {
         console.error(err);
       } finally {
@@ -148,6 +155,9 @@ export default function KgVisualizer({ datasetId: propDatasetId }: { datasetId?:
               <SelectValue placeholder="Select a dataset..." />
             </SelectTrigger>
             <SelectContent>
+              <SelectItem value="live" className="font-bold text-primary">
+                Live Global Graph
+              </SelectItem>
               {datasets?.map(ds => (
                 <SelectItem key={ds.id} value={ds.datasetCode}>
                   {ds.name} (v{ds.version})
@@ -155,6 +165,16 @@ export default function KgVisualizer({ datasetId: propDatasetId }: { datasetId?:
               ))}
             </SelectContent>
           </Select>
+          
+          {datasetId === "live" && (
+            <Button 
+              variant="default" 
+              size="sm" 
+              onClick={() => fetch('/api/graph/sync', { method: 'POST' }).then(() => window.location.reload())}
+            >
+              Sync Graph
+            </Button>
+          )}
         </div>
       </div>
 
