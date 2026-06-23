@@ -3,6 +3,7 @@ import type { NormalizedAttribute, InsertCdmEntity } from "@shared/schema";
 import { ADRS_CONFIG } from "../config";
 import { buildContactBindings, applyContactBindingsToParty } from "./contact-binding";
 import { classifyEntityForCdm } from "./entity-type-correction";
+import { validateAndCorrectEdge } from "./ontology";
 
 export interface InferredParty {
   entity: InsertCdmEntity;
@@ -107,6 +108,29 @@ function assignLifecycle(
     return { lifecycle: "CANDIDATE", reason: "Document entity auto-promoted to CANDIDATE on creation" };
   }
   return { lifecycle: "CANDIDATE", reason: `Confidence ${(confidence * 100).toFixed(0)}% meets CANDIDATE threshold` };
+}
+
+// ─── Semantic Relationship Inference ──────────────────────────────────────────
+function inferSemanticRelationship(docType: string, prefix: string): string {
+  const profile = docType.toLowerCase();
+  const role = prefix.toLowerCase();
+
+  if (profile === "invoice" || profile === "receipt" || profile === "purchase_order") {
+    if (role === "vendor" || role === "supplier" || role === "issuer") return "ISSUED_BY";
+    if (role === "customer" || role === "client" || role === "buyer") return "ISSUED_TO";
+  }
+  
+  if (profile === "cv" || profile === "identity") {
+    if (role === "candidate" || role === "person" || role === "employee") return "SUBJECT_OF";
+  }
+  
+  if (profile === "contract" || profile === "agreement" || profile === "lease") {
+    if (role === "signatory" || role === "party" || role === "contractor") return "SIGNED_BY";
+    if (role === "employer") return "EMPLOYED_BY";
+  }
+
+  // Fallback generic relationship
+  return "MENTIONED_IN";
 }
 
 // ─── Party inference from normalized attributes ───────────────────────────────
@@ -222,7 +246,31 @@ export function inferParties(
       },
     };
 
-    parties.push({ entity, sourceAttrKeys: groupAttrs.map(a => a.field_key), identifiers, relationships: [] });
+    const semanticEdge = inferSemanticRelationship(docType, prefix);
+
+    // Moonshot 2: Neuro-Symbolic Logic Check
+    // The source of this relationship is the newly inferred Party (PERSON or ORGANIZATION)
+    // The target is the DOCUMENT (evidenceId).
+    // Note: The relationships array defines edges pointing OUT of this entity.
+    const validation = validateAndCorrectEdge(entityType, "DOCUMENT", semanticEdge);
+    
+    const relationships = [];
+    if (validation.isValid && validation.correctedRelationshipType) {
+      relationships.push({ 
+        target_entity_id: evidenceId, 
+        relationship_type: validation.correctedRelationshipType, 
+        confidence 
+      });
+    } else {
+      console.warn(`[Neuro-Symbolic] Rejected edge: ${validation.rejectionReason}`);
+    }
+
+    parties.push({ 
+      entity, 
+      sourceAttrKeys: groupAttrs.map(a => a.field_key), 
+      identifiers, 
+      relationships 
+    });
     partyIndex++;
   }
 

@@ -4,6 +4,7 @@ import path from "path";
 import os from "os";
 import { execSync } from "child_process";
 import { UPLOADS_DIR } from "../upload";
+import { resolveDynamicProfile } from "./attention";
 
 const openai = new OpenAI({
   apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
@@ -182,12 +183,22 @@ export async function aiExtractDocumentFields(
     const parsed = JSON.parse(raw);
 
     const fields: Record<string, AiExtractedField> = {};
+    
+    // Moonshot 1: Dynamic Contextual Attention based on Zero-Shot Document Summary Embedding
+    const { profile, similarityScore } = await resolveDynamicProfile(parsed.summary || "", parsed.doc_type || "OTHER");
+
     for (const [key, val] of Object.entries(parsed.fields ?? {})) {
       const v = val as { value: string; confidence: number };
       if (v?.value != null && String(v.value).trim() !== "") {
+        let confidence = Math.min(1, Math.max(0, Number(v.confidence) || 0.75));
+        
+        // Apply profile-driven relevance weighting AND the dynamic semantic similarity scale
+        const weight = profile.relevanceWeights[key.toLowerCase()] || 1.0;
+        confidence = Math.min(1, confidence * weight * similarityScore);
+
         fields[key] = {
           value: String(v.value).trim(),
-          confidence: Math.min(1, Math.max(0, Number(v.confidence) || 0.75)),
+          confidence,
           source: "ai",
         };
       }

@@ -554,3 +554,28 @@ export interface ConflictResolution {
   chosen_value: string;
   source: "option_a" | "option_b" | "custom";
 }
+
+// ─── Strict Entity Schema Definitions ─────────────────────────────────────────
+// These harden the CDM by ensuring that known entity types have well-typed fields
+export const personFieldsSchema = z.object({
+  name: z.string().min(1).optional(),
+  date_of_birth: z.string().optional(),
+  nationality: z.string().optional(),
+  gender: z.string().optional(),
+}).catchall(z.any());
+
+export const organizationFieldsSchema = z.object({
+  name: z.string().min(1).optional(),
+  registration_number: z.string().optional(),
+  tax_number: z.string().optional(),
+  industry: z.string().optional(),
+  jurisdiction: z.string().optional(),
+}).catchall(z.any());
+
+export const documentFieldsSchema = z.object({
+  title: z.string().optional(),
+  doc_type: z.string().optional(),
+  document_date: z.string().optional(),
+  reference_number: z.string().optional(),
+}).catchall(z.any());
+

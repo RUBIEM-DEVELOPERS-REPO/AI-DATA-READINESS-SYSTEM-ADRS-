@@ -4,7 +4,7 @@ import {
   SidebarGroupLabel, SidebarHeader, SidebarMenu, SidebarMenuButton, SidebarMenuItem, SidebarSeparator
 } from "@/components/ui/sidebar";
 import {
-  LayoutDashboard, FolderOpen, Brain, CheckSquare, Database, Upload, FileText, Shield, BarChart3, Users
+  LayoutDashboard, FolderOpen, Brain, CheckSquare, Database, Upload, FileText, Shield, BarChart3, Users, BookOpen, Target, GitBranch
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { useQuery } from "@tanstack/react-query";
@@ -45,7 +45,15 @@ const navGroups: NavGroup[] = [
     group: "Data Layer",
     items: [
       { title: "CDM Explorer", url: "/cdm",        icon: Database, minRole: "ANALYST" },
+      { title: "Data Catalogue", url: "/catalogue", icon: BookOpen, minRole: "ANALYST" },
       { title: "Publishing",   url: "/publishing", icon: Upload,   minRole: "ADMIN"  },
+    ],
+  },
+  {
+    group: "AI Intelligence",
+    items: [
+      { title: "Layer 5 Engine",  url: "/intelligence-layer", icon: GitBranch, minRole: "ANALYST" },
+      { title: "Benchmarking", url: "/evaluate",  icon: Target, minRole: "ANALYST" },
     ],
   },
   {
