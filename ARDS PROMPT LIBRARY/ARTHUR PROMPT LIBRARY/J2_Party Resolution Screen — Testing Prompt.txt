@@ -1,4 +1,0 @@
-Generate tests verifying:
-* payload correct
-* golden_record_id displayed
-

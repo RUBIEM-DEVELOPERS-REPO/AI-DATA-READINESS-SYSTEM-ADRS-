@@ -1,5 +1,0 @@
-Generate tests verifying:
-* logs render
-* filters work
-* unauthorized user blocked
-

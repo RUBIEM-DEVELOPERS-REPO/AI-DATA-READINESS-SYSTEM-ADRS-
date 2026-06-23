@@ -1,2 +1,0 @@
-Generate tests verifying golden record renders properly.
-

@@ -1,5 +1,0 @@
-Generate tests verifying:
-* request payload correct
-* success output shown
-* errors displayed
-

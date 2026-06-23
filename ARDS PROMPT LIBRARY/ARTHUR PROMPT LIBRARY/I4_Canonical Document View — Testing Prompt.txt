@@ -1,5 +1,0 @@
-Generate tests verifying:
-* document info renders
-* attributes list renders
-* missing object_id handled gracefully
-
