@@ -1,7 +1,0 @@
-Goal
-Generate tests verifying:
-* form renders
-* submit stores token
-* redirect occurs
-* invalid login shows error
-

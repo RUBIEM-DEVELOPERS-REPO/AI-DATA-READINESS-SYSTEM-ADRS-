@@ -1,5 +1,0 @@
-Generate tests verifying:
-* tasks render
-* filter works
-* click navigates
-
