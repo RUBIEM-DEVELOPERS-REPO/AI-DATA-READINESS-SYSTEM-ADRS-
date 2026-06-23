@@ -23,6 +23,7 @@ import { db } from "./db";
 import { kgNodes, kgEdges } from "@shared/schema";
 import { generateEmbedding, semanticSearch } from "./services/embeddings";
 import { groupEntitiesForMerge, getSingletonEntityIds } from "./services/golden-records";
+import { evaluateExtraction, type GroundTruthEntry } from "./services/evaluation";
 import unzipper from "unzipper";
 import multer from "multer";
 
@@ -1706,6 +1707,23 @@ ${contextString}`;
     }
   });
 
-  const httpServer = createServer(app);
+  // ─── Evaluation / Benchmarking endpoint ────────────────────────────────────
+  app.post("/api/evaluate", requireAuth, requireRole("ANALYST"), async (req: any, res: any) => {
+    try {
+      const { extractionRunId, groundTruth } = req.body as { extractionRunId: string; groundTruth: GroundTruthEntry[] };
+      if (!extractionRunId || !Array.isArray(groundTruth) || groundTruth.length === 0) {
+        return res.status(400).json({ error: "extractionRunId and groundTruth array are required" });
+      }
+      const run = await storage.getExtractionRun(extractionRunId);
+      if (!run) return res.status(404).json({ error: "Extraction run not found" });
+      const attrs = (run.extractedAttributes as any[]) ?? [];
+      const report = evaluateExtraction(groundTruth, attrs);
+      res.json(report);
+    } catch (err: any) {
+      console.error("[Evaluate] Error:", err);
+      res.status(500).json({ error: "Evaluation failed" });
+    }
+  });
+
   return httpServer;
 }

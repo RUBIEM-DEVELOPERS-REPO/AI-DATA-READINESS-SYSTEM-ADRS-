@@ -17,6 +17,9 @@ import KgVisualizer from "@/pages/kg-visualizer";
 import AuditLog from "@/pages/audit";
 import UserManagement from "@/pages/users";
 import AuthPage from "@/pages/auth";
+import Catalogue from "@/pages/catalogue";
+import Evaluate from "@/pages/evaluate";
+import IntelligenceLayer from "@/pages/intelligence-layer";
 import { useEffect, useState } from "react";
 import { Moon, Sun, LogOut, ChevronDown, Shield, Lock, KeyRound } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -272,6 +275,15 @@ function ProtectedApp() {
                 </Route>
                 <Route path="/users">
                   {() => <RoleGuard minRole="ADMIN" component={UserManagement} />}
+                </Route>
+                <Route path="/catalogue">
+                  {() => <RoleGuard minRole="ANALYST" component={Catalogue} />}
+                </Route>
+                <Route path="/evaluate">
+                  {() => <RoleGuard minRole="ANALYST" component={Evaluate} />}
+                </Route>
+                <Route path="/intelligence-layer">
+                  {() => <RoleGuard minRole="ANALYST" component={IntelligenceLayer} />}
                 </Route>
                 <Route component={NotFound} />
               </Switch>
