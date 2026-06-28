@@ -33,9 +33,12 @@ function parseApiError(err: any): string {
 const ROLE_INFO = {
   SUPER_ADMIN: { label: "Super Admin", desc: "Full system access & user management", color: "text-red-500" },
   ADMIN: { label: "Admin", desc: "Tenant-level admin, manage users & batches", color: "text-orange-500" },
+  DATA_CONTROLLER: { label: "Data Controller", desc: "Oversees data inventory and compliance obligations", color: "text-cyan-500" },
+  DATA_PROTECTION_OFFICER: { label: "Data Protection Officer", desc: "Compliance and privacy governance", color: "text-sky-500" },
   ANALYST: { label: "Analyst", desc: "Upload evidence, run extraction, publish datasets", color: "text-blue-500" },
   REVIEWER: { label: "Reviewer", desc: "Human-in-the-loop validation only", color: "text-purple-500" },
   VIEWER: { label: "Viewer", desc: "Read-only access to published datasets", color: "text-green-500" },
+  REGULATOR: { label: "Regulator", desc: "Read-only supervisor with regulatory visibility", color: "text-emerald-500" },
 };
 
 const requestAccessSchema = z.object({
@@ -43,7 +46,7 @@ const requestAccessSchema = z.object({
   lastName: z.string().min(1, "Last name is required").max(100),
   email: z.string().email("Invalid email address"),
   organisation: z.string().min(1, "Organisation / department is required").max(200),
-  requestedRole: z.enum(["SUPER_ADMIN", "ADMIN", "ANALYST", "REVIEWER", "VIEWER"]),
+  requestedRole: z.enum(["SUPER_ADMIN", "ADMIN", "DATA_CONTROLLER", "DATA_PROTECTION_OFFICER", "ANALYST", "REVIEWER", "VIEWER", "REGULATOR"]),
   reason: z.string().min(20, "Please provide at least 20 characters explaining why you need access").max(1000),
 });
 type RequestAccessForm = z.infer<typeof requestAccessSchema>;

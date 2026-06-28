@@ -18,7 +18,7 @@ import type { EvidenceFile, Batch } from "@shared/schema";
 import {
   FileText, Upload, Search, Filter, Lock, Hash, HardDrive, Clock, FolderOpen, Plus, Eye, RefreshCw,
   CheckCircle2, XCircle, AlertCircle, Mic, Video, Timer, Link2, CloudDownload, FolderInput,
-  HardDriveUpload, Globe, Building2, Archive, PackageCheck, PackageX, Zap, Layers
+  HardDriveUpload, Globe, Building2, Archive, PackageCheck, PackageX, Zap, Layers, Pencil
 } from "lucide-react";
 import { SiGoogledrive, SiDropbox } from "react-icons/si";
 import { formatDistanceToNow } from "date-fns";
@@ -347,6 +347,9 @@ function BatchSection({ batch, displayFiles, allFiles, duplicateHashes }: {
         </button>
 
         <div className="flex items-center gap-2 shrink-0">
+          {/* Edit batch capacity button — always visible */}
+          <EditBatchDialog batch={batch} />
+
           {allFiles.length === 0 ? (
             <Badge variant="outline" className="text-xs text-muted-foreground">Empty</Badge>
           ) : pendingFiles.length === 0 ? (
@@ -395,37 +398,37 @@ function BatchSection({ batch, displayFiles, allFiles, duplicateHashes }: {
           {/* Timing metrics grid */}
           <div className="grid grid-cols-3 gap-px bg-primary/10 border-t border-primary/15 text-xs">
             <div className="flex flex-col gap-0.5 px-3 py-2 bg-primary/5">
-              <span className="text-muted-foreground uppercase tracking-wide" style={{ fontSize: "0.65rem" }}>Total elapsed</span>
+              <span className="text-muted-foreground uppercase tracking-wide text-[0.65rem]">Total elapsed</span>
               <span className="font-mono font-bold text-foreground tabular-nums" data-testid={`timer-batch-elapsed-${batch.id}`}>
                 {fmtMs(timing.batchMs)}
               </span>
             </div>
             <div className="flex flex-col gap-0.5 px-3 py-2 bg-primary/5">
-              <span className="text-muted-foreground uppercase tracking-wide" style={{ fontSize: "0.65rem" }}>This file</span>
+              <span className="text-muted-foreground uppercase tracking-wide text-[0.65rem]">This file</span>
               <span className="font-mono font-bold text-foreground tabular-nums" data-testid={`timer-batch-file-${batch.id}`}>
                 {fmtMs(timing.fileMs)}
               </span>
             </div>
             <div className="flex flex-col gap-0.5 px-3 py-2 bg-primary/5">
-              <span className="text-muted-foreground uppercase tracking-wide" style={{ fontSize: "0.65rem" }}>Avg per file</span>
+              <span className="text-muted-foreground uppercase tracking-wide text-[0.65rem]">Avg per file</span>
               <span className="font-mono font-bold text-foreground tabular-nums">
                 {timing.avgMs > 0 ? fmtMs(timing.avgMs) : "—"}
               </span>
             </div>
             <div className="flex flex-col gap-0.5 px-3 py-2 bg-primary/5">
-              <span className="text-muted-foreground uppercase tracking-wide" style={{ fontSize: "0.65rem" }}>Speed</span>
+              <span className="text-muted-foreground uppercase tracking-wide text-[0.65rem]">Speed</span>
               <span className="font-mono font-bold text-foreground tabular-nums">
                 {timing.filesPerMin > 0 ? `${timing.filesPerMin.toFixed(1)}/min` : "—"}
               </span>
             </div>
             <div className="flex flex-col gap-0.5 px-3 py-2 bg-primary/5">
-              <span className="text-muted-foreground uppercase tracking-wide" style={{ fontSize: "0.65rem" }}>ETA</span>
+              <span className="text-muted-foreground uppercase tracking-wide text-[0.65rem]">ETA</span>
               <span className="font-mono font-bold text-foreground tabular-nums" data-testid={`timer-batch-eta-${batch.id}`}>
                 {timing.etaMs > 0 ? `~${fmtMs(timing.etaMs)}` : "—"}
               </span>
             </div>
             <div className="flex flex-col gap-0.5 px-3 py-2 bg-primary/5">
-              <span className="text-muted-foreground uppercase tracking-wide" style={{ fontSize: "0.65rem" }}>Complete</span>
+              <span className="text-muted-foreground uppercase tracking-wide text-[0.65rem]">Complete</span>
               <span className="font-mono font-bold text-foreground tabular-nums">
                 {Math.round(progress.total > 0 ? (progress.done / progress.total) * 100 : 0)}%
               </span>
@@ -443,7 +446,7 @@ function BatchSection({ batch, displayFiles, allFiles, duplicateHashes }: {
       {!collapsed && (
         displayFiles.length === 0 ? (
           <div className="text-center py-8 text-sm text-muted-foreground border border-dashed rounded-xl">
-            No files match the current filter in this batch
+            {allFiles.length === 0 ? "This batch is empty. Ingest files to get started." : "No files match the current filter in this batch"}
           </div>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -520,6 +523,107 @@ function NewBatchDialog() {
             </div>
           </form>
         </Form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ─── Edit Batch Dialog ────────────────────────────────────────────────────────
+function EditBatchDialog({ batch }: { batch: Batch }) {
+  const { toast } = useToast();
+  const { can } = useAuth();
+  const [open, setOpen] = useState(false);
+  const [expectedDocuments, setExpectedDocuments] = useState(String(batch.expectedDocuments));
+  const [notes, setNotes] = useState(batch.notes ?? "");
+
+  // Reset form values when dialog opens
+  const handleOpenChange = (v: boolean) => {
+    setOpen(v);
+    if (v) {
+      setExpectedDocuments(String(batch.expectedDocuments));
+      setNotes(batch.notes ?? "");
+    }
+  };
+
+  const mutation = useMutation({
+    mutationFn: (data: any) => apiRequest("PATCH", `/api/batches/${batch.id}`, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/batches"] });
+      toast({
+        title: "Batch updated",
+        description: `${batch.batchCode} capacity updated to ${expectedDocuments} document${parseInt(expectedDocuments) !== 1 ? "s" : ""}.`,
+      });
+      setOpen(false);
+    },
+    onError: () => toast({ title: "Error", description: "Failed to update batch.", variant: "destructive" }),
+  });
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const parsed = parseInt(expectedDocuments);
+    if (isNaN(parsed) || parsed < 0) {
+      toast({ title: "Invalid value", description: "Expected documents must be 0 (unlimited) or a positive number.", variant: "destructive" });
+      return;
+    }
+    mutation.mutate({ expectedDocuments: parsed, notes });
+  };
+
+  if (!can("ANALYST")) return null;
+
+  return (
+    <Dialog open={open} onOpenChange={handleOpenChange}>
+      <DialogTrigger asChild>
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground"
+          title="Edit batch settings"
+          data-testid={`button-edit-batch-${batch.id}`}
+        >
+          <Pencil className="w-3.5 h-3.5" />
+        </Button>
+      </DialogTrigger>
+      <DialogContent className="max-w-sm">
+        <DialogHeader>
+          <DialogTitle>Edit Batch — {batch.batchCode}</DialogTitle>
+        </DialogHeader>
+        <form onSubmit={handleSubmit} className="space-y-4 pt-1">
+          <div className="space-y-1.5">
+            <Label htmlFor="edit-expected-docs" className="text-sm">
+              Expected Documents
+            </Label>
+            <Input
+              id="edit-expected-docs"
+              type="number"
+              min="0"
+              value={expectedDocuments}
+              onChange={(e) => setExpectedDocuments(e.target.value)}
+              className="h-9"
+              data-testid={`input-edit-expected-docs-${batch.id}`}
+            />
+            <p className="text-xs text-muted-foreground">
+              Current: <strong>{batch.scannedDocuments}</strong> scanned / <strong>{batch.expectedDocuments === 0 ? "Unlimited" : batch.expectedDocuments}</strong> allowed.
+              Set to <strong>0</strong> for unlimited capacity.
+            </p>
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="edit-notes" className="text-sm">Notes (optional)</Label>
+            <Textarea
+              id="edit-notes"
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              rows={2}
+              className="text-sm"
+              data-testid={`input-edit-notes-${batch.id}`}
+            />
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button type="button" variant="outline" size="sm" onClick={() => setOpen(false)}>Cancel</Button>
+            <Button type="submit" size="sm" disabled={mutation.isPending} data-testid={`button-save-batch-${batch.id}`}>
+              {mutation.isPending ? "Saving..." : "Save Changes"}
+            </Button>
+          </div>
+        </form>
       </DialogContent>
     </Dialog>
   );
@@ -754,6 +858,7 @@ function IngestFileDialog() {
                 accept=".pdf,.docx,.xlsx,.pptx,.txt,.csv,.json,.png,.jpg,.jpeg,.tiff,.bmp,.gif,.mp3,.wav,.aac,.flac,.ogg,.m4a,.mp4,.mov,.webm,.avi,.mkv,.m4v"
                 onChange={onFileInput}
                 data-testid="input-file-picker"
+                title="Choose evidence file"
               />
             </div>
 
@@ -853,6 +958,7 @@ function IngestFileDialog() {
                 className="hidden"
                 onChange={(e) => { const f = e.target.files?.[0]; if (f) { setZipFile(f); setZipResult(null); } }}
                 data-testid="input-zip-picker"
+                title="Choose ZIP archive file"
               />
             </div>
 
@@ -1190,7 +1296,10 @@ export default function Evidence() {
           {(batches ?? []).map(batch => {
             const displayFiles = filteredFilesByBatch[batch.id] ?? [];
             const allFiles = allFilesByBatch[batch.id] ?? [];
-            if (allFiles.length === 0 && displayFiles.length === 0) return null;
+            
+            const hasActiveFilter = search.trim() !== "" || statusFilter !== "ALL";
+            if (hasActiveFilter && displayFiles.length === 0) return null;
+            
             return (
               <BatchSection
                 key={batch.id}

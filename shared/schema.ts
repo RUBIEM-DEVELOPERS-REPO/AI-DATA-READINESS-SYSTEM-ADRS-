@@ -1,3 +1,4 @@
+
 import { sql, relations } from "drizzle-orm";
 import { pgTable, text, varchar, integer, real, boolean, jsonb, timestamp, pgEnum, customType } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
@@ -46,7 +47,7 @@ export const mediaTypeEnum = pgEnum("media_type", [
 // ─── Vector Type Definition ──────────────────────────────────────────────────
 export const vector = customType<{ data: number[]; driverData: string }>({
   dataType() {
-    return 'vector(1536)'; // Standard for OpenAI text-embedding-3-small
+    return 'vector(384)'; // all-MiniLM-L6-v2 local transformer (384-dim)
   },
   toDriver(value: number[]): string {
     return JSON.stringify(value);
@@ -68,9 +69,12 @@ export const extractionTexts = pgTable("extraction_texts", {
 export const userRoleEnum = pgEnum("user_role", [
   "SUPER_ADMIN",    // Full system access + user management
   "ADMIN",          // Tenant-level admin, manage users/batches
+  "DATA_CONTROLLER", // Oversees data controller responsibilities and inventory
+  "DATA_PROTECTION_OFFICER", // Compliance and privacy governance
   "ANALYST",        // Upload evidence, run extraction, publish datasets
   "REVIEWER",       // HITL validation only
   "VIEWER",         // Read-only access to published datasets
+  "REGULATOR",      // Read-only supervisor with regulator visibility
 ]);
 
 export const users = pgTable("users", {
@@ -119,6 +123,15 @@ export const evidenceFiles = pgTable("evidence_files", {
   tenantId: text("tenant_id").notNull().default("TENANT-001"),
   uploadedBy: text("uploaded_by").notNull(),
   tags: text("tags").array(),
+  // Compliance metadata
+  processingPurpose: text("processing_purpose"),
+  lawfulBasis: text("lawful_basis"),
+  dataCategories: text("data_categories").array().default([]),
+  sensitivityLabels: text("sensitivity_labels").array().default([]),
+  retentionPolicy: jsonb("retention_policy"),
+  controllerId: text("controller_id"),
+  processorId: text("processor_id"),
+  complianceFlags: jsonb("compliance_flags"),
   // A/V support
   mediaType: mediaTypeEnum("media_type").default("DOCUMENT"),
   durationSeconds: integer("duration_seconds"),
@@ -147,6 +160,13 @@ export const extractionRuns = pgTable("extraction_runs", {
   rawText: text("raw_text"),
   modelVersion: text("model_version").notNull().default("v1.0"),
   processingTimeMs: integer("processing_time_ms").notNull().default(0),
+  // Compliance metadata
+  regulatoryPurpose: text("regulatory_purpose"),
+  dataCategories: text("data_categories").array(),
+  sensitivityRating: text("sensitivity_rating"),
+  policyViolations: jsonb("policy_violations"),
+  aiProvenance: jsonb("ai_provenance"),
+  processingActivity: jsonb("processing_activity"),
   // NEW: quality gate results
   qualityGatesPassed: boolean("quality_gates_passed").notNull().default(true),
   qualityGatesReport: jsonb("quality_gates_report"),
@@ -170,6 +190,10 @@ export const validationTasks = pgTable("validation_tasks", {
   // NEW: policy-based gating metadata
   approvalPolicyRule: text("approval_policy_rule"),
   approvalPolicyReason: text("approval_policy_reason"),
+  policyRule: text("policy_rule"),
+  policyOutcome: text("policy_outcome"),
+  regulatorEscalation: boolean("regulator_escalation").notNull().default(false),
+  complianceNotes: text("compliance_notes"),
   weakFields: jsonb("weak_fields"),
   conflictDetails: jsonb("conflict_details"),
   validatedAt: timestamp("validated_at"),
@@ -192,6 +216,13 @@ export const cdmEntities = pgTable("cdm_entities", {
   confidenceScore: real("confidence_score").notNull().default(0),
   schemaVersion: text("schema_version").notNull().default("1.0"),
   tenantId: text("tenant_id").notNull().default("TENANT-001"),
+  // Compliance metadata
+  dataControllerId: text("data_controller_id"),
+  dataProcessorId: text("data_processor_id"),
+  sensitiveDataCategories: text("sensitive_data_categories").array(),
+  classification: text("classification"),
+  processingActivities: jsonb("processing_activities"),
+  complianceFlags: jsonb("compliance_flags"),
   // ── Lifecycle & quality (v2) ────────────────────────────────────────────────
   // DRAFT → CANDIDATE → GOLDEN | QUARANTINED → REJECTED | MERGED | RETIRED
   entityLifecycle: text("entity_lifecycle").notNull().default("DRAFT"),
@@ -224,6 +255,15 @@ export const publishedDatasets = pgTable("published_datasets", {
   artifactContents: jsonb("artifact_contents"),
   // NEW: quality gates applied before publishing
   qualityGates: jsonb("quality_gates"),
+  // Compliance metadata
+  complianceStatus: text("compliance_status").notNull().default("UNKNOWN"),
+  retentionStatus: text("retention_status"),
+  processingActivities: jsonb("processing_activities"),
+  policyViolations: jsonb("policy_violations"),
+  regulatorReviewRequired: boolean("regulator_review_required").notNull().default(false),
+  complianceTags: text("compliance_tags").array().default([]),
+  controllerId: text("controller_id"),
+  datasetRiskRating: text("dataset_risk_rating"),
   // Batch scope: SINGLE_BATCH (one or more specific batches) | CROSS_BATCH (all batches)
   scope: text("scope").notNull().default("CROSS_BATCH"),
   sourceBatchIds: text("source_batch_ids").array(),
@@ -240,7 +280,7 @@ export const chunkEmbeddings = pgTable("chunk_embeddings", {
   extractionTextId: varchar("extraction_text_id").references(() => extractionTexts.id).notNull(),
   evidenceId: varchar("evidence_id").references(() => evidenceFiles.id).notNull(),
   embedding: vector("embedding").notNull(),
-  modelVersion: text("model_version").notNull().default("text-embedding-3-small"),
+  modelVersion: text("model_version").notNull().default("all-MiniLM-L6-v2"),
   tokenCount: integer("token_count").notNull().default(0),
   tenantId: text("tenant_id").notNull().default("TENANT-001"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
@@ -250,34 +290,11 @@ export const entityEmbeddings = pgTable("entity_embeddings", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   entityId: varchar("entity_id").references(() => cdmEntities.id).notNull(),
   embedding: vector("embedding").notNull(),
-  modelVersion: text("model_version").notNull().default("text-embedding-3-small"),
+  modelVersion: text("model_version").notNull().default("all-MiniLM-L6-v2"),
   tenantId: text("tenant_id").notNull().default("TENANT-001"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
-// ─── Access Request Status Enum ───────────────────────────────────────────
-export const accessRequestStatusEnum = pgEnum("access_request_status", [
-  "PENDING", "APPROVED", "REJECTED"
-]);
-
-export const accessRequests = pgTable("access_requests", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  firstName: text("first_name").notNull(),
-  lastName: text("last_name").notNull(),
-  email: text("email").notNull(),
-  organisation: text("organisation").notNull(),
-  requestedRole: userRoleEnum("requested_role").notNull(),
-  reason: text("reason").notNull(),
-  status: accessRequestStatusEnum("status").notNull().default("PENDING"),
-  rejectionReason: text("rejection_reason"),
-  reviewedBy: varchar("reviewed_by"),
-  reviewedAt: timestamp("reviewed_at"),
-  tempPassword: text("temp_password"),
-  createdUserId: varchar("created_user_id"),
-  tenantId: text("tenant_id").notNull().default("TENANT-001"),
-  createdAt: timestamp("created_at").notNull().defaultNow(),
-  updatedAt: timestamp("updated_at").notNull().defaultNow(),
-});
 
 export const systemConfig = pgTable("system_config", {
   key: text("key").primaryKey(),
@@ -289,13 +306,49 @@ export const systemConfig = pgTable("system_config", {
 export const auditLogs = pgTable("audit_logs", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   action: text("action").notNull(),
+  category: text("category").notNull().default("OPERATIONAL"),
   resourceType: text("resource_type").notNull(),
   resourceId: text("resource_id"),
+  relatedResourceType: text("related_resource_type"),
+  relatedResourceId: text("related_resource_id"),
   userId: text("user_id").notNull(),
   details: jsonb("details"),
   ipAddress: text("ip_address"),
   tenantId: text("tenant_id").notNull().default("TENANT-001"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+// ─── Data Controller Registry ───────────────────────────────────────────────
+export const dataControllers = pgTable("data_controllers", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  controllerCode: varchar("controller_code").notNull().unique(),
+  name: text("name").notNull(),
+  contactName: text("contact_name"),
+  contactEmail: text("contact_email"),
+  organisation: text("organisation"),
+  address: text("address"),
+  metadata: jsonb("metadata").default({}),
+  tenantId: text("tenant_id").notNull().default("TENANT-001"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export const processingRecords = pgTable("processing_records", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  recordCode: varchar("record_code").notNull().unique(),
+  controllerId: varchar("controller_id").references(() => dataControllers.id),
+  purpose: text("purpose"),
+  lawfulBasis: text("lawful_basis"),
+  dataCategories: text("data_categories").array(),
+  retentionPolicy: jsonb("retention_policy"),
+  thirdParties: jsonb("third_parties"),
+  processingActivities: jsonb("processing_activities"),
+  status: text("status").notNull().default("ACTIVE"),
+  startedAt: timestamp("started_at"),
+  stoppedAt: timestamp("stopped_at"),
+  tenantId: text("tenant_id").notNull().default("TENANT-001"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 
 // ─── Layer 7: Knowledge Graph (Live Graph) ──────────────────────────────────
@@ -327,11 +380,121 @@ export const kgNodesRelations = relations(kgNodes, ({ many }) => ({
   outgoingEdges: many(kgEdges, { relationName: "sourceNode" }),
   incomingEdges: many(kgEdges, { relationName: "targetNode" }),
 }));
-
 export const kgEdgesRelations = relations(kgEdges, ({ one }) => ({
   source: one(kgNodes, { fields: [kgEdges.sourceId], references: [kgNodes.id], relationName: "sourceNode" }),
   target: one(kgNodes, { fields: [kgEdges.targetId], references: [kgNodes.id], relationName: "targetNode" }),
 }));
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Sovereign Compliance / SupTech artefacts (TEE attestation, ZKP auditing, ledger)
+// ─────────────────────────────────────────────────────────────────────────────
+export const teeAttestations = pgTable("tee_attestations", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  tenantId: text("tenant_id").notNull().default("TENANT-001"),
+  evidenceOrRunId: text("evidence_or_run_id").notNull(),
+  scheme: text("scheme").notNull().default("TEEQ_STUB"),
+  quoteId: text("quote_id").notNull(),
+  inputCommitment: text("input_commitment").notNull(),
+  outputCommitment: text("output_commitment").notNull(),
+  transcriptHash: text("transcript_hash").notNull(),
+  pcrs: jsonb("pcrs"),
+  enclaveMrEnclaveHash: text("mr_enclave_hash"),
+  enclaveMRSigHash: text("mr_signer_hash"),
+  issuedAt: text("issued_at").notNull(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export const zkpProofs = pgTable("zkp_proofs", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  tenantId: text("tenant_id").notNull().default("TENANT-001"),
+  evidenceOrRunId: text("evidence_or_run_id").notNull(),
+  regulatorRequestId: text("regulator_request_id").notNull(),
+  scheme: text("scheme").notNull().default("ZKP_STUB"),
+  proofId: text("proof_id").notNull(),
+  statementsCommitment: text("statements_commitment").notNull(),
+  statementCommitments: jsonb("statement_commitments"),
+  complianceAllConditionsSatisfied: boolean("all_conditions_satisfied").notNull().default(false),
+  failedConditions: text("failed_conditions").array().notNull().default([]),
+  generatedAt: text("generated_at").notNull(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export const zkpVerifications = pgTable("zkp_verifications", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  tenantId: text("tenant_id").notNull().default("TENANT-001"),
+  proofId: text("proof_id").notNull(),
+  verified: boolean("verified").notNull().default(false),
+  verifierNotes: text("verifier_notes"),
+  verifiedAt: text("verified_at"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export const auditLedgerEvents = pgTable("audit_ledger_events", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  tenantId: text("tenant_id").notNull().default("TENANT-001"),
+  ledgerChainId: text("ledger_chain_id").notNull(),
+  ledgerEventId: text("ledger_event_id").notNull(),
+  eventType: text("event_type").notNull(),
+  occurredAt: text("occurred_at").notNull(),
+  payloadCommitment: text("payload_commitment").notNull(),
+  datasetCode: text("dataset_code"),
+  datasetVersion: text("dataset_version"),
+  statementHash: text("statement_hash"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export const datasetStateSnapshots = pgTable("dataset_state_snapshots", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  tenantId: text("tenant_id").notNull().default("TENANT-001"),
+  datasetCode: text("dataset_code").notNull(),
+  datasetVersion: text("dataset_version").notNull(),
+  snapshotId: text("snapshot_id").notNull(),
+  stateCommitment: text("state_commitment").notNull(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  ledgerChainId: text("ledger_chain_id").notNull(),
+});
+
+export const federatedAuditSessions = pgTable("federated_audit_sessions", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  tenantId: text("tenant_id").notNull().default("TENANT-001"),
+  requestId: text("request_id").notNull().unique(),
+  jurisdiction: text("jurisdiction").notNull(),
+  crossBorder: boolean("cross_border").notNull().default(false),
+  requiredComplianceConditions: jsonb("required_compliance_conditions"),
+  scope: jsonb("scope"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+
+  orgComputedAt: text("org_computed_at"),
+  aggregatesCommitment: text("aggregates_commitment"),
+  complianceAllConditionsSatisfied: boolean("all_conditions_satisfied").notNull().default(false),
+  failedConditions: text("failed_conditions").array().notNull().default([]),
+});
+
+// ─── Access Request Status Enum ───────────────────────────────────────────
+export const accessRequestStatusEnum = pgEnum("access_request_status", [
+  "PENDING",
+  "APPROVED",
+  "REJECTED",
+]);
+
+export const accessRequests = pgTable("access_requests", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  firstName: text("first_name").notNull(),
+  lastName: text("last_name").notNull(),
+  email: text("email").notNull(),
+  organisation: text("organisation").notNull(),
+  requestedRole: userRoleEnum("requested_role").notNull(),
+  reason: text("reason").notNull(),
+  status: accessRequestStatusEnum("status").notNull().default("PENDING"),
+  rejectionReason: text("rejection_reason"),
+  reviewedBy: varchar("reviewed_by"),
+  reviewedAt: timestamp("reviewed_at"),
+  tempPassword: text("temp_password"),
+  createdUserId: varchar("created_user_id"),
+  tenantId: text("tenant_id").notNull().default("TENANT-001"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
 
 export const insertAccessRequestSchema = createInsertSchema(accessRequests).omit({ id: true, createdAt: true, updatedAt: true });
 
@@ -343,6 +506,8 @@ export const insertValidationTaskSchema = createInsertSchema(validationTasks).om
 export const insertCdmEntitySchema = createInsertSchema(cdmEntities).omit({ id: true, createdAt: true, updatedAt: true });
 export const insertDatasetSchema = createInsertSchema(publishedDatasets).omit({ id: true, createdAt: true, updatedAt: true });
 export const insertAuditLogSchema = createInsertSchema(auditLogs).omit({ id: true, createdAt: true });
+export const insertDataControllerSchema = createInsertSchema(dataControllers).omit({ id: true, createdAt: true, updatedAt: true });
+export const insertProcessingRecordSchema = createInsertSchema(processingRecords).omit({ id: true, createdAt: true, updatedAt: true });
 export const insertUserSchema = createInsertSchema(users).omit({ id: true, createdAt: true, updatedAt: true, lastLoginAt: true });
 export const insertChunkEmbeddingSchema = createInsertSchema(chunkEmbeddings).omit({ id: true, createdAt: true });
 export const insertEntityEmbeddingSchema = createInsertSchema(entityEmbeddings).omit({ id: true, createdAt: true });
@@ -358,7 +523,7 @@ export const registerSchema = z.object({
   confirmPassword: z.string(),
   firstName: z.string().min(1, "First name is required").max(100),
   lastName: z.string().min(1, "Last name is required").max(100),
-  role: z.enum(["SUPER_ADMIN", "ADMIN", "ANALYST", "REVIEWER", "VIEWER"]).default("ANALYST"),
+  role: z.enum(["SUPER_ADMIN", "ADMIN", "DATA_CONTROLLER", "DATA_PROTECTION_OFFICER", "ANALYST", "REVIEWER", "VIEWER", "REGULATOR"]).default("ANALYST"),
 }).refine(d => d.password === d.confirmPassword, { message: "Passwords do not match", path: ["confirmPassword"] });
 
 export const loginSchema = z.object({
@@ -387,9 +552,9 @@ export type InsertDataset = z.infer<typeof insertDatasetSchema>;
 export type AuditLog = typeof auditLogs.$inferSelect;
 export type InsertAuditLog = z.infer<typeof insertAuditLogSchema>;
 export type ChunkEmbedding = typeof chunkEmbeddings.$inferSelect;
-export type InsertChunkEmbedding = z.infer<typeof insertChunkEmbeddingSchema>;
+export type InsertChunkEmbedding = typeof chunkEmbeddings.$inferInsert;
 export type EntityEmbedding = typeof entityEmbeddings.$inferSelect;
-export type InsertEntityEmbedding = z.infer<typeof insertEntityEmbeddingSchema>;
+export type InsertEntityEmbedding = typeof entityEmbeddings.$inferInsert;
 export type KgNode = typeof kgNodes.$inferSelect;
 export type KgEdge = typeof kgEdges.$inferSelect;
 
@@ -578,4 +743,6 @@ export const documentFieldsSchema = z.object({
   document_date: z.string().optional(),
   reference_number: z.string().optional(),
 }).catchall(z.any());
+
+export * from "./models/chat";
 

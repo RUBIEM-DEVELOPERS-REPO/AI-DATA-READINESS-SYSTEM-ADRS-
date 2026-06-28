@@ -20,6 +20,7 @@ import {
   Eye, Shield, ScanLine, Info, GitMerge, CheckCheck, ChevronDown, ChevronUp, Pencil, Database
 } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
+import { InlineAgentWidget } from "@/components/inline-agent-widget";
 
 const statusColors: Record<string, string> = {
   PENDING_EXTRACTION: "bg-muted text-muted-foreground border-border",
@@ -567,6 +568,14 @@ export default function Validation() {
           <span className="text-[10px] text-muted-foreground leading-tight">threshold</span>
         </div>
       </div>
+
+      {/* AI Agent: Validation layer — queue prioritization, trust explain, conflict fixes */}
+      <InlineAgentWidget
+        layer="validation"
+        layerLabel="Layer 6 · Validation"
+        maxTasks={3}
+        defaultCollapsed={false}
+      />
 
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
         {[

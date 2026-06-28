@@ -1,33 +1,36 @@
-import OpenAI from "openai";
+import { pipeline } from "@xenova/transformers";
 import { db } from "../db";
 import { chunkEmbeddings, extractionTexts, evidenceFiles } from "@shared/schema";
 import { eq, sql } from "drizzle-orm";
 
-const openai = new OpenAI({
-  apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
-  baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
-});
+let extractorInstance: any = null;
+
+async function getExtractor() {
+  if (!extractorInstance) {
+    console.log("[Embeddings] Initializing local all-MiniLM-L6-v2 model...");
+    extractorInstance = await pipeline("feature-extraction", "Xenova/all-MiniLM-L6-v2");
+  }
+  return extractorInstance;
+}
 
 /**
  * Generate a vector embedding for a given text string.
- * Uses the configured OpenAI API to return an array of floats.
+ * Uses local all-MiniLM-L6-v2 model via transformers.js.
  */
 export async function generateEmbedding(text: string): Promise<number[]> {
   if (!text || text.trim() === "") {
-    return new Array(1536).fill(0);
+    return new Array(384).fill(0);
   }
   
   try {
-    const response = await openai.embeddings.create({
-      model: "text-embedding-3-small", // You can configure this via env vars later
-      input: text.slice(0, 8000), // Max tokens safeguard
-    });
+    const extractor = await getExtractor();
+    const output = await extractor(text, { pooling: "mean", normalize: true });
     
-    return response.data[0].embedding;
+    return Array.from(output.data) as number[];
   } catch (err: any) {
     console.error("[Embeddings] Error generating embedding:", err?.message || err);
     // Return a zero vector on failure so the system doesn't crash, but log the error
-    return new Array(1536).fill(0);
+    return new Array(384).fill(0);
   }
 }
 

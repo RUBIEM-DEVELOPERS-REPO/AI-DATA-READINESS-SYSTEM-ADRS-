@@ -20,6 +20,7 @@ import AuthPage from "@/pages/auth";
 import Catalogue from "@/pages/catalogue";
 import Evaluate from "@/pages/evaluate";
 import IntelligenceLayer from "@/pages/intelligence-layer";
+import FeatureRepresentation from "@/pages/feature-representation";
 import { useEffect, useState } from "react";
 import { Moon, Sun, LogOut, ChevronDown, Shield, Lock, KeyRound } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -27,6 +28,10 @@ import { Badge } from "@/components/ui/badge";
 import { Link } from "wouter";
 import { ChangePasswordDialog } from "@/components/change-password-dialog";
 import { AiCopilot } from "@/components/ai-copilot";
+import { AgentAssist } from "@/components/agent-assist";
+import AgentLayer from "@/pages/agent-layer";
+import RegistryPage from "@/pages/registry";
+import RegulatorDashboard from "@/pages/regulator";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem,
   DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger
@@ -35,9 +40,12 @@ import {
 const ROLE_LABEL: Record<UserRole, string> = {
   SUPER_ADMIN: "Super Admin",
   ADMIN: "Admin",
+  DATA_CONTROLLER: "Data Controller",
+  DATA_PROTECTION_OFFICER: "Data Protection Officer",
   ANALYST: "Analyst",
   REVIEWER: "Reviewer",
   VIEWER: "Viewer",
+  REGULATOR: "Regulator",
 };
 
 function AccessDenied({ requiredRole }: { requiredRole: UserRole }) {
@@ -197,7 +205,7 @@ function MandatoryPasswordChangeGate({ children }: { children: React.ReactNode }
 }
 
 function ProtectedApp() {
-  const { isAuthenticated, isLoading } = useAuth();
+  const { isAuthenticated, isLoading, user } = useAuth();
   const [, navigate] = useLocation();
   const [location] = useLocation();
 
@@ -248,7 +256,15 @@ function ProtectedApp() {
             </header>
             <main className="flex-1 overflow-auto">
               <Switch>
-                <Route path="/" component={Dashboard} />
+                <Route path="/">
+                  {() => {
+                    const { user } = useAuth();
+                    if (user?.role === "REGULATOR") {
+                      return <RegulatorDashboard />;
+                    }
+                    return <Dashboard />;
+                  }}
+                </Route>
                 <Route path="/evidence">
                   {() => <RoleGuard minRole="ANALYST" component={Evidence} />}
                 </Route>
@@ -273,6 +289,12 @@ function ProtectedApp() {
                 <Route path="/audit">
                   {() => <RoleGuard minRole="ADMIN" component={AuditLog} />}
                 </Route>
+                <Route path="/registry">
+                  {() => <RoleGuard minRole="DATA_CONTROLLER" component={RegistryPage} />}
+                </Route>
+                <Route path="/regulator">
+                  {() => <RoleGuard minRole="REGULATOR" component={RegulatorDashboard} />}
+                </Route>
                 <Route path="/users">
                   {() => <RoleGuard minRole="ADMIN" component={UserManagement} />}
                 </Route>
@@ -285,11 +307,22 @@ function ProtectedApp() {
                 <Route path="/intelligence-layer">
                   {() => <RoleGuard minRole="ANALYST" component={IntelligenceLayer} />}
                 </Route>
+                <Route path="/feature-representation">
+                  {() => <RoleGuard minRole="ANALYST" component={FeatureRepresentation} />}
+                </Route>
+                <Route path="/agent-layer">
+                  {() => <RoleGuard minRole="ANALYST" component={AgentLayer} />}
+                </Route>
                 <Route component={NotFound} />
               </Switch>
             </main>
           </div>
-          <AiCopilot />
+          {user?.role !== "REGULATOR" && (
+            <>
+              <AiCopilot />
+              <AgentAssist />
+            </>
+          )}
         </div>
       </SidebarProvider>
     </MandatoryPasswordChangeGate>

@@ -2,7 +2,7 @@ import { createContext, useContext, type ReactNode } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest, getQueryFn } from "@/lib/queryClient";
 
-export type UserRole = "SUPER_ADMIN" | "ADMIN" | "ANALYST" | "REVIEWER" | "VIEWER";
+export type UserRole = "SUPER_ADMIN" | "ADMIN" | "DATA_CONTROLLER" | "DATA_PROTECTION_OFFICER" | "ANALYST" | "REVIEWER" | "VIEWER" | "REGULATOR";
 
 export interface AuthUser {
   id: string;
@@ -28,8 +28,11 @@ interface AuthContextValue {
 }
 
 const ROLE_LEVEL: Record<UserRole, number> = {
-  SUPER_ADMIN: 5,
-  ADMIN: 4,
+  SUPER_ADMIN: 6,
+  ADMIN: 5,
+  DATA_CONTROLLER: 4,
+  DATA_PROTECTION_OFFICER: 4,
+  REGULATOR: 4,
   ANALYST: 3,
   REVIEWER: 2,
   VIEWER: 1,
@@ -74,6 +77,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const can = (minRole: UserRole): boolean => {
     if (!user) return false;
+    if (user.role === "REGULATOR") {
+      return minRole === "REGULATOR";
+    }
+    if (minRole === "REGULATOR") {
+      return user.role === "SUPER_ADMIN" || user.role === "ADMIN";
+    }
     return (ROLE_LEVEL[user.role] ?? 0) >= (ROLE_LEVEL[minRole] ?? 0);
   };
 

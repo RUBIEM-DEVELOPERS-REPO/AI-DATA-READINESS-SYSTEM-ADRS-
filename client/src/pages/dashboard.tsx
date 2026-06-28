@@ -11,6 +11,7 @@ import type { AuditLog } from "@shared/schema";
 import { formatDistanceToNow } from "date-fns";
 import { Link } from "wouter";
 import { Button } from "@/components/ui/button";
+import { InlineAgentWidget } from "@/components/inline-agent-widget";
 
 interface DashboardStats {
   totalEvidence: number;
@@ -256,6 +257,14 @@ export default function Dashboard() {
           </Card>
         </div>
       </div>
+
+      {/* AI Agent: System-wide pipeline health */}
+      <InlineAgentWidget
+        layer="system"
+        layerLabel="System · All Layers"
+        maxTasks={3}
+        defaultCollapsed={true}
+      />
 
       <Card className="glass-panel border-0 relative overflow-hidden">
         <CardHeader className="pb-3">

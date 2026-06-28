@@ -1,0 +1,21 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "verify-agent-orchestration",
+			"type": "shell",
+			"command": "node --test server/services/agent.test.ts && npm run check",
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "verify-agent-orchestration",
+			"type": "shell",
+			"command": "node --test server/services/agent.test.ts && npm run check",
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		}
+	]
+}

@@ -493,15 +493,10 @@ export function scoreAiExtraction(
  * Convert up to `maxPages` pages of a PDF to base64 JPEG strings using pdftoppm.
  * Returns an empty array if pdftoppm is not available or conversion fails.
  */
+import { findPdftoppm } from "./extraction";
+
 function pdfToImages(filePath: string, maxPages = 3): Array<{ base64: string; mimeType: string }> {
-  let pdftoppm: string | null = null;
-  try {
-    pdftoppm = execSync("which pdftoppm 2>/dev/null", { timeout: 3000 }).toString().trim() || null;
-    if (!pdftoppm) {
-      const found = execSync("ls /nix/store/*/bin/pdftoppm 2>/dev/null | head -1", { timeout: 3000 }).toString().trim();
-      if (found && fs.existsSync(found)) pdftoppm = found;
-    }
-  } catch { /* not found */ }
+  const pdftoppm = findPdftoppm();
   if (!pdftoppm) return [];
 
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "adrs_pdf_"));

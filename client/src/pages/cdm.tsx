@@ -21,6 +21,7 @@ import {
 } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { useToast } from "@/hooks/use-toast";
+import { InlineAgentWidget } from "@/components/inline-agent-widget";
 
 const entityIcons: Record<string, React.ComponentType<{ className?: string }>> = {
   PERSON:       User,
@@ -481,6 +482,14 @@ export default function CdmExplorer() {
           </AlertDescription>
         </Alert>
       )}
+
+      {/* AI Agent: CDM layer — conflict resolution, orphan detection, quality reports */}
+      <InlineAgentWidget
+        layer="cdm"
+        layerLabel="Layer 3 · CDM"
+        maxTasks={3}
+        defaultCollapsed={true}
+      />
 
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         <Card><CardContent className="p-4">

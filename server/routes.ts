@@ -11,6 +11,7 @@ import { createHash, randomUUID } from "crypto";
 import path from "path";
 import fs from "fs";
 import { passport, hashPassword, requireAuth, requireRole } from "./auth";
+import { syncLiveKnowledgeGraph, getRegulatorActivities, getRegulatorAuditLogs, getRegulatorComplianceStatus, getRegulatorProcessingRecords, getRegulatorZkpProofs, getRegulatorTeeAttestations, getRegulatorLedgerEvents, getRegulatorFederatedSessions } from "./compliance";
 import { normalizeExtractedFields, dedupAttributes, runQualityGates, computeTrustScore, type DedupResult } from "./services/normalization";
 import { buildArtifactContents, buildArtifactUris, checkPublishTrustThreshold, generateMlCsv, generateBundleZip, generateRunSummary } from "./services/publishing";
 import { inferParties, inferDocument, inferPartiesFromRawEntities, resolveDocRelationshipType as resolveDocRelType } from "./services/party-inference";
@@ -18,14 +19,17 @@ import { ADRS_CONFIG } from "./config";
 import { uploadMiddleware, computeFileHash, getMimeType, detectCloudSource, downloadFile, UPLOADS_DIR } from "./upload";
 import { extractTextFromFile, detectDocType, isTextExtractionFailure } from "./services/extraction";
 import { aiExtractDocumentFields, aiTranscribeAudio, aiExtractWithVision, scoreAiExtraction, aiReclassifyDocType, aiClassifyEntityType } from "./services/ai-extraction";
-import { syncLiveKnowledgeGraph } from "./services/graph-sync";
 import { db } from "./db";
-import { kgNodes, kgEdges } from "@shared/schema";
+import { eq, desc, sql } from "drizzle-orm";
+import { kgNodes, kgEdges, chunkEmbeddings, entityEmbeddings, cdmEntities, evidenceFiles, extractionTexts, extractionRuns, validationTasks } from "@shared/schema";
 import { generateEmbedding, semanticSearch } from "./services/embeddings";
+import { resolveDynamicProfile } from "./services/attention";
 import { groupEntitiesForMerge, getSingletonEntityIds } from "./services/golden-records";
+import { runAgentTask, getSystemInsights, getAgentOrchestrationPlan, AGENT_TASKS } from "./services/agent";
 import { evaluateExtraction, type GroundTruthEntry } from "./services/evaluation";
 import unzipper from "unzipper";
 import multer from "multer";
+import { registerRegistryRoutes } from "./routes_registry";
 
 function generateCode(prefix: string): string {
   const year = new Date().getFullYear();
@@ -200,7 +204,16 @@ export async function registerRoutes(httpServer: any, app: Express): Promise<any
   });
 
   app.patch("/api/auth/users/:id", requireAuth, requireRole("ADMIN"), async (req: any, res: any) => {
-    const ROLE_LEVEL: Record<string, number> = { SUPER_ADMIN: 5, ADMIN: 4, ANALYST: 3, REVIEWER: 2, VIEWER: 1 };
+    const ROLE_LEVEL: Record<string, number> = {
+      SUPER_ADMIN: 6,
+      ADMIN: 5,
+      DATA_CONTROLLER: 4,
+      DATA_PROTECTION_OFFICER: 4,
+      REGULATOR: 4,
+      ANALYST: 3,
+      REVIEWER: 2,
+      VIEWER: 1,
+    };
     const adminUser = req.user as any;
     const existing = await storage.getUser(req.params.id);
     if (!existing) return res.status(404).json({ error: "User not found" });
@@ -302,7 +315,7 @@ export async function registerRoutes(httpServer: any, app: Express): Promise<any
     if (!firstName || !lastName || !email || !organisation || !requestedRole || !reason) {
       return res.status(400).json({ error: "All fields are required" });
     }
-    const validRoles = ["SUPER_ADMIN", "ADMIN", "ANALYST", "REVIEWER", "VIEWER"];
+    const validRoles = ["SUPER_ADMIN", "ADMIN", "DATA_CONTROLLER", "DATA_PROTECTION_OFFICER", "ANALYST", "REVIEWER", "VIEWER", "REGULATOR"];
     if (!validRoles.includes(requestedRole)) {
       return res.status(400).json({ error: "Invalid role" });
     }
@@ -479,12 +492,47 @@ export async function registerRoutes(httpServer: any, app: Express): Promise<any
 
   app.post("/api/graph/sync", requireAuth, requireRole("ADMIN"), async (req: any, res: any) => {
     try {
-      // Background sync trigger
-      syncLiveKnowledgeGraph();
+      // Background sync trigger (fire-and-forget)
+      syncLiveKnowledgeGraph()
+        .then(() => console.log("[GRAPH SYNC] background sync complete"))
+        .catch((err) => console.error("[GRAPH SYNC] background error", err));
       res.json({ message: "Live Graph Synchronisation triggered." });
     } catch (err) {
       res.status(500).json({ error: "Failed to trigger sync" });
     }
+  });
+
+  // Regulator read-only endpoints (skeleton)
+  app.get('/api/regulator/activities', requireAuth, requireRole('REGULATOR'), async (_req: any, res: any) => {
+    try { res.json(await getRegulatorActivities()); } catch (e) { console.error(e); res.status(500).json({ error: 'Failed' }); }
+  });
+
+  app.get('/api/regulator/audit-logs', requireAuth, requireRole('REGULATOR'), async (_req: any, res: any) => {
+    try { res.json(await getRegulatorAuditLogs()); } catch (e) { console.error(e); res.status(500).json({ error: 'Failed' }); }
+  });
+
+  app.get('/api/regulator/compliance-status', requireAuth, requireRole('REGULATOR'), async (_req: any, res: any) => {
+    try { res.json(await getRegulatorComplianceStatus()); } catch (e) { console.error(e); res.status(500).json({ error: 'Failed' }); }
+  });
+
+  app.get('/api/regulator/processing-records', requireAuth, requireRole('REGULATOR'), async (_req: any, res: any) => {
+    try { res.json(await getRegulatorProcessingRecords()); } catch (e) { console.error(e); res.status(500).json({ error: 'Failed' }); }
+  });
+
+  app.get('/api/regulator/zkp-proofs', requireAuth, requireRole('REGULATOR'), async (_req: any, res: any) => {
+    try { res.json(await getRegulatorZkpProofs()); } catch (e) { console.error(e); res.status(500).json({ error: 'Failed' }); }
+  });
+
+  app.get('/api/regulator/tee-attestations', requireAuth, requireRole('REGULATOR'), async (_req: any, res: any) => {
+    try { res.json(await getRegulatorTeeAttestations()); } catch (e) { console.error(e); res.status(500).json({ error: 'Failed' }); }
+  });
+
+  app.get('/api/regulator/ledger-events', requireAuth, requireRole('REGULATOR'), async (_req: any, res: any) => {
+    try { res.json(await getRegulatorLedgerEvents()); } catch (e) { console.error(e); res.status(500).json({ error: 'Failed' }); }
+  });
+
+  app.get('/api/regulator/federated-sessions', requireAuth, requireRole('REGULATOR'), async (_req: any, res: any) => {
+    try { res.json(await getRegulatorFederatedSessions()); } catch (e) { console.error(e); res.status(500).json({ error: 'Failed' }); }
   });
 
   // ─── SMTP / Email Settings ─────────────────────────────────────────────────
@@ -1724,6 +1772,450 @@ ${contextString}`;
       res.status(500).json({ error: "Evaluation failed" });
     }
   });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // ─── Layer 4: AI Feature & Representation ──────────────────────────────────
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  /** GET /api/features/stats — embedding coverage metrics */
+  app.get("/api/features/stats", requireAuth, requireRole("ANALYST"), async (_req: any, res: any) => {
+    try {
+      const [chunkRows, entityRows, evidenceRows, runRows] = await Promise.all([
+        db.select({ count: sql<number>`count(*)` }).from(chunkEmbeddings),
+        db.select({ count: sql<number>`count(*)` }).from(entityEmbeddings),
+        db.select({ count: sql<number>`count(*)` }).from(evidenceFiles),
+        db.select({ count: sql<number>`count(*)` }).from(extractionRuns),
+      ]);
+      const totalChunks   = Number(chunkRows[0]?.count   ?? 0);
+      const totalEntities = Number(entityRows[0]?.count   ?? 0);
+      const totalEvidence = Number(evidenceRows[0]?.count ?? 0);
+      const totalRuns     = Number(runRows[0]?.count      ?? 0);
+
+      // Token stats from chunk_embeddings
+      const tokenStats = await db
+        .select({
+          avgTokens: sql<number>`avg(token_count)`,
+          maxTokens: sql<number>`max(token_count)`,
+          sumTokens: sql<number>`sum(token_count)`,
+        })
+        .from(chunkEmbeddings);
+
+      // Model version breakdown
+      const modelBreakdown = await db
+        .select({
+          modelVersion: chunkEmbeddings.modelVersion,
+          count: sql<number>`count(*)`,
+        })
+        .from(chunkEmbeddings)
+        .groupBy(chunkEmbeddings.modelVersion);
+
+      res.json({
+        totalChunkEmbeddings: totalChunks,
+        totalEntityEmbeddings: totalEntities,
+        totalEvidenceFiles: totalEvidence,
+        totalExtractionRuns: totalRuns,
+        embeddingCoveragePct: totalRuns > 0 ? Math.round((totalChunks / Math.max(totalRuns, 1)) * 100) : 0,
+        vectorDimensions: 384,
+        modelVersion: "all-MiniLM-L6-v2",
+        avgTokenCount: Math.round(Number(tokenStats[0]?.avgTokens ?? 0)),
+        maxTokenCount: Number(tokenStats[0]?.maxTokens ?? 0),
+        totalTokensIndexed: Number(tokenStats[0]?.sumTokens ?? 0),
+        modelBreakdown: modelBreakdown.map(m => ({ model: m.modelVersion, count: Number(m.count) })),
+      });
+    } catch (err: any) {
+      console.error("[Layer4] Stats error:", err);
+      res.status(500).json({ error: "Failed to fetch feature stats" });
+    }
+  });
+
+  /** GET /api/features/chunks?page=1&limit=20 — paginated chunk embedding records */
+  app.get("/api/features/chunks", requireAuth, requireRole("ANALYST"), async (req: any, res: any) => {
+    try {
+      const page  = Math.max(1, parseInt(String(req.query.page  ?? 1)));
+      const limit = Math.min(50, Math.max(1, parseInt(String(req.query.limit ?? 20))));
+      const offset = (page - 1) * limit;
+
+      const rows = await db
+        .select({
+          id:             chunkEmbeddings.id,
+          evidenceId:     chunkEmbeddings.evidenceId,
+          modelVersion:   chunkEmbeddings.modelVersion,
+          tokenCount:     chunkEmbeddings.tokenCount,
+          tenantId:       chunkEmbeddings.tenantId,
+          createdAt:      chunkEmbeddings.createdAt,
+          fileName:       evidenceFiles.fileName,
+          fileFormat:     evidenceFiles.fileFormat,
+          chunkText:      extractionTexts.text,
+        })
+        .from(chunkEmbeddings)
+        .leftJoin(evidenceFiles,   eq(chunkEmbeddings.evidenceId,       evidenceFiles.id))
+        .leftJoin(extractionTexts, eq(chunkEmbeddings.extractionTextId, extractionTexts.id))
+        .orderBy(desc(chunkEmbeddings.createdAt))
+        .limit(limit)
+        .offset(offset);
+
+      const [total] = await db.select({ count: sql<number>`count(*)` }).from(chunkEmbeddings);
+
+      res.json({
+        chunks: rows.map(r => ({
+          ...r,
+          chunkText: r.chunkText ? r.chunkText.slice(0, 200) : null, // snippet only
+        })),
+        total: Number(total?.count ?? 0),
+        page,
+        limit,
+      });
+    } catch (err: any) {
+      console.error("[Layer4] Chunks error:", err);
+      res.status(500).json({ error: "Failed to fetch chunk embeddings" });
+    }
+  });
+
+  /** GET /api/features/entities?page=1&limit=20 — entity embedding records */
+  app.get("/api/features/entities", requireAuth, requireRole("ANALYST"), async (req: any, res: any) => {
+    try {
+      const page  = Math.max(1, parseInt(String(req.query.page  ?? 1)));
+      const limit = Math.min(50, Math.max(1, parseInt(String(req.query.limit ?? 20))));
+      const offset = (page - 1) * limit;
+
+      const rows = await db
+        .select({
+          id:           entityEmbeddings.id,
+          entityId:     entityEmbeddings.entityId,
+          modelVersion: entityEmbeddings.modelVersion,
+          tenantId:     entityEmbeddings.tenantId,
+          createdAt:    entityEmbeddings.createdAt,
+          displayName:  cdmEntities.displayName,
+          entityType:   cdmEntities.entityType,
+          confidence:   cdmEntities.confidenceScore,
+        })
+        .from(entityEmbeddings)
+        .leftJoin(cdmEntities, eq(entityEmbeddings.entityId, cdmEntities.id))
+        .orderBy(desc(entityEmbeddings.createdAt))
+        .limit(limit)
+        .offset(offset);
+
+      const [total] = await db.select({ count: sql<number>`count(*)` }).from(entityEmbeddings);
+
+      res.json({
+        entities: rows,
+        total: Number(total?.count ?? 0),
+        page,
+        limit,
+      });
+    } catch (err: any) {
+      console.error("[Layer4] Entity embeddings error:", err);
+      res.status(500).json({ error: "Failed to fetch entity embeddings" });
+    }
+  });
+
+  /** POST /api/features/search — semantic search over ingested documents */
+  app.post("/api/features/search", requireAuth, requireRole("ANALYST"), async (req: any, res: any) => {
+    try {
+      const { query, limit = 10 } = req.body;
+      if (!query || typeof query !== "string") {
+        return res.status(400).json({ error: "query string is required" });
+      }
+      const results = await semanticSearch(query, Math.min(20, limit));
+      res.json({ results, query, count: results.length });
+    } catch (err: any) {
+      console.error("[Layer4] Search error:", err);
+      res.status(500).json({ error: "Semantic search failed" });
+    }
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // ─── Layer 5: Attention, Fusion & Context ──────────────────────────────────
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  /** GET /api/attention/profile-stats — extraction run counts by matched profile */
+  app.get("/api/attention/profile-stats", requireAuth, requireRole("ANALYST"), async (_req: any, res: any) => {
+    try {
+      // Group extraction runs by docType to approximate profile matching
+      const byDocType = await db
+        .select({
+          docType: extractionRuns.docType,
+          count:   sql<number>`count(*)`,
+          avgConf: sql<number>`avg(extraction_confidence)`,
+          avgTrust: sql<number>`avg(trust_score)`,
+        })
+        .from(extractionRuns)
+        .groupBy(extractionRuns.docType);
+
+      // Map doc types to profiles
+      const FINANCE_TYPES = new Set(["INVOICE","QUOTATION","PURCHASE_ORDER","RECEIPT","BANK_STATEMENT","FINANCIAL","REPORT"]);
+      const HR_TYPES      = new Set(["CV","IDENTITY","PAYSLIP","CERTIFICATE","LICENSE","PERMIT"]);
+
+      let profileCounts = {
+        "profile-finance": { name: "Financial Record", count: 0, avgConf: 0, avgTrust: 0, docTypes: [] as string[] },
+        "profile-hr":      { name: "HR & Employment",  count: 0, avgConf: 0, avgTrust: 0, docTypes: [] as string[] },
+        "profile-generic": { name: "Generic Document", count: 0, avgConf: 0, avgTrust: 0, docTypes: [] as string[] },
+      } as Record<string, any>;
+
+      for (const row of byDocType) {
+        const dt    = row.docType?.toUpperCase() ?? "";
+        const key   = FINANCE_TYPES.has(dt) ? "profile-finance" : HR_TYPES.has(dt) ? "profile-hr" : "profile-generic";
+        const count = Number(row.count);
+        profileCounts[key].count    += count;
+        profileCounts[key].docTypes.push(dt);
+        // Weighted avg
+        const prev = profileCounts[key];
+        const total = prev.count;
+        profileCounts[key].avgConf  = total > 0 ? ((prev.avgConf * (total - count) + Number(row.avgConf) * count) / total) : Number(row.avgConf);
+        profileCounts[key].avgTrust = total > 0 ? ((prev.avgTrust * (total - count) + Number(row.avgTrust) * count) / total) : Number(row.avgTrust);
+      }
+
+      const totalRuns = Object.values(profileCounts).reduce((s: number, p: any) => s + p.count, 0);
+
+      res.json({
+        profiles: Object.entries(profileCounts).map(([id, p]: [string, any]) => ({
+          id,
+          name:     p.name,
+          count:    p.count,
+          pct:      totalRuns > 0 ? Math.round((p.count / totalRuns) * 100) : 0,
+          avgConf:  Math.round(Number(p.avgConf) * 100),
+          avgTrust: Math.round(Number(p.avgTrust) * 100),
+          docTypes: [...new Set(p.docTypes)].filter(Boolean),
+        })),
+        totalRuns,
+      });
+    } catch (err: any) {
+      console.error("[Layer5] Profile stats error:", err);
+      res.status(500).json({ error: "Failed to fetch profile stats" });
+    }
+  });
+
+  /** POST /api/attention/resolve — live profile matching for a text summary */
+  app.post("/api/attention/resolve", requireAuth, requireRole("ANALYST"), async (req: any, res: any) => {
+    try {
+      const { text, docType = "OTHER" } = req.body;
+      if (!text || typeof text !== "string") {
+        return res.status(400).json({ error: "text is required" });
+      }
+      const result = await resolveDynamicProfile(text.trim(), docType);
+      res.json({
+        profileId:       result.profile.id,
+        profileName:     result.profile.name,
+        similarityScore: Math.round(result.similarityScore * 100),
+        description:     result.profile.description,
+        targetEntities:  result.profile.targetEntities.map(t => t.entityType),
+        relevanceWeights: result.profile.relevanceWeights,
+      });
+    } catch (err: any) {
+      console.error("[Layer5] Resolve error:", err);
+      res.status(500).json({ error: "Profile resolution failed" });
+    }
+  });
+
+  /** GET /api/attention/fusion-stats — multi-source fusion counts */
+  app.get("/api/attention/fusion-stats", requireAuth, requireRole("ANALYST"), async (_req: any, res: any) => {
+    try {
+      const [structuredRows, unstructuredRows, hitlRows, kgNodeRows, kgEdgeRows, conflictRows] = await Promise.all([
+        db.select({ count: sql<number>`count(*)`, totalAttrs: sql<number>`sum(jsonb_array_length(extracted_attributes::jsonb))` }).from(extractionRuns).where(sql`extracted_attributes is not null`),
+        db.select({ count: sql<number>`count(*)` }).from(chunkEmbeddings),
+        db.select({ count: sql<number>`count(*)` }).from(validationTasks).where(eq(validationTasks.status, "APPROVED")),
+        db.select({ count: sql<number>`count(*)` }).from(kgNodes),
+        db.select({ count: sql<number>`count(*)` }).from(kgEdges),
+        db.select({ count: sql<number>`count(*)` }).from(validationTasks).where(sql`conflict_details is not null`),
+      ]);
+
+      res.json({
+        structured:   { label: "Structured Fields",   count: Number(structuredRows[0]?.totalAttrs ?? 0), icon: "Database" },
+        unstructured: { label: "RAG Text Chunks",     count: Number(unstructuredRows[0]?.count ?? 0),  icon: "FileText" },
+        rules:        { label: "Ontology Axioms",     count: 6,  icon: "GitBranch" }, // static: 6 axioms defined
+        graph:        { label: "KG Nodes + Edges",    count: Number(kgNodeRows[0]?.count ?? 0) + Number(kgEdgeRows[0]?.count ?? 0), icon: "Share2" },
+        human:        { label: "HITL Decisions",      count: Number(hitlRows[0]?.count ?? 0),  icon: "Users" },
+        conflicts:    { label: "Resolved Conflicts",  count: Number(conflictRows[0]?.count ?? 0), icon: "Zap" },
+      });
+    } catch (err: any) {
+      console.error("[Layer5] Fusion stats error:", err);
+      res.status(500).json({ error: "Failed to fetch fusion stats" });
+    }
+  });
+
+  /** GET /api/attention/context-packet/:evidenceId — build context packet for an evidence file */
+  app.get("/api/attention/context-packet/:evidenceId", requireAuth, requireRole("ANALYST"), async (req: any, res: any) => {
+    try {
+      const { evidenceId } = req.params;
+      const ev = await storage.getEvidenceFile(evidenceId);
+      if (!ev) return res.status(404).json({ error: "Evidence file not found" });
+
+      const run = await storage.getExtractionRunByEvidence(evidenceId);
+
+      // Structured fields from extraction run
+      const structuredFields = run?.extractedAttributes
+        ? (run.extractedAttributes as any[]).slice(0, 20)
+        : [];
+
+      // RAG chunks (text from extraction text table)
+      const ragChunks = await db
+        .select({ id: chunkEmbeddings.id, text: extractionTexts.text, tokenCount: chunkEmbeddings.tokenCount })
+        .from(chunkEmbeddings)
+        .leftJoin(extractionTexts, eq(chunkEmbeddings.extractionTextId, extractionTexts.id))
+        .where(eq(chunkEmbeddings.evidenceId, evidenceId))
+        .limit(5);
+
+      // Linked graph nodes
+      const linkedNodes = await db
+        .select({ id: kgNodes.id, label: kgNodes.label, displayName: kgNodes.displayName, confidence: kgNodes.confidenceScore })
+        .from(kgNodes)
+        .where(sql`properties->>'source_evidence_id' = ${evidenceId}`)
+        .limit(10);
+
+      // Profile for this evidence
+      const rawText = run?.rawText ?? "";
+      const profileCtx = rawText
+        ? await resolveDynamicProfile(rawText.slice(0, 500), run?.docType ?? "OTHER")
+        : null;
+
+      res.json({
+        evidenceId,
+        fileName:         ev.fileName,
+        fileFormat:       ev.fileFormat,
+        docType:          run?.docType,
+        trustScore:       run?.trustScore ?? 0,
+        structuredFields,
+        ragChunks: ragChunks.map(c => ({ id: c.id, snippet: (c.text ?? "").slice(0, 300), tokenCount: c.tokenCount })),
+        graphNodes: linkedNodes,
+        profile: profileCtx ? {
+          id:    profileCtx.profile.id,
+          name:  profileCtx.profile.name,
+          score: Math.round(profileCtx.similarityScore * 100),
+        } : null,
+        fusedAt: new Date().toISOString(),
+      });
+    } catch (err: any) {
+      console.error("[Layer5] Context packet error:", err);
+      res.status(500).json({ error: "Failed to build context packet" });
+    }
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // ─── Layer 9: AI Applications & Agentic Layer ────────────────────────
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  /** GET /api/agent/tasks — list all registered agent tasks, optionally filtered by layer */
+  app.get("/api/agent/tasks", requireAuth, requireRole("ANALYST"), async (req: any, res: any) => {
+    try {
+      const { layer } = req.query;
+      const tasks = layer
+        ? AGENT_TASKS.filter(t => t.layer === String(layer))
+        : AGENT_TASKS;
+      res.json({ tasks, total: tasks.length });
+    } catch (err: any) {
+      console.error("[Layer9] Tasks error:", err);
+      res.status(500).json({ error: "Failed to fetch agent tasks" });
+    }
+  });
+
+  /** POST /api/agent/run — execute an AI agent task */
+  app.post("/api/agent/run", requireAuth, requireRole("ANALYST"), async (req: any, res: any) => {
+    try {
+      const { layer, taskId, query } = req.body;
+      if (!layer || !taskId) {
+        return res.status(400).json({ error: "layer and taskId are required" });
+      }
+      const result = await runAgentTask({ layer, taskId, query });
+      res.json(result);
+    } catch (err: any) {
+      console.error("[Layer9] Agent run error:", err);
+      res.status(500).json({ error: "Agent task failed", detail: err?.message });
+    }
+  });
+
+  /** POST /api/agent/orchestrate — create or apply an agent orchestration plan */
+  app.post("/api/agent/orchestrate", requireAuth, requireRole("ADMIN"), async (req: any, res: any) => {
+    try {
+      const { layer, taskId, query, objective, mode } = req.body;
+      if (!layer || !taskId) {
+        return res.status(400).json({ error: "layer and taskId are required" });
+      }
+      if (!mode || !["DRY_RUN", "APPLY"].includes(mode)) {
+        return res.status(400).json({ error: "mode must be DRY_RUN or APPLY" });
+      }
+
+      const plan = await getAgentOrchestrationPlan({ layer, taskId, query, objective, mode });
+      if (plan.mode === "APPLY") {
+        const adminId = (req.user as any)?.id ?? "system";
+        for (const action of plan.actions) {
+          if (action.type === "CREATE_VALIDATION_TASK") {
+            const { extractionRunId, evidenceId, fieldsToValidate, approvalPolicyRule, approvalPolicyReason } = action.payload;
+            if (!extractionRunId || !evidenceId || !Array.isArray(fieldsToValidate) || fieldsToValidate.length === 0) {
+              continue;
+            }
+            const taskCode = generateCode("VAL");
+            await db.insert(validationTasks).values({
+              id: randomUUID(),
+              taskCode,
+              extractionRunId,
+              evidenceId,
+              status: "PENDING_VALIDATION",
+              assignedTo: null,
+              fieldsToValidate,
+              validatorNotes: null,
+              approvalStage: 1,
+              maxApprovalStages: 1,
+              trustScore: 0,
+              approvalPolicyRule,
+              approvalPolicyReason,
+              policyRule: approvalPolicyRule,
+              policyOutcome: "PENDING",
+              regulatorEscalation: false,
+              complianceNotes: null,
+              weakFields: null,
+              conflictDetails: null,
+              validatedAt: null,
+              createdAt: new Date(),
+              updatedAt: new Date(),
+            });
+            await storage.createAuditLog({
+              action: "AUTO_VALIDATION_TASK_CREATED",
+              resourceType: "VALIDATION",
+              resourceId: taskCode,
+              userId: adminId,
+              details: {
+                extractionRunId,
+                evidenceId,
+                fieldsToValidate,
+                approvalPolicyRule,
+                approvalPolicyReason,
+              },
+              tenantId: "TENANT-001",
+            });
+          }
+          if (action.type === "TRIGGER_KG_SYNC") {
+            await syncLiveKnowledgeGraph();
+            await storage.createAuditLog({
+              action: "KG_SYNC_TRIGGERED",
+              resourceType: "KNOWLEDGE_GRAPH",
+              resourceId: "live-sync",
+              userId: (req.user as any)?.id ?? "system",
+              details: { triggeredBy: "agent orchestration" },
+              tenantId: "TENANT-001",
+            });
+          }
+        }
+      }
+      res.json(plan);
+    } catch (err: any) {
+      console.error("[Layer9] Agent orchestrate error:", err);
+      res.status(500).json({ error: "Agent orchestration failed", detail: err?.message });
+    }
+  });
+
+  /** GET /api/agent/insights — system-wide AI health insights */
+  app.get("/api/agent/insights", requireAuth, requireRole("ANALYST"), async (_req: any, res: any) => {
+    try {
+      const result = await getSystemInsights();
+      res.json(result);
+    } catch (err: any) {
+      console.error("[Layer9] Insights error:", err);
+      res.status(500).json({ error: "Failed to get system insights" });
+    }
+  });
+
+  // Register registry routes (Data Controller / Processing Records)
+  registerRegistryRoutes(app);
 
   return httpServer;
 }

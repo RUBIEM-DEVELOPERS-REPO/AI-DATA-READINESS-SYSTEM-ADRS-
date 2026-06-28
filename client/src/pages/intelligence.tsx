@@ -11,6 +11,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
+import { InlineAgentWidget } from "@/components/inline-agent-widget";
 
 const AV_DOC_TYPES = ["AUDIO_RECORDING", "VIDEO_RECORDING", "INTERVIEW", "MEETING_RECORDING"];
 
@@ -447,6 +448,14 @@ export default function Intelligence() {
         <h1 className="text-2xl font-bold text-foreground" data-testid="heading-intelligence">Document Intelligence</h1>
         <p className="text-sm text-muted-foreground mt-1">OCR extraction results, entity detection, and confidence scoring</p>
       </div>
+
+      {/* AI Agent: Intelligence layer — quality summaries, anomaly flagging, profile advice */}
+      <InlineAgentWidget
+        layer="intelligence"
+        layerLabel="Layer 2 · Intelligence"
+        maxTasks={3}
+        defaultCollapsed={true}
+      />
 
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         <Card><CardContent className="p-4">

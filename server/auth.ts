@@ -59,6 +59,8 @@ passport.deserializeUser(async (id: string, done) => {
 });
 
 // ─── Session setup ─────────────────────────────────────────────────────────
+const SESSION_TABLE_NAME = process.env.SESSION_TABLE_NAME || "adrs_sessions";
+
 export function setupSession(app: Express) {
   const PgStore = connectPg(session);
 
@@ -66,7 +68,7 @@ export function setupSession(app: Express) {
     session({
       store: new PgStore({
         conString: process.env.DATABASE_URL!,
-        tableName: "user_sessions",
+        tableName: SESSION_TABLE_NAME,
         createTableIfMissing: true,
         ttl: 60 * 60 * 24 * 7, // 7 days
         pruneSessionInterval: 60 * 60, // Prune every hour
@@ -89,11 +91,14 @@ export function setupSession(app: Express) {
 }
 
 // ─── RBAC Middleware ────────────────────────────────────────────────────────
-export type UserRole = "SUPER_ADMIN" | "ADMIN" | "ANALYST" | "REVIEWER" | "VIEWER";
+export type UserRole = "SUPER_ADMIN" | "ADMIN" | "DATA_CONTROLLER" | "DATA_PROTECTION_OFFICER" | "ANALYST" | "REVIEWER" | "VIEWER" | "REGULATOR";
 
 const ROLE_HIERARCHY: Record<UserRole, number> = {
-  SUPER_ADMIN: 5,
-  ADMIN: 4,
+  SUPER_ADMIN: 6,
+  ADMIN: 5,
+  DATA_CONTROLLER: 4,
+  DATA_PROTECTION_OFFICER: 4,
+  REGULATOR: 4,
   ANALYST: 3,
   REVIEWER: 2,
   VIEWER: 1,
