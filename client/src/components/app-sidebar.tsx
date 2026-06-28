@@ -4,7 +4,7 @@ import {
   SidebarGroupLabel, SidebarHeader, SidebarMenu, SidebarMenuButton, SidebarMenuItem, SidebarSeparator
 } from "@/components/ui/sidebar";
 import {
-  LayoutDashboard, FolderOpen, Brain, CheckSquare, Database, Upload, FileText, Shield, BarChart3, Users, BookOpen, Target, GitBranch
+  LayoutDashboard, FolderOpen, Brain, CheckSquare, Database, Upload, FileText, Shield, BarChart3, Users, BookOpen, Target, GitBranch, Cpu, Bot
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { useQuery } from "@tanstack/react-query";
@@ -13,9 +13,12 @@ import { useAuth, type UserRole } from "@/context/auth";
 const ROLE_COLORS: Record<UserRole, string> = {
   SUPER_ADMIN: "border-destructive/40 text-destructive bg-destructive/10",
   ADMIN: "border-primary/40 text-primary bg-primary/10",
+  DATA_CONTROLLER: "border-cyan-500/40 text-cyan-500 bg-cyan-500/10",
+  DATA_PROTECTION_OFFICER: "border-sky-500/40 text-sky-500 bg-sky-500/10",
   ANALYST: "border-blue-500/40 text-blue-500 bg-blue-500/10",
   REVIEWER: "border-accent/40 text-accent bg-accent/10",
   VIEWER: "border-green-500/40 text-green-500 bg-green-500/10",
+  REGULATOR: "border-emerald-500/40 text-emerald-500 bg-emerald-500/10",
 };
 
 interface NavItem {
@@ -52,14 +55,23 @@ const navGroups: NavGroup[] = [
   {
     group: "AI Intelligence",
     items: [
-      { title: "Layer 5 Engine",  url: "/intelligence-layer", icon: GitBranch, minRole: "ANALYST" },
-      { title: "Benchmarking", url: "/evaluate",  icon: Target, minRole: "ANALYST" },
+      { title: "Layer 4: Feature Store", url: "/feature-representation", icon: Cpu,       minRole: "ANALYST" },
+      { title: "Layer 5: Attention",     url: "/intelligence-layer",     icon: GitBranch, minRole: "ANALYST" },
+      { title: "Layer 9: AI Agents",     url: "/agent-layer",            icon: Bot,       minRole: "ANALYST" },
+      { title: "Benchmarking",           url: "/evaluate",               icon: Target,    minRole: "ANALYST" },
     ],
   },
   {
     group: "Governance",
     items: [
       { title: "Audit Log", url: "/audit", icon: Shield, minRole: "ADMIN" },
+      { title: "Registry", url: "/registry", icon: Database, minRole: "DATA_CONTROLLER" },
+    ],
+  },
+  {
+    group: "Supervision",
+    items: [
+      { title: "Regulator Hub", url: "/regulator", icon: Shield, minRole: "REGULATOR" },
     ],
   },
   {
@@ -98,9 +110,15 @@ export function AppSidebar() {
 
       <SidebarContent className="py-4">
         {navGroups.map((group) => {
-          const visibleItems = group.items.filter(item =>
-            !item.minRole || can(item.minRole)
-          );
+          const visibleItems = group.items.filter(item => {
+            if (user?.role === "REGULATOR") {
+              return item.url === "/regulator";
+            }
+            if (item.url === "/regulator") {
+              return user?.role === "SUPER_ADMIN" || user?.role === "ADMIN";
+            }
+            return !item.minRole || can(item.minRole);
+          });
           if (visibleItems.length === 0) return null;
 
           return (

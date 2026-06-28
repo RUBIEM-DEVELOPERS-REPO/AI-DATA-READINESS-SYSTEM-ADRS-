@@ -11,17 +11,20 @@ import JSZip from "jszip";
 function findPdfToText(): string | null {
   // 1. Try PATH first
   try {
-    const bin = execSync("which pdftotext 2>/dev/null", { timeout: 3000 }).toString().trim();
+    const cmd = process.platform === "win32" ? "where pdftotext" : "which pdftotext 2>/dev/null";
+    const bin = execSync(cmd, { timeout: 3000 }).toString().trim().split("\r\n")[0].split("\n")[0];
     if (bin && fs.existsSync(bin)) return bin;
   } catch { /* not in PATH */ }
   // 2. Try known Replit nix-store glob pattern
-  try {
-    const result = execSync(
-      "ls /nix/store/*/bin/pdftotext 2>/dev/null | head -1",
-      { timeout: 3000 }
-    ).toString().trim();
-    if (result && fs.existsSync(result)) return result;
-  } catch { /* not found */ }
+  if (process.platform !== "win32") {
+    try {
+      const result = execSync(
+        "ls /nix/store/*/bin/pdftotext 2>/dev/null | head -1",
+        { timeout: 3000 }
+      ).toString().trim();
+      if (result && fs.existsSync(result)) return result;
+    } catch { /* not found */ }
+  }
   return null;
 }
 
@@ -44,7 +47,7 @@ function isPdfValid(filePath: string): boolean {
   }
 }
 
-function extractPdfText(filePath: string): string {
+async function extractPdfText(filePath: string): Promise<string> {
   if (!isPdfValid(filePath)) {
     return "[PDF is not a valid PDF file or is corrupted — please re-upload the original]";
   }
@@ -61,13 +64,25 @@ function extractPdfText(filePath: string): string {
       if (text.length > 10) {
         return text.slice(0, 50000);
       }
-      // pdftotext returned empty — likely a scanned/image PDF
-      return "[No extractable text — PDF may be image-based or scanned]";
     } catch (e: any) {
-      // pdftotext failed — fall through to regex parser
+      // pdftotext failed — fall through
     }
   }
-  // Fallback: regex-based parser for simple uncompressed PDFs
+
+  // Fallback 1: pdf-parse (pure JS parser)
+  try {
+    const pdfParseModule = await import("pdf-parse");
+    const pdfParse = typeof pdfParseModule === "function" ? pdfParseModule : (pdfParseModule as any).default;
+    const dataBuffer = fs.readFileSync(filePath);
+    const parsed = await pdfParse(dataBuffer);
+    if (parsed && parsed.text && parsed.text.trim().length > 10) {
+      return parsed.text.slice(0, 50000).trim();
+    }
+  } catch (e: any) {
+    console.error("[Extraction] pdf-parse fallback failed:", e?.message ?? e);
+  }
+
+  // Fallback 2: regex-based parser for simple uncompressed PDFs
   try {
     const raw = fs.readFileSync(filePath);
     const content = raw.toString("binary");
@@ -120,7 +135,7 @@ export async function extractTextFromFile(storedUri: string, fileFormat: string)
     }
 
     if (fmt === "pdf") {
-      return extractPdfText(filePath);
+      return await extractPdfText(filePath);
     }
 
     if (["xlsx", "xls", "xlsm", "xlsb"].includes(fmt)) {
@@ -196,13 +211,16 @@ export function isTextExtractionFailure(text: string): boolean {
  */
 export function findPdftoppm(): string | null {
   try {
-    const bin = execSync("which pdftoppm 2>/dev/null", { timeout: 3000 }).toString().trim();
+    const cmd = process.platform === "win32" ? "where pdftoppm" : "which pdftoppm 2>/dev/null";
+    const bin = execSync(cmd, { timeout: 3000 }).toString().trim().split("\r\n")[0].split("\n")[0];
     if (bin && fs.existsSync(bin)) return bin;
   } catch { /* not in PATH */ }
-  try {
-    const result = execSync("ls /nix/store/*/bin/pdftoppm 2>/dev/null | head -1", { timeout: 3000 }).toString().trim();
-    if (result && fs.existsSync(result)) return result;
-  } catch { /* not found */ }
+  if (process.platform !== "win32") {
+    try {
+      const result = execSync("ls /nix/store/*/bin/pdftoppm 2>/dev/null | head -1", { timeout: 3000 }).toString().trim();
+      if (result && fs.existsSync(result)) return result;
+    } catch { /* not found */ }
+  }
   return null;
 }
 

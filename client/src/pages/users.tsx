@@ -20,7 +20,7 @@ import {
   Settings, Wifi, WifiOff, Eye, EyeOff, Save, FlaskConical
 } from "lucide-react";
 
-type UserRole = "SUPER_ADMIN" | "ADMIN" | "ANALYST" | "REVIEWER" | "VIEWER";
+type UserRole = "SUPER_ADMIN" | "ADMIN" | "DATA_CONTROLLER" | "DATA_PROTECTION_OFFICER" | "ANALYST" | "REVIEWER" | "VIEWER" | "REGULATOR";
 
 interface AppUser {
   id: string;
@@ -56,9 +56,12 @@ interface AccessRequest {
 const ROLE_COLORS: Record<UserRole, string> = {
   SUPER_ADMIN: "border-red-500/40 text-red-600 dark:text-red-400 bg-red-500/5",
   ADMIN: "border-orange-500/40 text-orange-600 dark:text-orange-400 bg-orange-500/5",
+  DATA_CONTROLLER: "border-cyan-500/40 text-cyan-600 dark:text-cyan-400 bg-cyan-500/5",
+  DATA_PROTECTION_OFFICER: "border-sky-500/40 text-sky-600 dark:text-sky-400 bg-sky-500/5",
   ANALYST: "border-blue-500/40 text-blue-600 dark:text-blue-400 bg-blue-500/5",
   REVIEWER: "border-purple-500/40 text-purple-600 dark:text-purple-400 bg-purple-500/5",
   VIEWER: "border-green-500/40 text-green-600 dark:text-green-400 bg-green-500/5",
+  REGULATOR: "border-emerald-500/40 text-emerald-600 dark:text-emerald-400 bg-emerald-500/5",
 };
 
 const STATUS_COLORS: Record<string, string> = {
@@ -698,7 +701,7 @@ function UsersTab() {
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      {(["SUPER_ADMIN", "ADMIN", "ANALYST", "REVIEWER", "VIEWER"] as UserRole[]).map(r => (
+                      {(["SUPER_ADMIN", "ADMIN", "DATA_CONTROLLER", "DATA_PROTECTION_OFFICER", "REGULATOR", "ANALYST", "REVIEWER", "VIEWER"] as UserRole[]).map(r => (
                         <SelectItem key={r} value={r} className="text-xs">{r.replace("_", " ")}</SelectItem>
                       ))}
                     </SelectContent>

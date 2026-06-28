@@ -1057,8 +1057,8 @@ export function generateRunSummary(
   const evidencesWithCdm = evidenceIds.size;
 
   // Which evidences have QUARANTINED evidence status (failed)
-  const quarantinedEvidence = evidenceFiles.filter(e => e.status === "QUARANTINED" || e.status === "FAILED").length;
-  const rejectedEvidence    = evidenceFiles.filter(e => e.status === "REJECTED").length;
+  const quarantinedEvidence = evidenceFiles.filter(e => (e.status as any) === "QUARANTINED" || e.status === "FAILED").length;
+  const rejectedEvidence    = evidenceFiles.filter(e => (e.status as any) === "REJECTED").length;
 
   // Which evidences appear in RAG-eligible extractions (have rawText)
   const evidencesWithRawText = new Set(extractions.filter(e => e.rawText && e.rawText.length > 0).map(e => e.evidenceId));
