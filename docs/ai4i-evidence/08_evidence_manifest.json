@@ -1,0 +1,95 @@
+{
+  "manifest_version": "1.0",
+  "evidence_package": "ADRS AI4I Development Track Evidence",
+  "branch": "ai4i-evidence",
+  "base_branch": "main",
+  "created_date": "2026-07-13T00:00:00Z",
+  "created_by": "GitHub Copilot",
+  "total_artifacts": 8,
+  "total_files": 16,
+  "artifacts": [
+    {
+      "id": "01",
+      "name": "Repository Baseline",
+      "files": ["01_repository_baseline.md", "01_repository_baseline.json"],
+      "purpose": "Metadata about repo structure, tech stack, version control, and environment setup",
+      "status": "complete"
+    },
+    {
+      "id": "02",
+      "name": "File Language Inventory",
+      "files": ["02_file_language_counts.csv", "02_file_language_counts.md"],
+      "purpose": "Count and inventory of source files by language and extension",
+      "status": "complete"
+    },
+    {
+      "id": "03",
+      "name": "Redacted Secrets Scan",
+      "files": ["03_redacted_secrets.md", "03_redacted_secrets.json"],
+      "purpose": "Record of sensitive literals found, redaction recommendations, and audit trail",
+      "status": "complete"
+    },
+    {
+      "id": "04",
+      "name": "Phase 3 Architecture",
+      "files": ["04_phase3_architecture.md", "04_phase3_architecture.json"],
+      "purpose": "Backend architecture, service flow, API layers, AI pipeline, portal-isolated storage design",
+      "status": "complete"
+    },
+    {
+      "id": "05",
+      "name": "API Inventory",
+      "files": ["05_api_inventory.csv", "05_api_inventory.json", "05_api_test_results.md"],
+      "purpose": "Complete REST API endpoint listing with layer assignments and test results",
+      "status": "complete"
+    },
+    {
+      "id": "06",
+      "name": "Services Inventory",
+      "files": ["06_services_inventory.md"],
+      "purpose": "Backend service module descriptions, dependencies, and responsibilities",
+      "status": "complete"
+    },
+    {
+      "id": "07",
+      "name": "Service-to-File Mapping",
+      "files": ["07_service_to_file_map.csv"],
+      "purpose": "Traceable cross-reference between services and their source file locations",
+      "status": "complete"
+    },
+    {
+      "id": "08",
+      "name": "Evidence Manifest",
+      "files": ["08_evidence_manifest.md", "08_evidence_manifest.json"],
+      "purpose": "Index and summary of all evidence artifacts",
+      "status": "complete"
+    }
+  ],
+  "key_findings": {
+    "technology_stack": "TypeScript/JavaScript, React, Express, PostgreSQL, OpenAI, Drizzle ORM",
+    "architecture_type": "Multi-tenant portal-isolated AI document intelligence system",
+    "api_endpoints_count": 82,
+    "service_modules_count": 13,
+    "security_notes": "Sensitive information found and redacted; recommendations provided for remediation",
+    "evidence_scope": "Backend architecture, API inventory, service modules, file listings, configuration metadata"
+  },
+  "methodology": [
+    "Static Code Analysis",
+    "Metadata Extraction",
+    "Redaction-Aware Audit",
+    "Architecture Mapping",
+    "Non-invasive Observation"
+  ],
+  "quality_assurance": {
+    "artifacts_indexed": true,
+    "cross_references_verified": true,
+    "redaction_verified": true,
+    "non_invasive_verified": true,
+    "traceability_verified": true
+  },
+  "sign_off": {
+    "status": "complete",
+    "date": "2026-07-13",
+    "ready_for_audit": true
+  }
+}

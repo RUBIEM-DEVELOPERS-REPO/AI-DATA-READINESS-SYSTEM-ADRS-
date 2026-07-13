@@ -1,0 +1,27 @@
+{
+  "artifact": "Phase 3 Architecture Documentation",
+  "file": "docs/ai4i-evidence/04_phase3_architecture.md",
+  "description": "Architecture evidence for ADRS backend, including ingest, extraction, AI, semantic search, portal isolation, validation, CDM, and agent orchestration.",
+  "createdBy": "GitHub Copilot",
+  "createdAt": "2026-07-13T00:00:00Z",
+  "sourceFiles": [
+    "server/index.ts",
+    "server/routes.ts",
+    "server/routes_registry.ts",
+    "server/auth.ts",
+    "server/storage.ts",
+    "server/services/extraction.ts",
+    "server/services/ai-extraction.ts",
+    "server/services/ai-provider.ts",
+    "server/services/embeddings.ts",
+    "server/services/attention.ts",
+    "server/services/agent.ts",
+    "server/services/publishing.ts",
+    "server/services/connector-manager.ts"
+  ],
+  "notes": [
+    "Captures layer descriptions, portal-isolated DB design, and AI pipeline dependencies.",
+    "Supports audit evidence for backend architecture and service flow.",
+    "Does not modify production application logic."
+  ]
+}
