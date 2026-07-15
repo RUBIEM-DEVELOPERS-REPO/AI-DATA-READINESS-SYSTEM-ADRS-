@@ -3,9 +3,14 @@ import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "http";
 import { setupSession } from "./auth";
+import { validateRuntimeConfig } from "./config";
+import { pool } from "./db";
 
 const app = express();
 const httpServer = createServer(app);
+app.disable("x-powered-by");
+
+validateRuntimeConfig();
 
 declare module "http" {
   interface IncomingMessage {
@@ -23,7 +28,7 @@ app.use(
 
 app.use(express.urlencoded({ extended: false }));
 
-setupSession(app);
+await setupSession(app);
 
 export function log(message: string, source = "express") {
   const formattedTime = new Date().toLocaleTimeString("en-US", {
@@ -35,6 +40,24 @@ export function log(message: string, source = "express") {
 
   console.log(`${formattedTime} [${source}] ${message}`);
 }
+
+app.get("/healthz", async (_req, res) => {
+  try {
+    await pool.query("SELECT 1");
+    res.status(200).json({
+      status: "ok",
+      environment: process.env.NODE_ENV || "development",
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    res.status(503).json({
+      status: "error",
+      environment: process.env.NODE_ENV || "development",
+      timestamp: new Date().toISOString(),
+      error: "database_unavailable",
+    });
+  }
+});
 
 app.use((req, res, next) => {
   const start = Date.now();
@@ -93,10 +116,11 @@ app.use((req, res, next) => {
   // this serves both the API and the client.
   // It is the only port that is not firewalled.
   const port = parseInt(process.env.PORT || "5000", 10);
+  const host = process.env.HOST || (process.env.NODE_ENV === "production" ? "0.0.0.0" : "127.0.0.1");
   httpServer.listen(
     {
       port,
-      host: "127.0.0.1",
+      host,
     },
     () => {
       log(`serving on port ${port}`);

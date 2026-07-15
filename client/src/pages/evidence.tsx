@@ -1110,7 +1110,7 @@ function IngestFileDialog() {
 
           {/* ── Cloud Storage Tab ── */}
           <TabsContent value="cloud" className="space-y-2 mt-3">
-            <p className="text-xs text-muted-foreground mb-3">Connect cloud storage platforms to browse and import files directly into ADRS.</p>
+            <p className="text-xs text-muted-foreground mb-3">Connect cloud storage platforms to browse and import files directly into IntelliNexus.</p>
             {[
               { Icon: SiGoogledrive, name: "Google Drive", status: "not_connected", desc: "Browse and import files from your Google Drive — PDFs, Docs, Sheets, and more.", action: "Connect Google Drive" },
               { Icon: SiDropbox, name: "Dropbox", status: "url_import", desc: "Import Dropbox files using a shared link via the URL import tab.", action: "Use URL Import" },

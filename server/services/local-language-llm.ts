@@ -1,4 +1,5 @@
 import crypto from "crypto";
+import { getAiProviderConfig, getTextModel } from "./ai-provider";
 
 function sha256Hex(input: string): string {
   return crypto.createHash("sha256").update(input).digest("hex");
@@ -32,7 +33,7 @@ export function selectSovereignModel(params: {
       ? "zimb-llm-shona-ft-v1"
       : language === "NDEBELE"
       ? "zimb-llm-ndebele-ft-v1"
-      : (process.env.AI_TEXT_MODEL || "llama-3.3-70b-versatile");
+      : getTextModel(getAiProviderConfig());
 
   return {
     language,

@@ -327,6 +327,11 @@ export const dataControllers = pgTable("data_controllers", {
   contactEmail: text("contact_email"),
   organisation: text("organisation"),
   address: text("address"),
+  type: text("type").notNull().default("CONTROLLER"), // 'CONTROLLER' | 'PROCESSOR'
+  sector: text("sector"), // 'FINANCE' | 'HEALTHCARE' | 'TELECOM' | 'PUBLIC_SECTOR' | 'RETAIL' | 'OTHER'
+  riskLevel: text("risk_level").notNull().default("LOW"), // 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL'
+  licenceStatus: text("licence_status").notNull().default("ACTIVE"), // 'ACTIVE' | 'EXPIRED' | 'PENDING_RENEWAL'
+  licenceExpiryDate: timestamp("licence_expiry_date"),
   metadata: jsonb("metadata").default({}),
   tenantId: text("tenant_id").notNull().default("TENANT-001"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
@@ -346,9 +351,122 @@ export const processingRecords = pgTable("processing_records", {
   status: text("status").notNull().default("ACTIVE"),
   startedAt: timestamp("started_at"),
   stoppedAt: timestamp("stopped_at"),
+  ropaTemplate: text("ropa_template"), // 'HR_RECORDS' | 'CUSTOMER_DATA' | 'MARKETING_METRICS' | 'FINANCIAL_LEDGER' | 'OTHER'
+  completenessScore: real("completeness_score").notNull().default(0),
+  lawfulBasisVerified: boolean("lawful_basis_verified").notNull().default(false),
+  lawfulBasisVerificationNotes: text("lawful_basis_verification_notes"),
+  retentionExpiryDate: timestamp("retention_expiry_date"),
+  excessiveDataDetected: boolean("excessive_data_detected").notNull().default(false),
+  excessiveDataNotes: text("excessive_data_notes"),
   tenantId: text("tenant_id").notNull().default("TENANT-001"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+// ─── Data Breach Management ─────────────────────────────────────────────────
+export const dataBreaches = pgTable("data_breaches", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  breachCode: varchar("breach_code").notNull().unique(),
+  title: text("title").notNull(),
+  description: text("description").notNull(),
+  incidentDate: timestamp("incident_date").notNull(),
+  detectedDate: timestamp("detected_date").notNull(),
+  severity: text("severity").notNull().default("LOW"), // 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL'
+  status: text("status").notNull().default("REPORTED"), // 'REPORTED' | 'INVESTIGATING' | 'CONTAINED' | 'RESOLVED'
+  impactAssessment: text("impact_assessment"),
+  rootCause: text("root_cause"),
+  remediationActions: text("remediation_actions"),
+  evidenceFileUrls: text("evidence_file_urls").array().default([]),
+  slaDeadline: timestamp("sla_deadline"),
+  slaStatus: text("sla_status").notNull().default("ON_TRACK"), // 'ON_TRACK' | 'BREACHED'
+  tenantId: text("tenant_id").notNull().default("TENANT-001"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+// ─── Data Subject Rights Oversight ──────────────────────────────────────────
+export const dsrRequests = pgTable("dsr_requests", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  requestCode: varchar("request_code").notNull().unique(),
+  subjectName: text("subject_name").notNull(),
+  subjectEmail: text("subject_email").notNull(),
+  requestType: text("request_type").notNull().default("ACCESS"), // 'ACCESS' | 'ERASURE' | 'PORTABILITY' | 'RECTIFICATION' | 'RESTRICTION'
+  details: text("details"),
+  status: text("status").notNull().default("RECEIVED"), // 'RECEIVED' | 'IN_PROGRESS' | 'COMPLETED' | 'REJECTED' | 'ESCALATED'
+  rejectionReason: text("rejection_reason"),
+  escalationNotes: text("escalation_notes"),
+  deadline: timestamp("deadline").notNull(),
+  responseSentAt: timestamp("response_sent_at"),
+  complaintsCount: integer("complaints_count").notNull().default(0),
+  tenantId: text("tenant_id").notNull().default("TENANT-001"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export const dsrComplaints = pgTable("dsr_complaints", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  complaintCode: varchar("complaint_code").notNull().unique(),
+  requestId: varchar("request_id").references(() => dsrRequests.id),
+  complainantName: text("complainant_name").notNull(),
+  complainantEmail: text("complainant_email").notNull(),
+  details: text("details").notNull(),
+  status: text("status").notNull().default("OPEN"), // 'OPEN' | 'UNDER_REVIEW' | 'RESOLVED'
+  resolutionDetails: text("resolution_details"),
+  tenantId: text("tenant_id").notNull().default("TENANT-001"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+// ─── Audit and Enforcement Module ────────────────────────────────────────────
+export const complianceAudits = pgTable("compliance_audits", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  auditCode: varchar("audit_code").notNull().unique(),
+  title: text("title").notNull(),
+  description: text("description"),
+  targetControllerId: varchar("target_controller_id").references(() => dataControllers.id),
+  scheduledDate: timestamp("scheduled_date").notNull(),
+  inspectionStatus: text("inspection_status").notNull().default("SCHEDULED"), // 'SCHEDULED' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED'
+  findings: text("findings"),
+  score: real("score"),
+  enforcementStatus: text("enforcement_status").notNull().default("NONE"), // 'NONE' | 'WARNING_ISSUED' | 'PENALTY_PROPOSED' | 'SANCTION_ENFORCED'
+  fineAmount: real("fine_amount"),
+  correctiveActions: text("corrective_actions"),
+  evidenceRepositoryUrls: text("evidence_repository_urls").array().default([]),
+  tenantId: text("tenant_id").notNull().default("TENANT-001"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+// ─── Government and Cybersecurity Feeds ─────────────────────────────────────
+export const externalIntegrations = pgTable("external_integrations", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  systemName: text("system_name").notNull(), // 'GOV_REGULATOR' | 'CERT_CYBERSECURITY' | 'NATIVE_DB_CONNECTOR'
+  displayName: text("display_name"),
+  integrationType: text("integration_type").notNull(), // 'GOVERNMENT' | 'CYBERSECURITY' | 'GENERIC'
+  connectorType: text("connector_type").notNull().default("API"), // 'API' | 'DATABASE' | 'SFTP' | 'FTP' | 'CUSTOM'
+  status: text("status").notNull().default("DISCONNECTED"), // 'CONNECTED' | 'DISCONNECTED' | 'ERROR'
+  enabled: boolean("enabled").notNull().default(true),
+  healthStatus: text("health_status").notNull().default("UNKNOWN"), // 'UNKNOWN' | 'HEALTHY' | 'DEGRADED' | 'FAILED'
+  lastError: text("last_error"),
+  config: jsonb("config").notNull().default({}),
+  metadata: jsonb("metadata").notNull().default({}),
+  nextSyncAt: timestamp("next_sync_at"),
+  lastSyncAt: timestamp("last_sync_at"),
+  syncLog: text("sync_log"),
+  createdBy: varchar("created_by"),
+  tenantId: text("tenant_id").notNull().default("TENANT-001"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export const externalIntegrationEvents = pgTable("external_integration_events", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  integrationId: varchar("integration_id").notNull().references(() => externalIntegrations.id, { onDelete: "cascade" }),
+  eventType: text("event_type").notNull().default("SYNC"),
+  severity: text("severity").notNull().default("INFO"),
+  message: text("message").notNull(),
+  metadata: jsonb("metadata").notNull().default({}),
+  tenantId: text("tenant_id").notNull().default("TENANT-001"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
 // ─── Layer 7: Knowledge Graph (Live Graph) ──────────────────────────────────
@@ -477,6 +595,425 @@ export const accessRequestStatusEnum = pgEnum("access_request_status", [
   "REJECTED",
 ]);
 
+// ─────────────────────────────────────────────────────────────────────────────
+// External Systems Privacy Monitoring & Compliance Hub
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ─── Connector Status Enums ──────────────────────────────────────────────────
+export const connectorStatusEnum = pgEnum("connector_status", [
+  "REGISTERED", "TESTING", "CONNECTED", "DEGRADED", "PAUSED", "REVOKED"
+]);
+
+export const connectorSyncModeEnum = pgEnum("connector_sync_mode", [
+  "REAL_TIME", "INCREMENTAL", "SCHEDULED_FULL", "MANUAL"
+]);
+
+export const connectorIncidentTypeEnum = pgEnum("incident_type", [
+  "UNAUTHORIZED_ACCESS", "DATA_LOSS", "MALWARE", "SYSTEM_COMPROMISE", "ACCIDENTAL_DISCLOSURE"
+]);
+
+export const incidentStatusEnum = pgEnum("incident_status", [
+  "DETECTED", "TRIAGED", "INVESTIGATING", "CONFIRMED_BREACH", "REPORTABLE", 
+  "NOTIFYING", "CONTAINED", "RESOLVED"
+]);
+
+export const complianceRuleStatusEnum = pgEnum("compliance_rule_status", [
+  "DRAFT", "APPROVED", "ACTIVE", "DEPRECATED", "RETIRED"
+]);
+
+export const findingSeverityEnum = pgEnum("finding_severity", [
+  "CRITICAL", "HIGH", "MEDIUM", "LOW"
+]);
+
+export const findingStatusEnum = pgEnum("finding_status", [
+  "OPEN", "ASSIGNED", "IN_PROGRESS", "RESOLVED", "RISK_ACCEPTED", "FALSE_POSITIVE"
+]);
+
+export const approvalStatusEnum = pgEnum("approval_status", [
+  "PENDING", "APPROVED", "REJECTED", "REVOKED"
+]);
+
+// ─── Connector Control Plane ────────────────────────────────────────────────
+export const externalSystems = pgTable("external_systems", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  tenantId: varchar("tenant_id").notNull(),
+  name: varchar("name", { length: 255 }).notNull(),
+  description: text("description"),
+  systemType: varchar("system_type", { length: 100 }).notNull(), // "crm", "erp", "hr", "database", etc.
+  owner: varchar("owner", { length: 255 }),
+  dataOwner: varchar("data_owner", { length: 255 }),
+  dataProcessingBasis: varchar("data_processing_basis", { length: 100 }), // "contract", "consent", etc.
+  riskRating: varchar("risk_rating", { length: 50 }), // "critical", "high", "medium", "low"
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+}, table => ({
+  tenantIdx: sql`CREATE INDEX IF NOT EXISTS external_systems_tenant_idx ON ${table} (${table.tenantId})`,
+}));
+
+export const connectorDefinitions = pgTable("connector_definitions", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  connectorType: varchar("connector_type", { length: 100 }).notNull(), // "postgres", "salesforce_rest", etc.
+  name: varchar("name", { length: 255 }).notNull(),
+  version: varchar("version", { length: 50 }).notNull(),
+  capabilities: jsonb("capabilities").notNull(), // List of supported methods
+  sdkVersion: varchar("sdk_version", { length: 50 }).notNull(),
+  documentation: text("documentation"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, table => ({
+  typeIdx: sql`CREATE INDEX IF NOT EXISTS connector_definitions_type_idx ON ${table} (${table.connectorType})`,
+}));
+
+export const connectorInstances = pgTable("connector_instances", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  tenantId: varchar("tenant_id").notNull(),
+  externalSystemId: varchar("external_system_id").notNull().references(() => externalSystems.id),
+  connectorDefinitionId: varchar("connector_definition_id").notNull().references(() => connectorDefinitions.id),
+  name: varchar("name", { length: 255 }).notNull(),
+  status: connectorStatusEnum("status").notNull().default("REGISTERED"),
+  config: jsonb("config").notNull(), // Non-sensitive config; secrets in vault
+  credentialVaultKey: varchar("credential_vault_key", { length: 255 }).notNull(),
+  syncMode: connectorSyncModeEnum("sync_mode").notNull().default("SCHEDULED_FULL"),
+  scanSchedule: varchar("scan_schedule", { length: 255 }), // Cron expression
+  scopeApproved: jsonb("scope_approved").notNull(), // { databases: [...], tables: [...], fields: [...] }
+  lastHealthCheck: timestamp("last_health_check"),
+  lastSyncStart: timestamp("last_sync_start"),
+  lastSyncEnd: timestamp("last_sync_end"),
+  lastSyncStatus: varchar("last_sync_status", { length: 50 }), // "success", "partial", "failed"
+  lastSyncError: text("last_sync_error"),
+  totalErrorCount: integer("total_error_count").default(0),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  createdBy: varchar("created_by").notNull(),
+  approvedBy: varchar("approved_by"),
+}, table => ({
+  tenantIdx: sql`CREATE INDEX IF NOT EXISTS connector_instances_tenant_idx ON ${table} (${table.tenantId})`,
+  systemIdx: sql`CREATE INDEX IF NOT EXISTS connector_instances_system_idx ON ${table} (${table.externalSystemId})`,
+}));
+
+// ─── Sync Jobs & Checkpoints ────────────────────────────────────────────────
+export const syncJobs = pgTable("sync_jobs", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  tenantId: varchar("tenant_id").notNull(),
+  connectorInstanceId: varchar("connector_instance_id").notNull().references(() => connectorInstances.id),
+  jobType: varchar("job_type", { length: 50 }).notNull(), // "full_rescan", "incremental", "webhook", "manual"
+  status: varchar("status", { length: 50 }).notNull(), // "queued", "running", "completed", "failed", "partial"
+  startTime: timestamp("start_time"),
+  endTime: timestamp("end_time"),
+  recordsProcessed: integer("records_processed").default(0),
+  recordsNew: integer("records_new").default(0),
+  recordsModified: integer("records_modified").default(0),
+  recordsDeleted: integer("records_deleted").default(0),
+  errorCount: integer("error_count").default(0),
+  errorSample: jsonb("error_sample"), // First few errors for diagnostics
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, table => ({
+  tenantIdx: sql`CREATE INDEX IF NOT EXISTS sync_jobs_tenant_idx ON ${table} (${table.tenantId})`,
+  connectorIdx: sql`CREATE INDEX IF NOT EXISTS sync_jobs_connector_idx ON ${table} (${table.connectorInstanceId})`,
+}));
+
+export const syncCheckpoints = pgTable("sync_checkpoints", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  tenantId: varchar("tenant_id").notNull(),
+  connectorInstanceId: varchar("connector_instance_id").notNull().references(() => connectorInstances.id),
+  cursor: text("cursor").notNull(), // Connector-specific bookmark
+  lastSourceEventTime: timestamp("last_source_event_time"),
+  lastIngestionTime: timestamp("last_ingestion_time").defaultNow().notNull(),
+  schemaVersion: varchar("schema_version", { length: 50 }),
+  metadata: jsonb("metadata"), // Connector-specific checkpoint metadata
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+}, table => ({
+  tenantConnectorIdx: sql`CREATE INDEX IF NOT EXISTS sync_checkpoints_tenant_connector_idx ON ${table} (${table.tenantId}, ${table.connectorInstanceId})`,
+}));
+
+// ─── Data Assets & Classification ───────────────────────────────────────────
+export const dataAssets = pgTable("data_assets", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  tenantId: varchar("tenant_id").notNull(),
+  connectorInstanceId: varchar("connector_instance_id").notNull().references(() => connectorInstances.id),
+  assetType: varchar("asset_type", { length: 50 }).notNull(), // "database", "table", "file", "api", "report", "dashboard"
+  name: varchar("name", { length: 255 }).notNull(),
+  qualifiedName: varchar("qualified_name", { length: 512 }).notNull(), // Globally unique identifier
+  owner: varchar("owner", { length: 255 }),
+  description: text("description"),
+  recordCount: integer("record_count"),
+  fieldCount: integer("field_count"),
+  containsPersonalData: boolean("contains_personal_data"),
+  containsSensitiveData: boolean("contains_sensitive_data"),
+  dataCategory: varchar("data_category", { length: 100 }), // "customer", "employee", "transaction", etc.
+  retentionPolicyId: varchar("retention_policy_id"),
+  lastDiscovered: timestamp("last_discovered").notNull(),
+  lastScanned: timestamp("last_scanned"),
+  classificationConfidence: real("classification_confidence"), // 0-1
+  accessRoles: jsonb("access_roles"), // List of roles that can access
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+}, table => ({
+  tenantIdx: sql`CREATE INDEX IF NOT EXISTS data_assets_tenant_idx ON ${table} (${table.tenantId})`,
+  connectorIdx: sql`CREATE INDEX IF NOT EXISTS data_assets_connector_idx ON ${table} (${table.connectorInstanceId})`,
+}));
+
+export const dataFields = pgTable("data_fields", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  tenantId: varchar("tenant_id").notNull(),
+  dataAssetId: varchar("data_asset_id").notNull().references(() => dataAssets.id),
+  name: varchar("name", { length: 255 }).notNull(),
+  dataType: varchar("data_type", { length: 100 }), // "varchar", "integer", "boolean", etc.
+  isNullable: boolean("is_nullable").default(true),
+  isPrimaryKey: boolean("is_primary_key").default(false),
+  isForeignKey: boolean("is_foreign_key").default(false),
+  description: text("description"),
+  classificationCategory: varchar("classification_category", { length: 100 }), // "name", "email", "ssn", etc.
+  classificationMethod: varchar("classification_method", { length: 100 }), // "rule", "regex", "ml", "user_override"
+  classificationConfidence: real("classification_confidence"), // 0-1
+  isEncrypted: boolean("is_encrypted").default(false),
+  isMasked: boolean("is_masked").default(false),
+  lastDiscovered: timestamp("last_discovered").notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+}, table => ({
+  tenantIdx: sql`CREATE INDEX IF NOT EXISTS data_fields_tenant_idx ON ${table} (${table.tenantId})`,
+  assetIdx: sql`CREATE INDEX IF NOT EXISTS data_fields_asset_idx ON ${table} (${table.dataAssetId})`,
+}));
+
+// ─── Data Lineage ───────────────────────────────────────────────────────────
+export const dataFlows = pgTable("data_flows", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  tenantId: varchar("tenant_id").notNull(),
+  sourceAssetId: varchar("source_asset_id").notNull().references(() => dataAssets.id),
+  targetAssetId: varchar("target_asset_id").notNull().references(() => dataAssets.id),
+  flowType: varchar("flow_type", { length: 50 }).notNull(), // "copy", "transform", "aggregate", "report", "export"
+  frequency: varchar("frequency", { length: 100 }), // "real_time", "hourly", "daily", "weekly", "manual"
+  direction: varchar("direction", { length: 50 }).notNull(), // "inbound", "outbound", "internal"
+  containsPersonalData: boolean("contains_personal_data"),
+  containsSensitiveData: boolean("contains_sensitive_data"),
+  lastObserved: timestamp("last_observed"),
+  discoveryMethod: varchar("discovery_method", { length: 100 }), // "schema_analysis", "audit_log", "metadata", "user_defined"
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+}, table => ({
+  tenantIdx: sql`CREATE INDEX IF NOT EXISTS data_flows_tenant_idx ON ${table} (${table.tenantId})`,
+  sourceIdx: sql`CREATE INDEX IF NOT EXISTS data_flows_source_idx ON ${table} (${table.sourceAssetId})`,
+  targetIdx: sql`CREATE INDEX IF NOT EXISTS data_flows_target_idx ON ${table} (${table.targetAssetId})`,
+}));
+
+// ─── Processing Activities ──────────────────────────────────────────────────
+export const processingActivities = pgTable("processing_activities", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  tenantId: varchar("tenant_id").notNull(),
+  dataAssetId: varchar("data_asset_id").references(() => dataAssets.id),
+  name: varchar("name", { length: 255 }).notNull(),
+  description: text("description"),
+  purpose: text("purpose").notNull(), // Why is this data being processed?
+  lawfulBasis: varchar("lawful_basis", { length: 100 }).notNull(), // "consent", "contract", "legal_obligation", etc.
+  isAutomatedDecision: boolean("is_automated_decision").default(false),
+  automatedDecisionDetails: text("automated_decision_details"),
+  dataSubjectCategories: jsonb("data_subject_categories"), // ["customers", "employees", "patients"]
+  recipientCategories: jsonb("recipient_categories"),
+  consentRequired: boolean("consent_required").default(false),
+  consentEvidenceLocation: varchar("consent_evidence_location", { length: 255 }),
+  consentStatus: varchar("consent_status", { length: 50 }), // "valid", "expired", "withdrawn", "missing"
+  documentationLocation: varchar("documentation_location", { length: 255 }),
+  approvedBy: varchar("approved_by"),
+  approvalDate: timestamp("approval_date"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+}, table => ({
+  tenantIdx: sql`CREATE INDEX IF NOT EXISTS processing_activities_tenant_idx ON ${table} (${table.tenantId})`,
+  assetIdx: sql`CREATE INDEX IF NOT EXISTS processing_activities_asset_idx ON ${table} (${table.dataAssetId})`,
+}));
+
+// ─── Retention Management ────────────────────────────────────────────────────
+export const retentionPolicies = pgTable("retention_policies", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  tenantId: varchar("tenant_id").notNull(),
+  name: varchar("name", { length: 255 }).notNull(),
+  description: text("description"),
+  recordCategory: varchar("record_category", { length: 100 }).notNull(), // "customer", "employee", "transaction", "log", etc.
+  personalDataCategory: varchar("personal_data_category", { length: 100 }), // "general", "sensitive", "special"
+  systemScope: jsonb("system_scope"), // { systems: [...], databases: [...], tables: [...] }
+  retentionDurationDays: integer("retention_duration_days").notNull(),
+  retentionTrigger: varchar("retention_trigger", { length: 100 }).notNull(), // "collection_date", "last_transaction", "contract_end", etc.
+  dispositionAction: varchar("disposition_action", { length: 100 }).notNull(), // "delete", "anonymise", "pseudonymise", "archive"
+  legalBasis: varchar("legal_basis", { length: 100 }),
+  archiveLocation: varchar("archive_location", { length: 255 }),
+  legalHoldException: boolean("legal_hold_exception").default(false),
+  reviewDate: timestamp("review_date"),
+  approvedBy: varchar("approved_by").notNull(),
+  effectiveDate: timestamp("effective_date").notNull(),
+  expiryDate: timestamp("expiry_date"),
+  version: integer("version").default(1),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+}, table => ({
+  tenantIdx: sql`CREATE INDEX IF NOT EXISTS retention_policies_tenant_idx ON ${table} (${table.tenantId})`,
+}));
+
+export const retentionFindings = pgTable("retention_findings", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  tenantId: varchar("tenant_id").notNull(),
+  dataAssetId: varchar("data_asset_id").notNull().references(() => dataAssets.id),
+  retentionPolicyId: varchar("retention_policy_id").references(() => retentionPolicies.id),
+  findingType: varchar("finding_type", { length: 50 }).notNull(), // "past_retention", "approaching_expiry", "no_policy", etc.
+  estimatedRecordsAffected: integer("estimated_records_affected"),
+  expiryDate: timestamp("expiry_date"),
+  severity: findingSeverityEnum("severity").notNull(),
+  status: findingStatusEnum("status").notNull(),
+  remediationTask: varchar("remediation_task"),
+  exceptionGrantedUntil: timestamp("exception_granted_until"),
+  exceptionReason: text("exception_reason"),
+  approverComment: text("approver_comment"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+}, table => ({
+  tenantIdx: sql`CREATE INDEX IF NOT EXISTS retention_findings_tenant_idx ON ${table} (${table.tenantId})`,
+  assetIdx: sql`CREATE INDEX IF NOT EXISTS retention_findings_asset_idx ON ${table} (${table.dataAssetId})`,
+}));
+
+// ─── Incidents & Breaches ───────────────────────────────────────────────────
+export const incidents = pgTable("incidents", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  tenantId: varchar("tenant_id").notNull(),
+  incidentCode: varchar("incident_code", { length: 50 }).notNull().unique(),
+  title: varchar("title", { length: 255 }).notNull(),
+  description: text("description"),
+  incidentType: connectorIncidentTypeEnum("incident_type").notNull(),
+  detectionSource: varchar("detection_source", { length: 100 }).notNull(), // "audit_log", "dlp_alert", "siem", "user_report", "connector"
+  dateOccurred: timestamp("date_occurred").notNull(),
+  dateDetected: timestamp("date_detected").notNull(),
+  dateReported: timestamp("date_reported"),
+  affectedSystems: jsonb("affected_systems").notNull(), // List of connector/asset IDs
+  affectedDataCategories: jsonb("affected_data_categories").notNull(),
+  estimatedDataSubjectsAffected: integer("estimated_data_subjects_affected"),
+  confidentialityImpact: varchar("confidentiality_impact", { length: 50 }), // "none", "low", "medium", "high", "critical"
+  integrityImpact: varchar("integrity_impact", { length: 50 }),
+  availabilityImpact: varchar("availability_impact", { length: 50 }),
+  cause: text("cause"),
+  threatActor: varchar("threat_actor", { length: 100 }), // "external", "insider", "unknown"
+  status: incidentStatusEnum("status").notNull(),
+  dpoAssessment: text("dpo_assessment"),
+  notificationRequired: boolean("notification_required"),
+  notificationDecisionDate: timestamp("notification_decision_date"),
+  notificationDecisionReason: text("notification_decision_reason"),
+  dpaDeadline: timestamp("dpa_deadline"), // Calculated: dateDetected + 2 days (CDPA s.71)
+  dpaDeadlineExceeded: boolean("dpa_deadline_exceeded").default(false),
+  notificationSentAt: timestamp("notification_sent_at"),
+  regulatoryNotificationId: varchar("regulatory_notification_id"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  createdBy: varchar("created_by").notNull(),
+}, table => ({
+  tenantIdx: sql`CREATE INDEX IF NOT EXISTS incidents_tenant_idx ON ${table} (${table.tenantId})`,
+  dateDetectedIdx: sql`CREATE INDEX IF NOT EXISTS incidents_date_detected_idx ON ${table} (${table.dateDetected})`,
+  statusIdx: sql`CREATE INDEX IF NOT EXISTS incidents_status_idx ON ${table} (${table.status})`,
+}));
+
+// ─── Compliance Findings ─────────────────────────────────────────────────────
+export const complianceFindings = pgTable("compliance_findings", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  tenantId: varchar("tenant_id").notNull(),
+  findingCode: varchar("finding_code", { length: 50 }).notNull().unique(),
+  title: varchar("title", { length: 255 }).notNull(),
+  description: text("description").notNull(),
+  ruleId: varchar("rule_id").notNull().references(() => complianceRules.id),
+  ruleVersion: integer("rule_version").notNull(),
+  severity: findingSeverityEnum("severity").notNull(),
+  affectedAssets: jsonb("affected_assets").notNull(), // List of asset IDs
+  affectedSystems: jsonb("affected_systems"), // List of connector IDs
+  evidenceReferences: jsonb("evidence_references"), // Links to finding evidence
+  remediationDueDate: timestamp("remediation_due_date"),
+  remediationOwner: varchar("remediation_owner"),
+  status: findingStatusEnum("status").notNull(),
+  remediationNotes: text("remediation_notes"),
+  riskAcceptanceReason: text("risk_acceptance_reason"),
+  riskAcceptanceExpiryDate: timestamp("risk_acceptance_expiry_date"),
+  dpoReview: text("dpo_review"),
+  dpoReviewedAt: timestamp("dpo_reviewed_at"),
+  dpoReviewedBy: varchar("dpo_reviewed_by"),
+  firstDetected: timestamp("first_detected").notNull(),
+  lastDetected: timestamp("last_detected").notNull(),
+  detectionCount: integer("detection_count").default(1),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+}, table => ({
+  tenantIdx: sql`CREATE INDEX IF NOT EXISTS compliance_findings_tenant_idx ON ${table} (${table.tenantId})`,
+  ruleIdx: sql`CREATE INDEX IF NOT EXISTS compliance_findings_rule_idx ON ${table} (${table.ruleId})`,
+  statusIdx: sql`CREATE INDEX IF NOT EXISTS compliance_findings_status_idx ON ${table} (${table.status})`,
+}));
+
+// ─── Compliance Rules (Version-Controlled) ───────────────────────────────────
+export const complianceRules = pgTable("compliance_rules", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  tenantId: varchar("tenant_id").notNull(),
+  ruleCode: varchar("rule_code", { length: 100 }).notNull(),
+  title: varchar("title", { length: 255 }).notNull(),
+  description: text("description").notNull(),
+  jurisdiction: varchar("jurisdiction", { length: 100 }).notNull(), // "zimbabwe", "gdpr", "ccpa", etc.
+  legalInstrument: varchar("legal_instrument", { length: 255 }).notNull(), // "CDPA", "POTRAZ Guidance", etc.
+  legalReference: varchar("legal_reference", { length: 255 }), // "s.71", "Chapter 12:07", etc.
+  requirementDescription: text("requirement_description").notNull(),
+  applicabilityConditions: jsonb("applicability_conditions"), // { dataCategories: [...], systems: [...] }
+  detectionLogic: jsonb("detection_logic").notNull(), // Rule definition
+  recommendedAction: text("recommended_action"),
+  responsibleRole: varchar("responsible_role", { length: 100 }), // "dpo", "data_owner", "security_team"
+  severity: findingSeverityEnum("severity").notNull(),
+  version: integer("version").default(1),
+  previousVersionId: varchar("previous_version_id"),
+  effectiveDate: timestamp("effective_date").notNull(),
+  expiryDate: timestamp("expiry_date"),
+  approvedBy: varchar("approved_by").notNull(),
+  approvalDate: timestamp("approval_date").notNull(),
+  status: complianceRuleStatusEnum("status").notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+}, table => ({
+  tenantIdx: sql`CREATE INDEX IF NOT EXISTS compliance_rules_tenant_idx ON ${table} (${table.tenantId})`,
+  statusIdx: sql`CREATE INDEX IF NOT EXISTS compliance_rules_status_idx ON ${table} (${table.status})`,
+}));
+
+// ─── Approvals & Audit Trail ─────────────────────────────────────────────────
+export const approvals = pgTable("approvals", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  tenantId: varchar("tenant_id").notNull(),
+  targetType: varchar("target_type", { length: 50 }).notNull(), // "deletion", "notification", "legal_hold", "exception", "rule_change"
+  targetId: varchar("target_id").notNull(),
+  approvalType: varchar("approval_type", { length: 50 }).notNull(), // "required", "optional", "notification"
+  status: approvalStatusEnum("status").notNull(),
+  requestedBy: varchar("requested_by").notNull(),
+  requestedAt: timestamp("requested_at").notNull(),
+  approverRole: varchar("approver_role", { length: 100 }).notNull(),
+  approvedBy: varchar("approved_by"),
+  approvalReason: text("approval_reason"),
+  approvedAt: timestamp("approved_at"),
+  rejectionReason: text("rejection_reason"),
+  rejectedAt: timestamp("rejected_at"),
+  validUntil: timestamp("valid_until"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, table => ({
+  tenantIdx: sql`CREATE INDEX IF NOT EXISTS approvals_tenant_idx ON ${table} (${table.tenantId})`,
+}));
+
+export const auditEvents = pgTable("audit_events", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  tenantId: varchar("tenant_id").notNull(),
+  actor: varchar("actor").notNull(), // User ID
+  action: varchar("action", { length: 100 }).notNull(), // "connector.registered", "finding.created", "deletion.approved", etc.
+  targetType: varchar("target_type", { length: 50 }).notNull(), // "connector", "finding", "incident", "deletion", etc.
+  targetId: varchar("target_id"),
+  targetName: varchar("target_name", { length: 255 }),
+  previousValue: jsonb("previous_value"),
+  newValue: jsonb("new_value"),
+  reason: text("reason"),
+  sourceIP: varchar("source_ip", { length: 45 }),
+  outcome: varchar("outcome", { length: 50 }).notNull(), // "success", "failure", "partial"
+  errorMessage: text("error_message"),
+  correlationId: varchar("correlation_id"), // Link related events
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, table => ({
+  tenantIdx: sql`CREATE INDEX IF NOT EXISTS audit_events_tenant_idx ON ${table} (${table.tenantId})`,
+  actionIdx: sql`CREATE INDEX IF NOT EXISTS audit_events_action_idx ON ${table} (${table.action})`,
+  createdAtIdx: sql`CREATE INDEX IF NOT EXISTS audit_events_created_at_idx ON ${table} (${table.createdAt})`,
+}));
+
 export const accessRequests = pgTable("access_requests", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   firstName: text("first_name").notNull(),
@@ -496,6 +1033,12 @@ export const accessRequests = pgTable("access_requests", {
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 
+export const adrsSessions = pgTable("adrs_sessions", {
+  sid: varchar("sid").primaryKey(),
+  sess: jsonb("sess").notNull(),
+  expire: timestamp("expire", { precision: 6 }).notNull(),
+});
+
 export const insertAccessRequestSchema = createInsertSchema(accessRequests).omit({ id: true, createdAt: true, updatedAt: true });
 
 export const insertExtractionTextSchema = createInsertSchema(extractionTexts).omit({ id: true, createdAt: true });
@@ -511,6 +1054,14 @@ export const insertProcessingRecordSchema = createInsertSchema(processingRecords
 export const insertUserSchema = createInsertSchema(users).omit({ id: true, createdAt: true, updatedAt: true, lastLoginAt: true });
 export const insertChunkEmbeddingSchema = createInsertSchema(chunkEmbeddings).omit({ id: true, createdAt: true });
 export const insertEntityEmbeddingSchema = createInsertSchema(entityEmbeddings).omit({ id: true, createdAt: true });
+
+export const insertDataBreachSchema = createInsertSchema(dataBreaches).omit({ id: true, createdAt: true, updatedAt: true });
+export const insertDsrRequestSchema = createInsertSchema(dsrRequests).omit({ id: true, createdAt: true, updatedAt: true });
+export const insertDsrComplaintSchema = createInsertSchema(dsrComplaints).omit({ id: true, createdAt: true });
+export const insertComplianceAuditSchema = createInsertSchema(complianceAudits).omit({ id: true, createdAt: true, updatedAt: true });
+export const insertExternalIntegrationSchema = createInsertSchema(externalIntegrations).omit({ id: true, createdAt: true });
+export const insertExternalIntegrationEventSchema = createInsertSchema(externalIntegrationEvents).omit({ id: true, createdAt: true });
+
 
 // Zod schema for registration form (client-side validation)
 export const registerSchema = z.object({
@@ -557,6 +1108,20 @@ export type EntityEmbedding = typeof entityEmbeddings.$inferSelect;
 export type InsertEntityEmbedding = typeof entityEmbeddings.$inferInsert;
 export type KgNode = typeof kgNodes.$inferSelect;
 export type KgEdge = typeof kgEdges.$inferSelect;
+
+export type DataBreach = typeof dataBreaches.$inferSelect;
+export type InsertDataBreach = z.infer<typeof insertDataBreachSchema>;
+export type DsrRequest = typeof dsrRequests.$inferSelect;
+export type InsertDsrRequest = z.infer<typeof insertDsrRequestSchema>;
+export type DsrComplaint = typeof dsrComplaints.$inferSelect;
+export type InsertDsrComplaint = z.infer<typeof insertDsrComplaintSchema>;
+export type ComplianceAudit = typeof complianceAudits.$inferSelect;
+export type InsertComplianceAudit = z.infer<typeof insertComplianceAuditSchema>;
+export type ExternalIntegration = typeof externalIntegrations.$inferSelect;
+export type InsertExternalIntegration = z.infer<typeof insertExternalIntegrationSchema>;
+export type ExternalIntegrationEvent = typeof externalIntegrationEvents.$inferSelect;
+export type InsertExternalIntegrationEvent = z.infer<typeof insertExternalIntegrationEventSchema>;
+
 
 // ─── Normalized Attribute type used in extractedAttributes ───────────────────
 export interface NormalizedAttribute {
@@ -743,6 +1308,152 @@ export const documentFieldsSchema = z.object({
   document_date: z.string().optional(),
   reference_number: z.string().optional(),
 }).catchall(z.any());
+
+// ─── Insert Schemas (Zod) for Compliance Module ──────────────────────────────
+// (Declared above near their respective table definitions with .omit() applied)
+
+export type InsertDataController = z.infer<typeof insertDataControllerSchema>;
+export type InsertProcessingRecord = z.infer<typeof insertProcessingRecordSchema>;
+
+export const dpoAppointments = pgTable("dpo_appointments", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  orgId: varchar("org_id").references(() => dataControllers.id).notNull(),
+  name: text("name").notNull(),
+  email: text("email").notNull(),
+  appointedAt: timestamp("appointed_at").notNull().defaultNow(),
+  notifiedToAuthorityAt: timestamp("notified_to_authority_at"),
+  status: text("status").notNull().default("PENDING"), // 'PENDING' | 'NOTIFIED' | 'REVOKED'
+  isZimbabweEstablished: boolean("is_zimbabwe_established").notNull().default(true),
+  localRepName: text("local_rep_name"),
+  localRepEmail: text("local_rep_email"),
+  tenantId: text("tenant_id").notNull().default("TENANT-001"),
+});
+
+export const consentRecords = pgTable("consent_records", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  orgId: varchar("org_id").references(() => dataControllers.id).notNull(),
+  dataSubjectName: text("data_subject_name").notNull(),
+  dataSubjectEmail: text("data_subject_email").notNull(),
+  sensitivityTier: text("sensitivity_tier").notNull(), // 'NON_SENSITIVE' | 'SENSITIVE' | 'HEALTH_GENETIC_BIOMETRIC'
+  method: text("method").notNull(), // 'IMPLIED' | 'EXPRESS_WRITTEN'
+  legalBasisCode: text("legal_basis_code").notNull(),
+  justification: text("justification"),
+  evidenceUri: text("evidence_uri"),
+  givenAt: timestamp("given_at").notNull().defaultNow(),
+  withdrawnAt: timestamp("withdrawn_at"),
+  tenantId: text("tenant_id").notNull().default("TENANT-001"),
+});
+
+export const patientIdentifiers = pgTable("patient_identifiers", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  orgId: varchar("org_id").references(() => dataControllers.id).notNull(),
+  dataSubjectName: text("data_subject_name").notNull(),
+  dataSubjectEmail: text("data_subject_email").notNull(),
+  identifierValue: text("identifier_value").notNull().unique(),
+  healthProfessionalCustodian: text("health_professional_custodian").notNull(),
+  authorityApprovalId: text("authority_approval_id"),
+  linkedIds: text("linked_ids").array().default([]),
+  tenantId: text("tenant_id").notNull().default("TENANT-001"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export const transferRecords = pgTable("transfer_records", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  orgId: varchar("org_id").references(() => dataControllers.id).notNull(),
+  destinationCountry: text("destination_country").notNull(),
+  adequacyStatus: text("adequacy_status").notNull(), // 'ADEQUATE' | 'NOT_ADEQUATE'
+  derogationCode: text("derogation_code"),
+  justification: text("justification"),
+  tenantId: text("tenant_id").notNull().default("TENANT-001"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export const whistleblowerReports = pgTable("whistleblower_reports", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  orgId: varchar("org_id").references(() => dataControllers.id).notNull(),
+  isAnonymous: boolean("is_anonymous").notNull().default(true),
+  reporterName: text("reporter_name"),
+  reporterEmail: text("reporter_email"),
+  implicatedPerson: text("implicated_person").notNull(),
+  details: text("details").notNull(),
+  disclosureStatus: text("disclosure_status").notNull().default("PENDING"), // 'PENDING' | 'DISCLOSED' | 'WITHHELD_EXCEPTION'
+  withheldReason: text("withheld_reason"),
+  tenantId: text("tenant_id").notNull().default("TENANT-001"),
+  filedAt: timestamp("filed_at").notNull().defaultNow(),
+});
+
+export const enforcementCases = pgTable("enforcement_cases", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  respondentName: text("respondent_name").notNull(),
+  breachedSections: text("breached_sections").array().notNull(),
+  penaltyBand: text("penalty_band").notNull(), // 'LEVEL_7' | 'LEVEL_11'
+  fineAmount: real("fine_amount"),
+  imprisonmentTerm: text("imprisonment_term"),
+  seizureOrder: boolean("seizure_order").notNull().default(false),
+  deletionOrder: boolean("deletion_order").notNull().default(false),
+  destructionConfirmedAt: timestamp("destruction_confirmed_at"),
+  status: text("status").notNull().default("OPEN"), // 'OPEN' | 'APPEALED' | 'CLOSED'
+  tenantId: text("tenant_id").notNull().default("TENANT-001"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export const appealCases = pgTable("appeal_cases", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  enforcementCaseId: varchar("enforcement_case_id").references(() => enforcementCases.id).notNull(),
+  filedAt: timestamp("filed_at").notNull().defaultNow(),
+  courtReference: text("court_reference").notNull(),
+  outcome: text("outcome"),
+  status: text("status").notNull().default("PENDING"), // 'PENDING' | 'RESOLVED'
+  tenantId: text("tenant_id").notNull().default("TENANT-001"),
+});
+
+export const adequacyCountries = pgTable("adequacy_countries", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  countryName: text("country_name").notNull().unique(),
+  isAdequate: boolean("is_adequate").notNull().default(true),
+  legalBasis: text("legal_basis"),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export const authorityApprovals = pgTable("authority_approvals", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  subjectType: text("subject_type").notNull(), // 'PATIENT_ID_LINK' | 'ROPA_HIGH_RISK' | 'TIA_EXCEPTION'
+  subjectId: text("subject_id").notNull(),
+  decision: text("decision").notNull().default("PENDING"), // 'PENDING' | 'APPROVED' | 'REJECTED' | 'CONDITIONAL'
+  conditions: text("conditions"),
+  decidedBy: text("decided_by"),
+  decidedAt: timestamp("decided_at"),
+  tenantId: text("tenant_id").notNull().default("TENANT-001"),
+});
+
+export const insertDpoAppointmentSchema = createInsertSchema(dpoAppointments).omit({ id: true, appointedAt: true });
+export const insertConsentRecordSchema = createInsertSchema(consentRecords).omit({ id: true, givenAt: true });
+export const insertPatientIdentifierSchema = createInsertSchema(patientIdentifiers).omit({ id: true, createdAt: true });
+export const insertTransferRecordSchema = createInsertSchema(transferRecords).omit({ id: true, createdAt: true });
+export const insertWhistleblowerReportSchema = createInsertSchema(whistleblowerReports).omit({ id: true, filedAt: true });
+export const insertEnforcementCaseSchema = createInsertSchema(enforcementCases).omit({ id: true, createdAt: true });
+export const insertAppealCaseSchema = createInsertSchema(appealCases).omit({ id: true, filedAt: true });
+export const insertAdequacyCountrySchema = createInsertSchema(adequacyCountries).omit({ id: true, updatedAt: true });
+export const insertAuthorityApprovalSchema = createInsertSchema(authorityApprovals).omit({ id: true, decidedAt: true });
+
+export type DpoAppointment = typeof dpoAppointments.$inferSelect;
+export type InsertDpoAppointment = z.infer<typeof insertDpoAppointmentSchema>;
+export type ConsentRecord = typeof consentRecords.$inferSelect;
+export type InsertConsentRecord = z.infer<typeof insertConsentRecordSchema>;
+export type PatientIdentifier = typeof patientIdentifiers.$inferSelect;
+export type InsertPatientIdentifier = z.infer<typeof insertPatientIdentifierSchema>;
+export type TransferRecord = typeof transferRecords.$inferSelect;
+export type InsertTransferRecord = z.infer<typeof insertTransferRecordSchema>;
+export type WhistleblowerReport = typeof whistleblowerReports.$inferSelect;
+export type InsertWhistleblowerReport = z.infer<typeof insertWhistleblowerReportSchema>;
+export type EnforcementCase = typeof enforcementCases.$inferSelect;
+export type InsertEnforcementCase = z.infer<typeof insertEnforcementCaseSchema>;
+export type AppealCase = typeof appealCases.$inferSelect;
+export type InsertAppealCase = z.infer<typeof insertAppealCaseSchema>;
+export type AdequacyCountry = typeof adequacyCountries.$inferSelect;
+export type InsertAdequacyCountry = z.infer<typeof insertAdequacyCountrySchema>;
+export type AuthorityApproval = typeof authorityApprovals.$inferSelect;
+export type InsertAuthorityApproval = z.infer<typeof insertAuthorityApprovalSchema>;
 
 export * from "./models/chat";
 

@@ -255,7 +255,7 @@ function LoginForm({ onRequestAccess }: { onRequestAccess: () => void }) {
     <div className="space-y-6">
       <div>
         <h2 className="text-2xl font-bold tracking-tight">Sign in</h2>
-        <p className="text-muted-foreground text-sm mt-1">Access your ADRS workspace</p>
+        <p className="text-muted-foreground text-sm mt-1">Access your IntelliNexus workspace</p>
       </div>
 
       <Form {...form}>
@@ -331,90 +331,204 @@ export default function AuthPage() {
 
   return (
     <div className="min-h-screen flex bg-background">
-      {/* ── Left panel — branding ─────────────────────────── */}
-      <div className="hidden lg:flex lg:w-1/2 relative bg-gradient-to-br from-primary/90 to-primary flex-col justify-between p-12 text-primary-foreground overflow-hidden">
-        <div className="absolute inset-0 opacity-10">
-          {Array.from({ length: 12 }).map((_, i) => (
-            <div key={i} className="absolute rounded-full border border-primary-foreground"
-              style={{ width: `${(i + 1) * 80}px`, height: `${(i + 1) * 80}px`, top: "50%", left: "50%", transform: "translate(-50%, -50%)" }} />
+      {/* ── Left panel — futuristic IntelliNexus branding ─────────────────────── */}
+      <div className="hidden lg:flex lg:w-1/2 relative flex-col justify-between overflow-hidden"
+        style={{ background: "linear-gradient(135deg, #0a0e1a 0%, #0d1530 30%, #111d42 60%, #0a0e1a 100%)" }}>
+
+        {/* Animated particle grid background */}
+        <div className="absolute inset-0 overflow-hidden">
+          {/* Glowing orbital rings */}
+          {[200, 300, 420].map((size, i) => (
+            <div key={`ring-${i}`} className="absolute rounded-full border"
+              style={{
+                width: `${size}px`, height: `${size}px`,
+                top: "50%", left: "50%",
+                transform: "translate(-50%, -50%)",
+                borderColor: `rgba(${100 + i * 40}, ${140 + i * 30}, 255, ${0.08 + i * 0.03})`,
+                animation: `orbit-spin ${20 + i * 8}s linear infinite${i % 2 ? " reverse" : ""}`,
+              }} />
           ))}
+
+          {/* Floating data particles */}
+          {Array.from({ length: 30 }).map((_, i) => (
+            <div key={`p-${i}`} className="absolute rounded-full"
+              style={{
+                width: `${2 + Math.random() * 3}px`,
+                height: `${2 + Math.random() * 3}px`,
+                top: `${Math.random() * 100}%`,
+                left: `${Math.random() * 100}%`,
+                background: `rgba(${120 + Math.random() * 80}, ${160 + Math.random() * 60}, 255, ${0.3 + Math.random() * 0.5})`,
+                animation: `floatParticle ${6 + Math.random() * 8}s ease-in-out infinite`,
+                animationDelay: `${Math.random() * 5}s`,
+              }} />
+          ))}
+
+          {/* Energy pulse rings */}
+          <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[500px] h-[500px] rounded-full border border-cyan-500/10"
+            style={{ animation: "pulse-ring 4s ease-in-out infinite" }} />
+          <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] rounded-full border border-violet-500/8"
+            style={{ animation: "pulse-ring 4s ease-in-out infinite 1s" }} />
         </div>
 
-        <div className="relative">
-          <div className="flex items-center gap-3 mb-2">
-            <div className="p-2 bg-primary-foreground/15 rounded-lg backdrop-blur">
-              <Brain className="w-7 h-7" />
+        {/* Top branding */}
+        <div className="relative z-10 p-10">
+          <div className="flex items-center gap-3">
+            <div className="p-2.5 bg-white/10 rounded-xl backdrop-blur-sm border border-white/10">
+              <Brain className="w-6 h-6 text-cyan-400" />
             </div>
             <div>
-              <p className="font-bold text-lg leading-tight">AI Institute Africa</p>
-              <p className="text-primary-foreground/70 text-xs">ADRS Platform</p>
+              <p className="font-bold text-white/90 text-lg tracking-wide">AI Institute Africa</p>
+              <p className="text-cyan-400/60 text-xs font-medium tracking-widest uppercase">IntelliNexus Platform</p>
             </div>
           </div>
         </div>
 
-        <div className="relative space-y-6">
+        {/* ── Revolving Logo Animation ── */}
+        <div className="relative z-10 flex-1 flex items-center justify-center">
+          <div className="relative" style={{ width: "360px", height: "360px" }}>
+            {/* Central glow */}
+            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-32 h-32 rounded-full"
+              style={{ background: "radial-gradient(circle, rgba(99,140,255,0.25) 0%, transparent 70%)", animation: "glow-pulse 3s ease-in-out infinite" }} />
+
+            {/* Outer orbit track */}
+            <div className="absolute inset-0 rounded-full border border-cyan-500/15"
+              style={{ animation: "logo-orbit 30s linear infinite" }}>
+              {/* Orbit dot markers */}
+              {[0, 90, 180, 270].map(deg => (
+                <div key={deg} className="absolute w-1.5 h-1.5 rounded-full bg-cyan-400/40"
+                  style={{ top: "50%", left: "50%", transform: `rotate(${deg}deg) translateX(180px) translate(-50%, -50%)` }} />
+              ))}
+            </div>
+
+            {/* Inner orbit track */}
+            <div className="absolute inset-8 rounded-full border border-violet-500/12"
+              style={{ animation: "logo-orbit 20s linear infinite reverse" }} />
+
+            {/* ── Logo 1: N Circuit (orbiting) ── */}
+            <div className="absolute inset-0"
+              style={{ animation: "logo-orbit 12s linear infinite" }}>
+              <div className="absolute"
+                style={{
+                  top: "50%", left: "50%",
+                  transform: "rotate(0deg) translateX(120px) rotate(0deg) translate(-50%, -50%)",
+                }}>
+                <div style={{ animation: "logo-orbit 12s linear infinite reverse" }}>
+                  <div className="relative group">
+                    <div className="absolute -inset-2 rounded-2xl bg-gradient-to-r from-cyan-500/30 to-blue-500/30 blur-lg opacity-60"
+                      style={{ animation: "glow-pulse 3s ease-in-out infinite" }} />
+                    <img
+                      src="/logo-n.jpg"
+                      alt="IntelliNexus N Logo"
+                      className="w-24 h-24 rounded-xl object-cover shadow-2xl border-2 border-cyan-400/30 relative z-10"
+                      style={{ boxShadow: "0 0 30px rgba(99,180,255,0.3), 0 0 60px rgba(99,180,255,0.1)" }}
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* ── Logo 2: Neuroworks (orbiting at 120 deg) ── */}
+            <div className="absolute inset-0"
+              style={{ animation: "logo-orbit 12s linear infinite" }}>
+              <div className="absolute"
+                style={{
+                  top: "50%", left: "50%",
+                  transform: "rotate(120deg) translateX(120px) rotate(-120deg) translate(-50%, -50%)",
+                }}>
+                <div style={{ animation: "logo-orbit 12s linear infinite reverse" }}>
+                  <div className="relative group">
+                    <div className="absolute -inset-2 rounded-2xl bg-gradient-to-r from-violet-500/30 to-purple-500/30 blur-lg opacity-60"
+                      style={{ animation: "glow-pulse 3s ease-in-out infinite 1s" }} />
+                    <img
+                      src="/logo-neuroworks.png"
+                      alt="Neuroworks Logo"
+                      className="w-24 h-24 rounded-xl object-cover shadow-2xl border-2 border-violet-400/30 relative z-10"
+                      style={{ boxShadow: "0 0 30px rgba(160,100,255,0.3), 0 0 60px rgba(160,100,255,0.1)" }}
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* ── Logo 3: Sup-Tech (orbiting at 240 deg) ── */}
+            <div className="absolute inset-0"
+              style={{ animation: "logo-orbit 12s linear infinite" }}>
+              <div className="absolute"
+                style={{
+                  top: "50%", left: "50%",
+                  transform: "rotate(240deg) translateX(120px) rotate(-240deg) translate(-50%, -50%)",
+                }}>
+                <div style={{ animation: "logo-orbit 12s linear infinite reverse" }}>
+                  <div className="relative group">
+                    <div className="absolute -inset-2 rounded-2xl bg-gradient-to-r from-emerald-500/30 to-teal-500/30 blur-lg opacity-60"
+                      style={{ animation: "glow-pulse 3s ease-in-out infinite 2s" }} />
+                    <img
+                      src="/logo-suptech.png"
+                      alt="Sup-Tech Logo"
+                      className="w-24 h-24 rounded-xl object-cover shadow-2xl border-2 border-emerald-400/30 relative z-10"
+                      style={{ boxShadow: "0 0 30px rgba(16,185,129,0.3), 0 0 60px rgba(16,185,129,0.1)" }}
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Center text */}
+            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-center z-20">
+              <p className="text-[10px] text-cyan-400/60 tracking-[0.35em] uppercase font-medium"
+                style={{ animation: "glow-pulse 4s ease-in-out infinite" }}>
+                Powered by
+              </p>
+            </div>
+          </div>
+        </div>
+
+        {/* Bottom content */}
+        <div className="relative z-10 p-10 space-y-6">
           <div>
-            <h1 className="text-4xl font-bold leading-tight">
-              AI Data Readiness<br />System
+            <h1 className="text-4xl font-bold leading-tight text-white tracking-tight">
+              Intelli<span className="text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 to-violet-400">Nexus</span>
             </h1>
-            <p className="text-primary-foreground/80 mt-3 leading-relaxed">
-              Transform raw evidence — PDFs, scans, audio, video — into structured,
-              AI-ready datasets with enterprise-grade trust validation.
+            <p className="text-[13px] text-white/50 mt-2 leading-relaxed max-w-sm">
+              IntelliNexus — Transform raw evidence into structured, AI-ready datasets with enterprise-grade trust validation.
             </p>
           </div>
 
-          <div className="space-y-3">
+          <div className="flex gap-6">
             {[
-              { icon: Database, label: "Evidence ingestion with SHA-256 immutability" },
-              { icon: Brain, label: "AI-powered OCR, transcription & document intelligence" },
-              { icon: Shield, label: "Human-in-the-loop trust validation & RBAC" },
-              { icon: Layers, label: "Multi-artifact dataset publishing (ML, KG, RAG)" },
-            ].map(({ icon: Icon, label }) => (
-              <div key={label} className="flex items-center gap-3 text-sm text-primary-foreground/90">
-                <div className="p-1.5 bg-primary-foreground/10 rounded">
-                  <Icon className="w-3.5 h-3.5" />
+              { icon: Database, label: "Evidence", sub: "SHA-256" },
+              { icon: Brain,    label: "Intelligence", sub: "AI/ML" },
+              { icon: Shield,   label: "Validation", sub: "HITL" },
+              { icon: Layers,   label: "Publishing", sub: "ML/KG/RAG" },
+            ].map(({ icon: Icon, label, sub }) => (
+              <div key={label} className="text-center">
+                <div className="w-10 h-10 rounded-lg bg-white/5 border border-white/10 flex items-center justify-center mx-auto mb-1.5 backdrop-blur-sm">
+                  <Icon className="w-4 h-4 text-cyan-400/80" />
                 </div>
-                {label}
+                <p className="text-[11px] font-medium text-white/70">{label}</p>
+                <p className="text-[9px] text-white/30 mt-0.5">{sub}</p>
               </div>
             ))}
           </div>
 
-          <div className="grid grid-cols-3 gap-3 pt-2">
-            {[
-              { label: "Evidence types", value: "9+" },
-              { label: "AI models", value: "3" },
-              { label: "Export formats", value: "4" },
-            ].map(({ label, value }) => (
-              <div key={label} className="p-3 bg-primary-foreground/10 rounded-lg text-center backdrop-blur">
-                <p className="text-xl font-bold">{value}</p>
-                <p className="text-xs text-primary-foreground/70 mt-0.5">{label}</p>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        <div className="relative">
-          <div className="flex flex-wrap gap-1.5">
-            {Object.entries(ROLE_INFO).map(([key, info]) => (
-              <Badge key={key} variant="outline" className="border-primary-foreground/20 text-primary-foreground/80 text-xs">
+          <div className="flex flex-wrap gap-1.5 pt-1">
+            {Object.entries(ROLE_INFO).slice(0, 5).map(([key, info]) => (
+              <Badge key={key} variant="outline" className="border-white/10 text-white/40 text-[10px] bg-white/5">
                 {info.label}
               </Badge>
             ))}
           </div>
-          <p className="text-xs text-primary-foreground/50 mt-2">Role-based access control across all features</p>
         </div>
       </div>
 
       {/* ── Right panel — form ───────────────────────────── */}
       <div className="flex-1 flex items-center justify-center p-6 lg:p-12">
         <div className="w-full max-w-md">
-          <div className="flex items-center gap-2 mb-8 lg:hidden">
-            <div className="p-2 bg-primary/10 rounded-lg">
-              <Brain className="w-5 h-5 text-primary" />
-            </div>
+          <div className="flex items-center gap-3 mb-8 lg:hidden">
+            <img src="/logo-elephant.jpg" alt="IntelliNexus" className="w-10 h-10 rounded-lg object-cover shadow" />
             <div>
-              <p className="font-bold text-sm">AI Institute Africa</p>
-              <p className="text-muted-foreground text-xs">ADRS Platform</p>
+              <p className="font-bold text-sm">IntelliNexus</p>
+              <p className="text-muted-foreground text-xs">IntelliNexus</p>
             </div>
           </div>
 
@@ -423,7 +537,7 @@ export default function AuthPage() {
           </div>
 
           <p className="text-center text-xs text-muted-foreground mt-6">
-            AI Institute Africa · ADRS v2.0 · Tenant TENANT-001
+            AI Institute Africa · IntelliNexus v2.0 · Tenant TENANT-001
           </p>
         </div>
       </div>

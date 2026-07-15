@@ -2,6 +2,37 @@
 // All thresholds and feature flags are centralised here.
 // In production these would be loaded from environment variables or a database config table.
 
+export function validateRuntimeConfig() {
+  const isProduction = process.env.NODE_ENV === "production";
+  const enforce = isProduction || process.env.ENFORCE_RUNTIME_CONFIG === "true";
+
+  const errors: string[] = [];
+
+  if (!process.env.DATABASE_URL) {
+    errors.push("DATABASE_URL is required");
+  }
+
+  if (!process.env.SESSION_SECRET) {
+    errors.push("SESSION_SECRET is required");
+  }
+
+  if (!process.env.DEFAULT_TENANT) {
+    errors.push("DEFAULT_TENANT is required");
+  }
+
+  if (enforce && errors.length > 0) {
+    throw new Error(`Invalid runtime configuration:\n- ${errors.join("\n- ")}`);
+  }
+
+  return {
+    isProduction,
+    enforce,
+    databaseUrl: process.env.DATABASE_URL,
+    sessionSecret: process.env.SESSION_SECRET,
+    defaultTenant: process.env.DEFAULT_TENANT,
+  };
+}
+
 export const ADRS_CONFIG = {
 
   // ─── Feature Flags ─────────────────────────────────────────────────────────

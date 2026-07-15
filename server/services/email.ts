@@ -6,7 +6,7 @@ const ENV_HOST = process.env.SMTP_HOST;
 const ENV_PORT = process.env.SMTP_PORT ? parseInt(process.env.SMTP_PORT) : undefined;
 const ENV_USER = process.env.SMTP_USER ?? "";
 const ENV_PASS = process.env.SMTP_PASS ?? "";
-const ENV_FROM_NAME = process.env.EMAIL_FROM_NAME ?? "ADRS Platform – AI Institute Africa";
+const ENV_FROM_NAME = process.env.EMAIL_FROM_NAME ?? "ADRS Platform";
 const ENV_FROM_EMAIL = process.env.EMAIL_FROM_ADDRESS ?? "";
 
 let _transport: Transporter | null = null;
@@ -139,7 +139,7 @@ export async function sendAccessApprovedEmail(opts: {
     <div style="background: white; border-radius: 8px; padding: 32px; border: 1px solid #e5e7eb;">
       <div style="margin-bottom: 24px;">
         <h1 style="color: #111827; font-size: 22px; margin: 0 0 4px 0;">Access Request Approved</h1>
-        <p style="color: #6b7280; font-size: 14px; margin: 0;">AI Data Readiness System (ADRS)</p>
+        <p style="color: #6b7280; font-size: 14px; margin: 0;">ADRS Platform</p>
       </div>
       <p style="color: #374151; font-size: 15px;">Hi <strong>${opts.firstName}</strong>,</p>
       <p style="color: #374151; font-size: 15px;">
@@ -168,7 +168,7 @@ export async function sendAccessApprovedEmail(opts: {
       </div>
       <p style="color: #374151; font-size: 14px;">Sign in at your organisation's ADRS platform and navigate to your profile to update your password.</p>
       <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 24px 0;" />
-      <p style="color: #9ca3af; font-size: 12px; margin: 0;">AI Institute Africa · ADRS Platform · Tenant TENANT-001</p>
+      <p style="color: #9ca3af; font-size: 12px; margin: 0;">ADRS Platform</p>
     </div>
   </div>
   `;
@@ -188,7 +188,7 @@ export async function sendRolePromotionEmail(opts: {
     <div style="background: white; border-radius: 8px; padding: 32px; border: 1px solid #e5e7eb;">
       <div style="margin-bottom: 24px;">
         <h1 style="color: #111827; font-size: 22px; margin: 0 0 4px 0;">Role Upgrade Notification</h1>
-        <p style="color: #6b7280; font-size: 14px; margin: 0;">AI Data Readiness System (ADRS)</p>
+        <p style="color: #6b7280; font-size: 14px; margin: 0;">ADRS Platform</p>
       </div>
       <p style="color: #374151; font-size: 15px;">Hi <strong>${opts.firstName}</strong>,</p>
       <p style="color: #374151; font-size: 15px;">
@@ -214,7 +214,7 @@ export async function sendRolePromotionEmail(opts: {
         Your new role grants you additional access in the platform. Sign in to explore the features now available to you.
       </p>
       <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 24px 0;" />
-      <p style="color: #9ca3af; font-size: 12px; margin: 0;">AI Institute Africa · ADRS Platform · Tenant TENANT-001</p>
+      <p style="color: #9ca3af; font-size: 12px; margin: 0;">ADRS Platform</p>
     </div>
   </div>
   `;
@@ -231,7 +231,7 @@ export async function sendPasswordChangedEmail(opts: {
     <div style="background: white; border-radius: 8px; padding: 32px; border: 1px solid #e5e7eb;">
       <div style="margin-bottom: 24px;">
         <h1 style="color: #111827; font-size: 22px; margin: 0 0 4px 0;">Password Changed</h1>
-        <p style="color: #6b7280; font-size: 14px; margin: 0;">AI Data Readiness System (ADRS)</p>
+        <p style="color: #6b7280; font-size: 14px; margin: 0;">ADRS Platform</p>
       </div>
       <p style="color: #374151; font-size: 15px;">Hi <strong>${opts.firstName}</strong>,</p>
       <p style="color: #374151; font-size: 15px;">
@@ -243,7 +243,7 @@ export async function sendPasswordChangedEmail(opts: {
         </p>
       </div>
       <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 24px 0;" />
-      <p style="color: #9ca3af; font-size: 12px; margin: 0;">AI Institute Africa · ADRS Platform · Tenant TENANT-001</p>
+      <p style="color: #9ca3af; font-size: 12px; margin: 0;">ADRS Platform</p>
     </div>
   </div>
   `;
@@ -261,7 +261,7 @@ export async function sendAccessRejectedEmail(opts: {
     <div style="background: white; border-radius: 8px; padding: 32px; border: 1px solid #e5e7eb;">
       <div style="margin-bottom: 24px;">
         <h1 style="color: #111827; font-size: 22px; margin: 0 0 4px 0;">Access Request Update</h1>
-        <p style="color: #6b7280; font-size: 14px; margin: 0;">AI Data Readiness System (ADRS)</p>
+        <p style="color: #6b7280; font-size: 14px; margin: 0;">ADRS Platform</p>
       </div>
       <p style="color: #374151; font-size: 15px;">Hi <strong>${opts.firstName}</strong>,</p>
       <p style="color: #374151; font-size: 15px;">
@@ -275,7 +275,7 @@ export async function sendAccessRejectedEmail(opts: {
       ` : ""}
       <p style="color: #374151; font-size: 14px;">If you believe this was an error, please reach out to your system administrator.</p>
       <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 24px 0;" />
-      <p style="color: #9ca3af; font-size: 12px; margin: 0;">AI Institute Africa · ADRS Platform · Tenant TENANT-001</p>
+      <p style="color: #9ca3af; font-size: 12px; margin: 0;">ADRS Platform</p>
     </div>
   </div>
   `;

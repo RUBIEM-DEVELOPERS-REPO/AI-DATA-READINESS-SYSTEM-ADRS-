@@ -1,0 +1,109 @@
+method,path,required_role,auth,implementation_file,notes
+POST,/api/auth/login,,false,server/routes.ts,Local passport authentication
+POST,/api/auth/register,,false,server/routes.ts,User registration
+POST,/api/auth/logout,,false,server/routes.ts,Logs out session
+GET,/api/auth/me,,true,server/routes.ts,Returns current user
+GET,/api/auth/users,ADMIN,true,server/routes.ts,List all users (ADMIN)
+GET,/api/users,,true,server/routes.ts,Lightweight user list
+GET,/api/connector-definitions,ADMIN,true,server/routes.ts,Connector definitions
+GET,/api/connectors,ADMIN,true,server/routes.ts,List connector instances
+POST,/api/connectors,ADMIN,true,server/routes.ts,Create connector
+POST,/api/connectors/:id/test,ADMIN,true,server/routes.ts,Test connector connection
+GET,/api/connectors/:id/health,ADMIN,true,server/routes.ts,Connector health
+POST,/api/connectors/:id/pause,ADMIN,true,server/routes.ts,Pause connector
+POST,/api/connectors/:id/resume,ADMIN,true,server/routes.ts,Resume connector
+POST,/api/connectors/:id/revoke,ADMIN,true,server/routes.ts,Revoke connector
+POST,/api/connectors/:id/sync,ADMIN,true,server/routes.ts,Trigger sync
+PATCH,/api/connectors/:id/credentials,ADMIN,true,server/routes.ts,Rotate credentials
+PATCH,/api/connectors/:id,ADMIN,true,server/routes.ts,Update connector
+GET,/api/connectors/:id,ADMIN,true,server/routes.ts,Get connector details
+PATCH,/api/auth/users/:id,ADMIN,true,server/routes.ts,Update user
+POST,/api/auth/change-password,ANALYST?,true,server/routes.ts,Change password (authenticated)
+POST,/api/access-requests,,false,server/routes.ts,Submit access request
+GET,/api/access-requests,ADMIN,true,server/routes.ts,List access requests
+POST,/api/access-requests/:id/approve,ADMIN,true,server/routes.ts,Approve access request
+POST,/api/access-requests/:id/reject,ADMIN,true,server/routes.ts,Reject access request
+GET,/api/graph/live,,true,server/routes.ts,Live knowledge graph
+POST,/api/graph/sync,ADMIN,true,server/routes.ts,Trigger graph sync
+GET,/api/regulator/activities,REGULATOR,true,server/routes.ts,Regulator activities
+GET,/api/regulator/audit-logs,REGULATOR,true,server/routes.ts,Regulator audit logs
+GET,/api/regulator/compliance-status,REGULATOR,true,server/routes.ts,Regulator compliance status
+POST,/api/regulator/discovery,REGULATOR,true,server/routes.ts,Discovery (HTTP or Postgres)
+GET,/api/settings/smtp,ADMIN,true,server/routes.ts,Read SMTP settings
+POST,/api/settings/smtp,ADMIN,true,server/routes.ts,Save SMTP settings
+POST,/api/settings/smtp/test,ADMIN,true,server/routes.ts,Test SMTP
+GET,/api/config,,true,server/routes.ts,Read feature flags
+GET,/api/dashboard/stats,,true,server/routes.ts,Dashboard stats
+GET,/api/batches,,true,server/routes.ts,List batches
+POST,/api/batches,ANALYST,true,server/routes.ts,Create batch
+PATCH,/api/batches/:id,ANALYST,true,server/routes.ts,Update batch
+GET,/api/evidence,,true,server/routes.ts,List evidence
+GET,/api/evidence/:id/file,,true,server/routes.ts,Serve file contents
+GET,/api/evidence/:id,,true,server/routes.ts,Evidence metadata
+POST,/api/evidence/upload,ANALYST,true,server/routes.ts,Multipart file upload
+POST,/api/evidence/import-url,ANALYST,true,server/routes.ts,Import from URL
+POST,/api/evidence/upload-zip,ANALYST,true,server/routes.ts,ZIP batch upload
+POST,/api/evidence,ANALYST,true,server/routes.ts,Create evidence metadata
+PATCH,/api/evidence/:id,ANALYST,true,server/routes.ts,Update evidence
+POST,/api/evidence/:id/extract,ANALYST,true,server/routes.ts,Run extraction (AI)
+GET,/api/extractions,,true,server/routes.ts,List extraction runs
+GET,/api/extractions/:id,,true,server/routes.ts,Get extraction run
+GET,/api/extractions/:id/text,,true,server/routes.ts,Get extraction text
+POST,/api/extractions,ANALYST,true,server/routes.ts,Create extraction run (manual)
+GET,/api/validation,,true,server/routes.ts,List validation tasks
+GET,/api/validation/:id,,true,server/routes.ts,Get validation task
+POST,/api/validation,ANALYST,true,server/routes.ts,Create validation task
+PATCH,/api/validation/:id,REVIEWER,true,server/routes.ts,Update validation task
+POST,/api/validation/:id/resolve-conflict,REVIEWER,true,server/routes.ts,Resolve conflicts
+GET,/api/cdm,,true,server/routes.ts,List CDM entities
+GET,/api/cdm/golden-records,,true,server/routes.ts,Golden records summary
+GET,/api/cdm/run-summary,,true,server/routes.ts,Run summary
+GET,/api/cdm/:id,,true,server/routes.ts,Get CDM entity
+POST,/api/cdm,ANALYST,true,server/routes.ts,Create CDM entity
+PATCH,/api/cdm/:id,ANALYST,true,server/routes.ts,Update CDM entity
+POST,/api/cdm/reclassify,ANALYST,true,server/routes.ts,AI reclassification
+POST,/api/cdm/golden-records/compute,ANALYST,true,server/routes.ts,Compute golden records
+GET,/api/datasets,,true,server/routes.ts,List datasets
+GET,/api/datasets/:id,,true,server/routes.ts,Get dataset
+GET,/api/datasets/:code/artifact,,true,server/routes.ts,Download artifacts
+POST,/api/datasets,ANALYST,true,server/routes.ts,Create dataset
+POST,/api/datasets/:id/publish,ADMIN,true,server/routes.ts,Publish dataset
+PATCH,/api/datasets/:id,ADMIN,true,server/routes.ts,Update dataset
+POST,/api/normalize/preview,ANALYST,true,server/routes.ts,Normalization preview
+GET,/api/audit,,true,server/routes.ts,Audit logs
+POST,/api/copilot/chat,,false?,server/routes.ts,Copilot chat (RAG) - may be public
+POST,/api/evaluate,ANALYST,true,server/routes.ts,Evaluation endpoint
+GET,/api/features/stats,ANALYST,true,server/routes.ts,Embedding stats
+GET,/api/features/chunks,ANALYST,true,server/routes.ts,Chunk embeddings (paginated)
+GET,/api/features/entities,ANALYST,true,server/routes.ts,Entity embeddings (paginated)
+POST,/api/features/search,ANALYST,true,server/routes.ts,Semantic search
+GET,/api/attention/profile-stats,ANALYST,true,server/routes.ts,Profile stats
+POST,/api/attention/resolve,ANALYST,true,server/routes.ts,Resolve profile
+GET,/api/attention/fusion-stats,ANALYST,true,server/routes.ts,Fusion stats
+GET,/api/attention/context-packet/:evidenceId,ANALYST,true,server/routes.ts,Context packet
+GET,/api/agent/tasks,,true,server/routes.ts,List agent tasks
+POST,/api/agent/run,,true,server/routes.ts,Run agent task
+POST,/api/agent/orchestrate,ADMIN,true,server/routes.ts,Agent orchestration
+GET,/api/agent/insights,ANALYST,true,server/routes.ts,Agent insights
+GET,/api/registry/controllers,DATA_CONTROLLER|REGULATOR,true,server/routes_registry.ts,List controllers
+POST,/api/registry/controllers,DATA_CONTROLLER,true,server/routes_registry.ts,Create controller
+POST,/api/registry/controllers/renew/:id,DATA_CONTROLLER,true,server/routes_registry.ts,Renew licence
+GET,/api/registry/processing-records,DATA_CONTROLLER|REGULATOR,true,server/routes_registry.ts,List processing records
+POST,/api/registry/processing-records,DATA_CONTROLLER,true,server/routes_registry.ts,Create processing record
+GET,/api/registry/breaches,DATA_CONTROLLER|REGULATOR,true,server/routes_registry.ts,List breaches
+POST,/api/registry/breaches,DATA_CONTROLLER,true,server/routes_registry.ts,Create breach
+PATCH,/api/registry/breaches/:id,DATA_CONTROLLER|REGULATOR,true,server/routes_registry.ts,Update breach
+GET,/api/registry/dsr-requests,DATA_CONTROLLER|REGULATOR,true,server/routes_registry.ts,List DSR requests
+POST,/api/registry/dsr-requests,DATA_CONTROLLER,true,server/routes_registry.ts,Create DSR request
+PATCH,/api/registry/dsr-requests/:id,DATA_CONTROLLER|REGULATOR,true,server/routes_registry.ts,Update DSR request
+GET,/api/registry/dsr-complaints,DATA_CONTROLLER|REGULATOR,true,server/routes_registry.ts,List DSR complaints
+POST,/api/registry/dsr-complaints,DATA_CONTROLLER,true,server/routes_registry.ts,Create complaint
+GET,/api/registry/compliance-audits,DATA_CONTROLLER|REGULATOR,true,server/routes_registry.ts,List audits
+POST,/api/registry/compliance-audits,REGULATOR,true,server/routes_registry.ts,Create audit
+PATCH,/api/registry/compliance-audits/:id,REGULATOR,true,server/routes_registry.ts,Update audit
+GET,/api/registry/external-integrations,DATA_CONTROLLER|DATA_PROTECTION_OFFICER,true,server/routes_registry.ts,List external integrations
+GET,/api/registry/external-integrations/:id,DATA_CONTROLLER|DATA_PROTECTION_OFFICER,true,server/routes_registry.ts,Get integration
+POST,/api/registry/external-integrations,DATA_CONTROLLER|DATA_PROTECTION_OFFICER,true,server/routes_registry.ts,Create integration
+PATCH,/api/registry/external-integrations/:id,DATA_CONTROLLER|DATA_PROTECTION_OFFICER,true,server/routes_registry.ts,Update integration
+POST,/api/registry/external-integrations/sync/:id,DATA_CONTROLLER|DATA_PROTECTION_OFFICER,true,server/routes_registry.ts,Sync integration
+GET,/api/public-register,,false,server/routes_registry.ts,Public register (public)

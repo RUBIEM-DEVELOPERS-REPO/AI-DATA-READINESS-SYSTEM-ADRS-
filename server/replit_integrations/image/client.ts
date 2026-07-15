@@ -1,22 +1,22 @@
 import fs from "node:fs";
-import OpenAI, { toFile } from "openai";
+import { toFile } from "openai";
 import { Buffer } from "node:buffer";
+import { createAiClient, getAiProviderConfig, getImageModel } from "../../services/ai-provider";
 
-export const openai = new OpenAI({
-  apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
-  baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
-});
+function getOpenAiClient() {
+  return createAiClient(getAiProviderConfig());
+}
 
 /**
  * Generate an image and return as Buffer.
- * Uses gpt-image-1 model via Replit AI Integrations.
  */
 export async function generateImageBuffer(
   prompt: string,
   size: "1024x1024" | "512x512" | "256x256" = "1024x1024"
 ): Promise<Buffer> {
+  const openai = getOpenAiClient();
   const response = await openai.images.generate({
-    model: "gpt-image-1",
+    model: getImageModel(),
     prompt,
     size,
   });
@@ -41,8 +41,9 @@ export async function editImages(
     )
   );
 
+  const openai = getOpenAiClient();
   const response = await openai.images.edit({
-    model: "gpt-image-1",
+    model: getImageModel(),
     image: images,
     prompt,
   });

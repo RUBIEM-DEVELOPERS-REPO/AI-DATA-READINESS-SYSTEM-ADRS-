@@ -486,7 +486,7 @@ export default function CdmExplorer() {
       {/* AI Agent: CDM layer — conflict resolution, orphan detection, quality reports */}
       <InlineAgentWidget
         layer="cdm"
-        layerLabel="Layer 3 · CDM"
+        layerLabel="CDM Workspace"
         maxTasks={3}
         defaultCollapsed={true}
       />

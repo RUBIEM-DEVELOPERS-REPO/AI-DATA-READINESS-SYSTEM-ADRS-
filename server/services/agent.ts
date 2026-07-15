@@ -1,10 +1,11 @@
 import { db } from "../db";
 import { evidenceFiles, extractionRuns, validationTasks, cdmEntities, chunkEmbeddings, kgNodes, kgEdges, publishedDatasets } from "@shared/schema";
 import { sql } from "drizzle-orm";
+import { createAiClient, getChatModel, getAiProviderConfig } from "./ai-provider";
 
 export type AgentLayer =
   | "evidence" | "intelligence" | "cdm" | "validation"
-  | "feature" | "attention" | "publishing" | "graph" | "system";
+  | "feature" | "attention" | "publishing" | "graph" | "dpo" | "system";
 
 export interface AgentTask {
   id: string;
@@ -41,45 +42,52 @@ export interface AgentResult {
 // ─── Layer-scoped agent task registry ────────────────────────────────────────
 export const AGENT_TASKS: AgentTask[] = [
   // Layer 1 — Evidence / Ingestion
-  { id: "evidence.batch_health",   layer: "evidence",     icon: "PackageSearch",  label: "Analyse Batch Health",         description: "Review batch metrics and identify files at risk of extraction failure." },
-  { id: "evidence.detect_dupes",   layer: "evidence",     icon: "CopyX",          label: "Detect Duplicate Patterns",    description: "Identify naming/size patterns that suggest duplicate ingestion." },
-  { id: "evidence.suggest_tags",   layer: "evidence",     icon: "Tags",           label: "Auto-Tag Evidence",            description: "Suggest classification tags for untagged evidence files." },
+  { id: "evidence.batch_health",   layer: "evidence",     icon: "PackageSearch",  label: "Data Engineer",           description: "Review batch metrics and identify files at risk of extraction failure." },
+  { id: "evidence.detect_dupes",   layer: "evidence",     icon: "CopyX",          label: "Data Quality Analyst",   description: "Identify naming/size patterns that suggest duplicate ingestion." },
+  { id: "evidence.suggest_tags",   layer: "evidence",     icon: "Tags",           label: "Data Analyst",           description: "Suggest classification tags for untagged evidence files." },
 
   // Layer 2 — Multimodal Intelligence
-  { id: "intel.quality_summary",   layer: "intelligence", icon: "FileBarChart2",  label: "Extraction Quality Summary",   description: "Natural-language summary of recent extraction run quality metrics." },
-  { id: "intel.flag_anomalies",    layer: "intelligence", icon: "AlertCircle",    label: "Flag Extraction Anomalies",    description: "Identify runs with unusual confidence drops or field gaps." },
-  { id: "intel.profile_advice",    layer: "intelligence", icon: "Lightbulb",      label: "Profile Improvement Advice",   description: "Suggest extraction profile tuning based on recent run data." },
+  { id: "intel.quality_summary",   layer: "intelligence", icon: "FileBarChart2",  label: "Data Scientist",         description: "Natural-language summary of recent extraction run quality metrics." },
+  { id: "intel.flag_anomalies",    layer: "intelligence", icon: "AlertCircle",    label: "Data Scientist",         description: "Identify runs with unusual confidence drops or field gaps." },
+  { id: "intel.profile_advice",    layer: "intelligence", icon: "Lightbulb",      label: "Data Scientist",         description: "Suggest extraction profile tuning based on recent run data." },
 
   // Layer 3 — CDM / Standardisation
-  { id: "cdm.resolve_conflicts",   layer: "cdm",          icon: "GitMerge",       label: "Resolve Entity Conflicts",     description: "Suggest merge strategies for entities with overlapping canonical fields." },
-  { id: "cdm.find_orphans",        layer: "cdm",          icon: "Unlink",         label: "Find Orphaned Entities",       description: "Identify CDM entities unlinked to any evidence or KG node." },
-  { id: "cdm.quality_report",      layer: "cdm",          icon: "ClipboardCheck", label: "CDM Quality Report",           description: "Report on canonical field completeness and confidence distribution." },
+  { id: "cdm.resolve_conflicts",   layer: "cdm",          icon: "GitMerge",       label: "Data Engineer",          description: "Suggest merge strategies for entities with overlapping canonical fields." },
+  { id: "cdm.find_orphans",        layer: "cdm",          icon: "Unlink",         label: "Data Engineer",          description: "Identify CDM entities unlinked to any evidence or KG node." },
+  { id: "cdm.quality_report",      layer: "cdm",          icon: "ClipboardCheck", label: "Data Quality Analyst",  description: "Report on canonical field completeness and confidence distribution." },
 
   // Layer 4 — Feature & Representation
-  { id: "feature.coverage_gaps",   layer: "feature",      icon: "PieChart",       label: "Identify Coverage Gaps",       description: "Find evidence files not yet embedded in the vector store." },
-  { id: "feature.query_suggest",   layer: "feature",      icon: "SearchCode",     label: "Suggest Search Queries",       description: "Generate semantically rich example queries tuned to the corpus." },
+  { id: "feature.coverage_gaps",   layer: "feature",      icon: "PieChart",       label: "Machine Learning Engineer", description: "Find evidence files not yet embedded in the vector store." },
+  { id: "feature.query_suggest",   layer: "feature",      icon: "SearchCode",     label: "Data Scientist",        description: "Generate semantically rich example queries tuned to the corpus." },
 
   // Layer 5 — Attention, Fusion & Context
-  { id: "attention.profile_audit", layer: "attention",    icon: "ScanSearch",     label: "Profile Assignment Audit",     description: "Review whether documents were routed to their optimal extraction profile." },
-  { id: "attention.fusion_explain",layer: "attention",    icon: "Combine",        label: "Explain Fusion Result",        description: "Explain how structured + unstructured + graph sources were fused." },
+  { id: "attention.profile_audit", layer: "attention",    icon: "ScanSearch",     label: "Data Analyst",          description: "Review whether documents were routed to their optimal extraction profile." },
+  { id: "attention.fusion_explain",layer: "attention",    icon: "Combine",        label: "Data Analyst",          description: "Explain how structured + unstructured + graph sources were fused." },
 
   // Layer 6 — Trust, Validation & Governance
-  { id: "valid.prioritize_queue",  layer: "validation",   icon: "ListOrdered",    label: "Prioritize Validation Queue",  description: "Rank pending tasks by risk score and field criticality." },
-  { id: "valid.suggest_fixes",     layer: "validation",   icon: "Wand2",          label: "Suggest Field Corrections",    description: "Propose likely correct values for flagged or low-trust fields." },
-  { id: "valid.trust_explain",     layer: "validation",   icon: "ShieldQuestion", label: "Explain Trust Score",          description: "Break down why an extraction run received its current trust score." },
+  { id: "valid.prioritize_queue",  layer: "validation",   icon: "ListOrdered",    label: "Compliance Analyst",    description: "Rank pending tasks by risk score and field criticality." },
+  { id: "valid.suggest_fixes",     layer: "validation",   icon: "Wand2",          label: "Data Quality Analyst",  description: "Propose likely correct values for flagged or low-trust fields." },
+  { id: "valid.trust_explain",     layer: "validation",   icon: "ShieldQuestion", label: "Governance Analyst",    description: "Break down why an extraction run received its current trust score." },
 
   // Layer 7 — Knowledge Graph
-  { id: "graph.hidden_links",      layer: "graph",        icon: "Network",        label: "Find Hidden Connections",      description: "Discover probable implicit relationships between unlinked entities." },
-  { id: "graph.anomaly_detect",    layer: "graph",        icon: "Radar",          label: "Graph Anomaly Detection",      description: "Flag unusual relationship patterns or isolated subgraph clusters." },
+  { id: "graph.hidden_links",      layer: "graph",        icon: "Network",        label: "Knowledge Engineer",    description: "Discover probable implicit relationships between unlinked entities." },
+  { id: "graph.anomaly_detect",    layer: "graph",        icon: "Radar",          label: "Data Scientist",        description: "Flag unusual relationship patterns or isolated subgraph clusters." },
 
   // Layer 8 — AI-Ready Dataset Publishing
-  { id: "publish.draft_card",      layer: "publishing",   icon: "FileEdit",       label: "Draft Dataset Card",           description: "Auto-generate a professional dataset description and lineage summary." },
-  { id: "publish.quality_advise",  layer: "publishing",   icon: "BadgeCheck",     label: "Quality Gate Advisor",         description: "Recommend optimal quality threshold settings for the current dataset." },
+  { id: "publish.draft_card",      layer: "publishing",   icon: "FileEdit",       label: "Data Analyst",          description: "Auto-generate a professional dataset description and lineage summary." },
+  { id: "publish.quality_advise",  layer: "publishing",   icon: "BadgeCheck",     label: "Data Quality Analyst",  description: "Recommend optimal quality threshold settings for the current dataset." },
+
+  // DPO Portal
+  { id: "dpo.privacy_notice_review",   layer: "dpo", icon: "FileText",      label: "Data Protection Officer", description: "Assess privacy notice completeness and compliance with s.15/s.16." },
+  { id: "dpo.notification_risk_check",  layer: "dpo", icon: "Shield",        label: "Data Protection Officer", description: "Evaluate notification risk and suggest whether authorisation is required." },
+  { id: "dpo.breach_triage",           layer: "dpo", icon: "AlertTriangle", label: "Data Protection Officer", description: "Classify breach severity and recommend next steps for notification and remediation." },
+  { id: "dpo.dsr_response_draft",      layer: "dpo", icon: "MessageSquare", label: "Data Protection Officer", description: "Generate a compliant response summary for a data subject rights request." },
+  { id: "dpo.accountability_summary",  layer: "dpo", icon: "BarChart3",     label: "Data Protection Officer", description: "Summarize compliance evidence and outstanding DPO actions for accountability reporting." },
 
   // System-wide
-  { id: "system.health_check",     layer: "system",       icon: "HeartPulse",     label: "Pipeline Health Check",        description: "System-wide diagnostic reporting on bottlenecks and queue depths." },
-  { id: "system.predict_issues",   layer: "system",       icon: "TrendingUp",     label: "Predictive Issue Detection",   description: "Predict likely processing failures based on current system trends." },
-  { id: "system.roi_report",       layer: "system",       icon: "BarChart3",      label: "AI ROI Report",                description: "Estimate time and cost savings delivered by AI automation vs. manual processing." },
+  { id: "system.health_check",     layer: "system",       icon: "HeartPulse",     label: "Systems Operations Engineer", description: "System-wide diagnostic reporting on bottlenecks and queue depths." },
+  { id: "system.predict_issues",   layer: "system",       icon: "TrendingUp",     label: "Systems Operations Engineer", description: "Predict likely processing failures based on current system trends." },
+  { id: "system.roi_report",       layer: "system",       icon: "BarChart3",      label: "Business Analyst",           description: "Estimate time and cost savings delivered by AI automation vs. manual processing." },
 ];
 
 // Helper functions for agent tools
@@ -228,18 +236,16 @@ Instructions:
 - Lead with the most critical insight
 - Use numbered recommendations (1. 2. 3.) where applicable
 - Be specific, actionable, and grounded in the database facts you retrieve
-- Do not mention being an AI or add caveats`;
+- Do not mention being an AI or add caveats
+- If the active layer is DPO, emphasize DPO portal compliance, privacy notice guidance, breach triage, authorisation requirements, and data subject rights management.`;
 
   const userPrompt = task
     ? `Execute: "${task.label}" — ${task.description}${ctx.query ? `\n\nAdditional context: ${ctx.query}` : ""}`
     : ctx.query ?? "Provide a system assessment for this layer.";
 
   try {
-    const OpenAI = require("openai").default;
-    const openai = new OpenAI({
-      apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
-      baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
-    });
+    const aiConfig = getAiProviderConfig();
+    const openai = createAiClient(aiConfig);
 
     const messages: any[] = [
       { role: "system", content: systemPrompt },
@@ -254,7 +260,7 @@ Instructions:
     while (steps < maxSteps) {
       steps++;
       const response = await openai.chat.completions.create({
-        model: process.env.AI_TEXT_MODEL || "llama-3.3-70b-versatile",
+        model: getChatModel(aiConfig),
         messages,
         tools: agentTools,
         tool_choice: "auto",
@@ -272,8 +278,8 @@ Instructions:
 
       if (message.tool_calls && message.tool_calls.length > 0) {
         for (const toolCall of message.tool_calls) {
-          const toolName = toolCall.function.name;
-          const toolArgs = JSON.parse(toolCall.function.arguments);
+          const toolName = (toolCall as any).function.name;
+          const toolArgs = JSON.parse((toolCall as any).function.arguments);
           let toolResult = "";
 
           if (toolName === "query_database") {
@@ -497,11 +503,8 @@ Base metrics:
     : `Objective: ${ctx.objective ?? "Improve pipeline throughput and governance"}\n\nTask: ${ctx.taskId}${ctx.query ? `\n\nAdditional context: ${ctx.query}` : ""}`;
 
   try {
-    const OpenAI = require("openai").default;
-    const openai = new OpenAI({
-      apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
-      baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
-    });
+    const aiConfig = getAiProviderConfig();
+    const openai = createAiClient(aiConfig);
 
     const messages: any[] = [
       { role: "system", content: systemPrompt },
@@ -515,7 +518,7 @@ Base metrics:
     while (steps < maxSteps) {
       steps++;
       const response = await openai.chat.completions.create({
-        model: process.env.AI_TEXT_MODEL || "llama-3.3-70b-versatile",
+        model: getChatModel(aiConfig),
         messages,
         tools: [
           {
@@ -548,8 +551,8 @@ Base metrics:
 
       if (message.tool_calls && message.tool_calls.length > 0) {
         for (const toolCall of message.tool_calls) {
-          const toolName = toolCall.function.name;
-          const toolArgs = JSON.parse(toolCall.function.arguments);
+          const toolName = (toolCall as any).function.name;
+          const toolArgs = JSON.parse((toolCall as any).function.arguments);
           let toolResult = "";
           if (toolName === "query_database") {
             toolResult = await executeQuery(toolArgs.sqlQuery);

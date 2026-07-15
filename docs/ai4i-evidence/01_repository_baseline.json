@@ -1,0 +1,16 @@
+{
+  "repository_name": "AI-DATA-READINESS-SYSTEM-ADRS-",
+  "git_remote_url_redacted": "https://[REDACTED]@github.com/RUBIEM-DEVELOPERS-REPO/AI-DATA-READINESS-SYSTEM-ADRS-.git",
+  "active_branch": "main",
+  "commit_hash": "cb41817713d2739eda4e7590fa4874f5288c9198",
+  "commit_count_estimate": 58,
+  "first_commit_date": "2026-03-08T21:51:04+00:00",
+  "latest_commit_date": "2026-06-29T13:20:55+00:00",
+  "contributors": ["ADRS Developer","radasservices"],
+  "primary_languages": ["TypeScript","JavaScript","Python","SQL"],
+  "frontend_framework": "React (Vite, Tailwind)",
+  "backend_framework": "Express (TypeScript)",
+  "databases_detected": ["Postgres (pg, drizzle-orm), migrations"],
+  "ai_providers": ["openai","@xenova/transformers"],
+  "generated_at": "2026-07-13T00:00:00+00:00"
+}

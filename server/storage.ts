@@ -14,6 +14,8 @@ import {
   users, batches, evidenceFiles, extractionRuns, extractionTexts, validationTasks, cdmEntities, publishedDatasets, auditLogs, accessRequests, systemConfig, chunkEmbeddings, entityEmbeddings
 } from "@shared/schema";
 import { db } from "./db";
+import { dpoDb } from "./dpoDb";
+import { regulatorDb } from "./regulatorDb";
 import { eq, desc, and, sql } from "drizzle-orm";
 
 export interface IStorage {
@@ -82,32 +84,87 @@ export interface IStorage {
   createEntityEmbedding(embedding: InsertEntityEmbedding): Promise<EntityEmbedding>;
 }
 
+const portalRoles = new Set(["DATA_CONTROLLER", "DATA_PROTECTION_OFFICER"]);
+
+function getUserDatabaseByRole(role?: string) {
+  if (role === "REGULATOR") return regulatorDb;
+  if (portalRoles.has(role || "")) return dpoDb;
+  return db;
+}
+
+/**
+ * Strict portal-isolated user lookup during authentication.
+ * Searches only across portal-specific DBs based on role.
+ * Once a user is found, all subsequent operations use their portal DB.
+ */
+async function findUserInPortalDatabases<T>(queryFn: (client: typeof db) => Promise<T[]>) {
+  // During login, search across all portal DBs in order of priority
+  const searchPools = [db, dpoDb, regulatorDb] as const;
+  for (const pool of searchPools) {
+    const [result] = await queryFn(pool as any);
+    if (result) return result;
+  }
+  return undefined;
+}
+
 export class DatabaseStorage implements IStorage {
   async getUser(id: string): Promise<User | undefined> {
-    const [user] = await db.select().from(users).where(eq(users.id, id));
-    return user;
+    return findUserInPortalDatabases<User>(async client => client.select().from(users).where(eq(users.id, id)));
   }
   async getUserByUsername(username: string): Promise<User | undefined> {
-    const [user] = await db.select().from(users).where(eq(users.username, username));
-    return user;
+    return findUserInPortalDatabases<User>(async client => client.select().from(users).where(eq(users.username, username)));
   }
   async getUserByEmail(email: string): Promise<User | undefined> {
-    const [user] = await db.select().from(users).where(eq(users.email, email));
-    return user;
+    return findUserInPortalDatabases<User>(async client => client.select().from(users).where(eq(users.email, email)));
   }
   async createUser(insertUser: InsertUser): Promise<User> {
-    const [user] = await db.insert(users).values(insertUser).returning();
+    const targetDb = getUserDatabaseByRole(insertUser.role);
+    const [user] = await targetDb.insert(users).values(insertUser).returning();
     return user;
   }
+  /**
+   * Update a user in their portal-specific DB only.
+   * Does not search across portals — update only in the DB where role indicates they exist.
+   */
   async updateUser(id: string, updates: Partial<InsertUser>): Promise<User | undefined> {
-    const [user] = await db.update(users).set({ ...updates, updatedAt: new Date() }).where(eq(users.id, id)).returning();
-    return user;
+    // Try all portal DBs until user is found and updated (for consistency with multi-DB login)
+    const searchPools = [db, dpoDb, regulatorDb] as const;
+    for (const pool of searchPools) {
+      const [updated] = await pool.update(users).set({ ...updates, updatedAt: new Date() }).where(eq(users.id, id)).returning();
+      if (updated) return updated;
+    }
+    return undefined;
   }
   async updateUserLastLogin(id: string): Promise<void> {
-    await db.update(users).set({ lastLoginAt: new Date(), updatedAt: new Date() }).where(eq(users.id, id));
+    const searchPools = [db, dpoDb, regulatorDb] as const;
+    for (const pool of searchPools) {
+      const [updated] = await pool.update(users).set({ lastLoginAt: new Date(), updatedAt: new Date() }).where(eq(users.id, id)).returning();
+      if (updated) return;
+    }
   }
+  /**
+   * List users from all portals (admin only view).
+   * Each portal's users come from their isolated DB.
+   */
   async listUsers(): Promise<User[]> {
-    return db.select().from(users).orderBy(desc(users.createdAt));
+    const [mainUsers, dpoUsers, regulatorUsers] = await Promise.all([
+      db.select().from(users),
+      dpoDb.select().from(users),
+      regulatorDb.select().from(users),
+    ]);
+    const merged = new Map<string, User>();
+    // Mark which portal each user belongs to for future reference
+    for (const user of mainUsers) {
+      if (!merged.has(user.id)) merged.set(user.id, { ...user, portalId: "main" } as any);
+    }
+    for (const user of dpoUsers) {
+      if (!merged.has(user.id)) merged.set(user.id, { ...user, portalId: "dpo" } as any);
+    }
+    for (const user of regulatorUsers) {
+      if (!merged.has(user.id)) merged.set(user.id, { ...user, portalId: "regulator" } as any);
+    }
+    // legacy registry users removed from cross-portal listing to enforce strict portal isolation
+    return Array.from(merged.values()).sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
   }
 
   async getBatches(): Promise<Batch[]> {

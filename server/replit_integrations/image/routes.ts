@@ -1,5 +1,5 @@
 import type { Express, Request, Response } from "express";
-import { openai } from "./client";
+import { createAiClient, getAiProviderConfig, getImageModel } from "../../services/ai-provider";
 
 export function registerImageRoutes(app: Express): void {
   app.post("/api/generate-image", async (req: Request, res: Response) => {
@@ -10,8 +10,9 @@ export function registerImageRoutes(app: Express): void {
         return res.status(400).json({ error: "Prompt is required" });
       }
 
+      const openai = createAiClient(getAiProviderConfig());
       const response = await openai.images.generate({
-        model: "gpt-image-1",
+        model: getImageModel(),
         prompt,
         n: 1,
         size: size as "1024x1024" | "512x512" | "256x256",

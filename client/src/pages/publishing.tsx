@@ -24,6 +24,7 @@ import {
 import { formatDistanceToNow, format } from "date-fns";
 import { useForm } from "react-hook-form";
 import { Form, FormField, FormItem, FormLabel, FormControl } from "@/components/ui/form";
+import AdminHeader from "@/components/admin-header";
 
 const statusColors: Record<string, string> = {
   DRAFT: "bg-muted text-muted-foreground border-border",
@@ -134,8 +135,8 @@ function DatasetCardPanel({ card }: { card: DatasetCard }) {
             return (
               <div key={label} className="flex items-center gap-2 text-xs">
                 <span className="w-28 text-muted-foreground flex-shrink-0">{label}</span>
-                <div className="flex-1 h-1.5 rounded-full bg-muted overflow-hidden">
-                  <div className={`h-full rounded-full ${color}`} style={{ width: `${pct}%` }} />
+                <div className="flex-1">
+                  <Progress value={pct} className="h-1.5" />
                 </div>
                 <span className="w-8 text-right font-medium">{value}</span>
               </div>
@@ -312,7 +313,7 @@ function DatasetCard({ dataset }: { dataset: PublishedDataset }) {
         </DialogContent>
       </Dialog>
 
-      <Card data-testid={`card-dataset-${dataset.id}`} className={`flex flex-col ${dataset.status === "PUBLISHED" ? "border-chart-3/30" : isBelowThreshold && dataset.status === "DRAFT" ? "border-chart-5/30" : ""}`}>
+      <Card data-testid={`card-dataset-${dataset.id}`} className={`flex flex-col border-border/60 bg-background/80 shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md ${dataset.status === "PUBLISHED" ? "border-emerald-500/20" : isBelowThreshold && dataset.status === "DRAFT" ? "border-amber-500/25" : ""}`}>
         <CardContent className="p-4 space-y-3 flex flex-col h-full">
 
           {/* Trust-block warning banner (visible on DRAFT datasets below threshold) */}
@@ -387,15 +388,15 @@ function DatasetCard({ dataset }: { dataset: PublishedDataset }) {
             </span>
             <div className="flex items-center gap-1">
               {dataset.status === "DRAFT" && (
-                <Button size="sm" className="h-7 text-xs gap-1" onClick={() => publishMutation.mutate(undefined)} disabled={publishMutation.isPending || !can("ADMIN")} data-testid={`button-publish-${dataset.id}`}>
+                <Button type="button" size="sm" className="h-7 text-xs gap-1" onClick={() => publishMutation.mutate(undefined)} disabled={publishMutation.isPending || !can("ADMIN")} data-testid={`button-publish-${dataset.id}`}>
                   {publishMutation.isPending ? <><Zap className="w-3 h-3 animate-pulse" /> Building...</> : <><Globe className="w-3 h-3" /> Publish</>}
                 </Button>
               )}
-              <Button size="sm" variant="outline" className="h-7 text-xs gap-1" onClick={() => setShowDetail(true)} data-testid={`button-detail-${dataset.id}`}>
+              <Button type="button" size="sm" variant="outline" className="h-7 text-xs gap-1" onClick={() => setShowDetail(true)} aria-expanded={showDetail} data-testid={`button-detail-${dataset.id}`}>
                 <Eye className="w-3 h-3" /> {dataset.status === "PUBLISHED" ? "Artifacts" : "Details"}
               </Button>
               {dataset.status === "PUBLISHED" && (
-                <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => archiveMutation.mutate()} disabled={archiveMutation.isPending || !can("ADMIN")}>
+                <Button type="button" size="sm" variant="outline" className="h-7 text-xs" onClick={() => archiveMutation.mutate()} disabled={archiveMutation.isPending || !can("ADMIN")}>
                   <Archive className="w-3 h-3" />
                 </Button>
               )}
@@ -625,30 +626,37 @@ function NewDatasetDialog() {
               <FormItem><FormLabel>Quality Score (0–1)</FormLabel><FormControl><Input {...field} type="number" min="0" max="1" step="0.01" data-testid="input-quality-score" /></FormControl></FormItem>
             )} />
 
-            {/* ── Batch scope selector ── */}
-            <div className="space-y-2">
-              <p className="text-sm font-medium">Data Scope</p>
+            <fieldset className="space-y-3 border border-border/60 rounded-2xl p-4 bg-muted/30" aria-labelledby="scope-selector-label">
+              <legend id="scope-selector-label" className="text-sm font-medium">Data Scope</legend>
               <div className="grid grid-cols-2 gap-2">
-                <button
-                  type="button"
-                  onClick={() => setScope("SINGLE_BATCH")}
-                  data-testid="scope-single-batch"
-                  className={`p-3 rounded-md border text-left text-xs transition-colors ${scope === "SINGLE_BATCH" ? "border-primary bg-primary/5 text-foreground" : "border-border text-muted-foreground hover:border-primary/50"}`}
-                >
-                  <div className="font-semibold mb-0.5 flex items-center gap-1"><Layers className="w-3 h-3" /> Single Batch</div>
-                  <div className="text-muted-foreground leading-tight">ML / RAG datasets — use one batch for clean, focused training data</div>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setScope("CROSS_BATCH")}
-                  data-testid="scope-cross-batch"
-                  className={`p-3 rounded-md border text-left text-xs transition-colors ${scope === "CROSS_BATCH" ? "border-chart-2 bg-chart-2/5 text-foreground" : "border-border text-muted-foreground hover:border-chart-2/50"}`}
-                >
-                  <div className="font-semibold mb-0.5 flex items-center gap-1"><Network className="w-3 h-3" /> All Batches</div>
-                  <div className="text-muted-foreground leading-tight">Knowledge Graph — combine all batches for a unified entity graph</div>
-                </button>
+                <label className={`group block cursor-pointer rounded-2xl border p-3 text-left text-xs transition-colors focus-within:ring-2 focus-within:ring-primary/50 ${scope === "SINGLE_BATCH" ? "border-primary bg-primary/10 text-foreground" : "border-border text-muted-foreground hover:border-primary/50"}`}>
+                  <input
+                    id="scope-single-batch"
+                    name="dataset-scope"
+                    type="radio"
+                    value="SINGLE_BATCH"
+                    checked={scope === "SINGLE_BATCH"}
+                    onChange={() => setScope("SINGLE_BATCH")}
+                    className="sr-only"
+                  />
+                  <div className="font-semibold mb-0.5 flex items-center gap-2"><Layers className="w-3.5 h-3.5" /> Single Batch</div>
+                  <div className="text-muted-foreground leading-tight">ML / RAG datasets — use one batch for clean, focused training data.</div>
+                </label>
+                <label className={`group block cursor-pointer rounded-2xl border p-3 text-left text-xs transition-colors focus-within:ring-2 focus-within:ring-primary/50 ${scope === "CROSS_BATCH" ? "border-chart-2 bg-chart-2/10 text-foreground" : "border-border text-muted-foreground hover:border-chart-2/50"}`}>
+                  <input
+                    id="scope-cross-batch"
+                    name="dataset-scope"
+                    type="radio"
+                    value="CROSS_BATCH"
+                    checked={scope === "CROSS_BATCH"}
+                    onChange={() => setScope("CROSS_BATCH")}
+                    className="sr-only"
+                  />
+                  <div className="font-semibold mb-0.5 flex items-center gap-2"><Network className="w-3.5 h-3.5" /> All Batches</div>
+                  <div className="text-muted-foreground leading-tight">Knowledge Graph — combine all batches for a unified entity graph.</div>
+                </label>
               </div>
-            </div>
+            </fieldset>
 
             {scope === "SINGLE_BATCH" && (
               <div className="space-y-1.5">
@@ -701,13 +709,12 @@ export default function Publishing() {
 
   return (
     <div className="p-6 space-y-6 max-w-7xl mx-auto">
-      <div className="flex items-center justify-between gap-4 flex-wrap">
-        <div>
-          <h1 className="text-2xl font-bold text-foreground" data-testid="heading-publishing">Dataset Publishing</h1>
-          <p className="text-sm text-muted-foreground mt-1">One publish action → 3 fit-for-purpose artifacts: ML features, Knowledge Graph, RAG corpus</p>
-        </div>
-        <NewDatasetDialog />
-      </div>
+      <AdminHeader
+        title="Dataset Publishing"
+        subtitle="Create, review, and publish datasets with a clearer, more guided experience for admins and analysts."
+        badges={["Publishing", "Multi-artifact"]}
+        actions={<NewDatasetDialog />}
+      />
 
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         {[
@@ -716,29 +723,34 @@ export default function Publishing() {
           { label: "Archived", value: archived, icon: Archive, color: "text-muted-foreground" },
           { label: "Total Records", value: totalRecords.toLocaleString(), icon: Database, color: "text-primary" },
         ].map((s) => (
-          <Card key={s.label}><CardContent className="p-4">
-            <div className="flex items-center justify-between">
-              <div><p className="text-xs text-muted-foreground">{s.label}</p><p className={`text-2xl font-bold ${s.color}`}>{isLoading ? "—" : s.value}</p></div>
-              <s.icon className={`w-6 h-6 ${s.color} opacity-70`} />
-            </div>
-          </CardContent></Card>
+          <Card key={s.label} className="border-border/60 bg-background/80 shadow-sm">
+            <CardContent className="p-4">
+              <dl className="flex items-center justify-between gap-3">
+                <div>
+                  <dt className="text-xs text-muted-foreground">{s.label}</dt>
+                  <dd className={`mt-1 text-2xl font-semibold ${s.color}`}>{isLoading ? "—" : s.value}</dd>
+                </div>
+                <s.icon className={`w-6 h-6 ${s.color} opacity-70`} />
+              </dl>
+            </CardContent>
+          </Card>
         ))}
       </div>
 
-      <Card>
+      <Card className="border-border/60 bg-background/80 shadow-sm">
         <CardHeader className="pb-3">
           <CardTitle className="text-sm font-semibold flex items-center gap-2">
             <Layers className="w-4 h-4 text-primary" />
             Multi-Artifact Publishing Architecture
           </CardTitle>
-          <CardDescription className="text-xs">Each dataset version produces separate, fit-for-purpose artifacts — never mixed shapes</CardDescription>
+          <CardDescription className="text-sm">Each dataset version produces separate, fit-for-purpose artifacts — never mixed shapes.</CardDescription>
         </CardHeader>
         <CardContent>
           <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
             {Object.entries(artifactColors).map(([key, config]) => {
               const Icon = config.icon;
               return (
-                <div key={key} className={`flex flex-col gap-2 p-3.5 rounded-md border border-border ${config.bg}`}>
+                <div key={key} className={`flex flex-col gap-2 rounded-2xl border border-border/60 bg-background/70 p-3.5 ${config.bg}`}>
                   <div className="flex items-center gap-2">
                     <Icon className={`w-4 h-4 ${config.color}`} />
                     <span className={`text-xs font-semibold ${config.color}`}>{config.label}</span>

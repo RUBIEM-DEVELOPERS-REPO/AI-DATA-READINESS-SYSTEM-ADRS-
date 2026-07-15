@@ -3,7 +3,9 @@ import { Strategy as LocalStrategy } from "passport-local";
 import session from "express-session";
 import connectPg from "connect-pg-simple";
 import bcrypt from "bcryptjs";
+import { Pool } from "pg";
 import { storage } from "./storage";
+import { waitForDatabaseConnection } from "./db";
 import type { User } from "@shared/schema";
 import type { Express, Request, Response, NextFunction } from "express";
 
@@ -61,18 +63,41 @@ passport.deserializeUser(async (id: string, done) => {
 // ─── Session setup ─────────────────────────────────────────────────────────
 const SESSION_TABLE_NAME = process.env.SESSION_TABLE_NAME || "adrs_sessions";
 
-export function setupSession(app: Express) {
+export async function setupSession(app: Express) {
   const PgStore = connectPg(session);
+  let sessionStore: session.Store;
+
+  const sessionConnectionString = process.env.SESSION_DATABASE_URL || process.env.DATABASE_URL || "postgresql://postgres:postgres@localhost:5444/storage_db";
+
+  if (!process.env.SESSION_DATABASE_URL && !process.env.DATABASE_URL) {
+    console.warn("[AUTH] SESSION_DATABASE_URL not set — falling back to the main database connection for local development.");
+  }
+
+  try {
+    const sessionPool = new Pool({ connectionString: sessionConnectionString });
+    try {
+      await sessionPool.query("SELECT 1");
+    } finally {
+      await sessionPool.end();
+    }
+
+    sessionStore = new PgStore({
+      conString: sessionConnectionString,
+      tableName: SESSION_TABLE_NAME,
+      createTableIfMissing: true,
+      ttl: 60 * 60 * 24 * 7, // 7 days
+      pruneSessionInterval: 60 * 60, // Prune every hour
+    });
+    console.log("[AUTH] Session store initialized with dedicated SESSION_DATABASE_URL — sessions are portal-isolated.");
+  } catch (error) {
+    console.error("[AUTH] Failed to initialize session store:", error);
+    throw error;
+  }
+
 
   app.use(
     session({
-      store: new PgStore({
-        conString: process.env.DATABASE_URL!,
-        tableName: SESSION_TABLE_NAME,
-        createTableIfMissing: true,
-        ttl: 60 * 60 * 24 * 7, // 7 days
-        pruneSessionInterval: 60 * 60, // Prune every hour
-      }),
+      store: sessionStore,
       secret: process.env.SESSION_SECRET!,
       resave: false,
       saveUninitialized: false,
@@ -117,17 +142,30 @@ export function requireRole(...roles: UserRole[]) {
       return res.status(401).json({ error: "Authentication required", code: "UNAUTHENTICATED" });
     }
     const userRole = (req.user as any)?.role as UserRole;
-    const userLevel = ROLE_HIERARCHY[userRole] ?? 0;
-    const requiredLevel = Math.min(...roles.map(r => ROLE_HIERARCHY[r] ?? 0));
-    if (userLevel < requiredLevel) {
-      return res.status(403).json({
-        error: "Insufficient permissions",
-        code: "FORBIDDEN",
-        required: roles,
-        current: userRole,
-      });
+
+    const isPortalRole = userRole === "DATA_CONTROLLER" || userRole === "DATA_PROTECTION_OFFICER";
+    const isRegulatorRole = userRole === "REGULATOR";
+    const isPipelineRole = ["SUPER_ADMIN", "ADMIN", "ANALYST", "REVIEWER", "VIEWER"].includes(userRole);
+
+    for (const allowedRole of roles) {
+      if (allowedRole === "DATA_CONTROLLER" || allowedRole === "DATA_PROTECTION_OFFICER") {
+        if (isPortalRole) return next();
+      } else if (allowedRole === "REGULATOR") {
+        if (isRegulatorRole) return next();
+      } else {
+        // Pipeline roles
+        if (isPipelineRole && (ROLE_HIERARCHY[userRole] ?? 0) >= (ROLE_HIERARCHY[allowedRole] ?? 0)) {
+          return next();
+        }
+      }
     }
-    next();
+
+    return res.status(403).json({
+      error: "Insufficient permissions",
+      code: "FORBIDDEN",
+      required: roles,
+      current: userRole,
+    });
   };
 }
 

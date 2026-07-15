@@ -77,13 +77,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const can = (minRole: UserRole): boolean => {
     if (!user) return false;
-    if (user.role === "REGULATOR") {
-      return minRole === "REGULATOR";
+
+    const isPortalRole = user.role === "DATA_CONTROLLER" || user.role === "DATA_PROTECTION_OFFICER";
+    const isRegulatorRole = user.role === "REGULATOR";
+    const isPipelineRole = ["SUPER_ADMIN", "ADMIN", "ANALYST", "REVIEWER", "VIEWER"].includes(user.role);
+
+    if (["SUPER_ADMIN", "ADMIN", "ANALYST", "REVIEWER", "VIEWER"].includes(minRole)) {
+      if (!isPipelineRole) return false;
+      return (ROLE_LEVEL[user.role] ?? 0) >= (ROLE_LEVEL[minRole] ?? 0);
     }
+
+    if (["DATA_CONTROLLER", "DATA_PROTECTION_OFFICER"].includes(minRole)) {
+      return isPortalRole;
+    }
+
     if (minRole === "REGULATOR") {
-      return user.role === "SUPER_ADMIN" || user.role === "ADMIN";
+      return isRegulatorRole;
     }
-    return (ROLE_LEVEL[user.role] ?? 0) >= (ROLE_LEVEL[minRole] ?? 0);
+
+    return false;
   };
 
   const login = async (username: string, password: string) => {

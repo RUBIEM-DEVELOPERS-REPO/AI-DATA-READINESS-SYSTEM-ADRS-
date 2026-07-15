@@ -1,5 +1,6 @@
 import type { Express } from "express";
 import type { Server } from "http";
+import { createAiClient, getChatModel, getAiProviderConfig } from "./services/ai-provider";
 import { storage } from "./storage";
 import {
   insertBatchSchema, insertEvidenceSchema, insertExtractionRunSchema,
@@ -20,16 +21,26 @@ import { uploadMiddleware, computeFileHash, getMimeType, detectCloudSource, down
 import { extractTextFromFile, detectDocType, isTextExtractionFailure } from "./services/extraction";
 import { aiExtractDocumentFields, aiTranscribeAudio, aiExtractWithVision, scoreAiExtraction, aiReclassifyDocType, aiClassifyEntityType } from "./services/ai-extraction";
 import { db } from "./db";
-import { eq, desc, sql } from "drizzle-orm";
-import { kgNodes, kgEdges, chunkEmbeddings, entityEmbeddings, cdmEntities, evidenceFiles, extractionTexts, extractionRuns, validationTasks } from "@shared/schema";
+import { Pool } from "pg";
+import { eq, and, desc, sql } from "drizzle-orm";
+import { connectorInstances, connectorDefinitions, externalSystems, kgNodes, kgEdges, chunkEmbeddings, entityEmbeddings, cdmEntities, evidenceFiles, extractionTexts, extractionRuns, validationTasks } from "@shared/schema";
 import { generateEmbedding, semanticSearch } from "./services/embeddings";
 import { resolveDynamicProfile } from "./services/attention";
 import { groupEntitiesForMerge, getSingletonEntityIds } from "./services/golden-records";
 import { runAgentTask, getSystemInsights, getAgentOrchestrationPlan, AGENT_TASKS } from "./services/agent";
 import { evaluateExtraction, type GroundTruthEntry } from "./services/evaluation";
+import { getConnectorManager } from "./services/connector-manager";
 import unzipper from "unzipper";
 import multer from "multer";
 import { registerRegistryRoutes } from "./routes_registry";
+
+function tenantIdFromReq(req: any) {
+  const tenantId = (req.user as any)?.tenantId;
+  if (!tenantId) {
+    throw Object.assign(new Error("Missing tenantId on authenticated request"), { status: 400 });
+  }
+  return tenantId;
+}
 
 function generateCode(prefix: string): string {
   const year = new Date().getFullYear();
@@ -110,6 +121,10 @@ async function seedAdminUser() {
   const existing = await storage.getUserByUsername("admin");
   if (existing) return;
   const hashed = await hashPassword("Admin@12345!");
+  const defaultTenant = process.env.DEFAULT_TENANT;
+  if (!defaultTenant) {
+    throw new Error("DEFAULT_TENANT environment variable is required to seed the default admin user.");
+  }
   await storage.createUser({
     username: "admin",
     email: "admin@aiinstituteafrica.org",
@@ -117,15 +132,60 @@ async function seedAdminUser() {
     firstName: "System",
     lastName: "Admin",
     role: "SUPER_ADMIN",
-    tenantId: "TENANT-001",
+    tenantId: defaultTenant,
     isActive: true,
   });
   console.log("[ADRS] Default admin user created — username: admin, password: Admin@12345!");
 }
 
-export async function registerRoutes(httpServer: any, app: Express): Promise<any> {
+async function seedPortalUsers() {
+  const defaultTenant = process.env.DEFAULT_TENANT || "TENANT-001";
+  const portalUsers = [
+    {
+      username: "dpo",
+      email: "dpo@aiinstituteafrica.org",
+      password: "Dpo@12345!",
+      firstName: "Default",
+      lastName: "DPO",
+      role: "DATA_PROTECTION_OFFICER" as const,
+    },
+    {
+      username: "regulator",
+      email: "regulator@aiinstituteafrica.org",
+      password: "Regulator@12345!",
+      firstName: "Default",
+      lastName: "Regulator",
+      role: "REGULATOR" as const,
+    },
+  ];
 
-  await seedAdminUser();
+  for (const portalUser of portalUsers) {
+    const existing = await storage.getUserByUsername(portalUser.username);
+    if (existing) continue;
+    const hashed = await hashPassword(portalUser.password);
+    await storage.createUser({
+      username: portalUser.username,
+      email: portalUser.email,
+      password: hashed,
+      firstName: portalUser.firstName,
+      lastName: portalUser.lastName,
+      role: portalUser.role,
+      tenantId: defaultTenant,
+      isActive: true,
+    });
+    console.log(`[ADRS] Default ${portalUser.role.toLowerCase()} user created — username: ${portalUser.username}, password: ${portalUser.password}`);
+  }
+}
+
+export async function registerRoutes(httpServer: any, app: Express): Promise<any> {
+  const shouldSeedDemoUsers = process.env.NODE_ENV !== "production" || process.env.SEED_DEMO_USERS === "true";
+
+  if (shouldSeedDemoUsers) {
+    await seedAdminUser();
+    await seedPortalUsers();
+  } else {
+    console.warn("[ADRS] Skipping demo user seeding in production. Set SEED_DEMO_USERS=true to enable seeded accounts.");
+  }
 
   // ─── Auth routes ────────────────────────────────────────────────────────────
   app.post("/api/auth/login", (req: any, res: any, next: any) => {
@@ -157,7 +217,7 @@ export async function registerRoutes(httpServer: any, app: Express): Promise<any
     if (existingEmail) return res.status(409).json({ error: "Email already registered", field: "email" });
 
     const hashed = await hashPassword(data.password);
-    const user = await storage.createUser({ ...data, password: hashed, tenantId: "TENANT-001" });
+    const user = await storage.createUser({ ...data, password: hashed, tenantId: tenantIdFromReq(req) });
 
     await storage.createAuditLog({
       action: "USER_REGISTERED",
@@ -165,7 +225,7 @@ export async function registerRoutes(httpServer: any, app: Express): Promise<any
       resourceId: user.id,
       userId: user.id,
       details: { username: user.username, role: user.role },
-      tenantId: "TENANT-001",
+      tenantId: tenantIdFromReq(req),
     });
 
     const { password: _, ...safeUser } = user;
@@ -203,6 +263,185 @@ export async function registerRoutes(httpServer: any, app: Express): Promise<any
     );
   });
 
+  const connectorManager = getConnectorManager();
+
+  app.get("/api/connector-definitions", requireAuth, requireRole("ADMIN"), async (_req: any, res: any) => {
+    const definitions = connectorManager.getSupportedConnectorDefinitions();
+    res.json(definitions);
+  });
+
+  app.get("/api/connectors", requireAuth, requireRole("ADMIN"), async (req: any, res: any) => {
+    const tenantId = tenantIdFromReq(req);
+    const instances = await db.select().from(connectorInstances).where(eq(connectorInstances.tenantId, tenantId));
+    res.json(instances.map(instance => ({
+      id: instance.id,
+      name: instance.name,
+      status: instance.status,
+      connectorDefinitionId: instance.connectorDefinitionId,
+      externalSystemId: instance.externalSystemId,
+      syncMode: instance.syncMode,
+      lastHealthCheck: instance.lastHealthCheck,
+      lastSyncStatus: instance.lastSyncStatus,
+      updatedAt: instance.updatedAt,
+      createdAt: instance.createdAt,
+    })));
+  });
+
+  app.post("/api/connectors", requireAuth, requireRole("ADMIN"), async (req: any, res: any) => {
+    const tenantId = tenantIdFromReq(req);
+    const { connectorDefinitionId, externalSystemId, config, metadata, credential } = req.body;
+
+    if (!connectorDefinitionId || !externalSystemId || !config || !credential) {
+      return res.status(400).json({ error: "connectorDefinitionId, externalSystemId, config, and credential are required" });
+    }
+
+    const credentialPayload = {
+      id: credential.id || `cred_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      type: credential.type || "CUSTOM",
+      secrets: credential.secrets,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      expiresAt: credential.expiresAt ? new Date(credential.expiresAt) : undefined,
+      isActive: true,
+      metadata: credential.metadata,
+    };
+
+    try {
+      const connectorInstanceId = await connectorManager.registerConnector(tenantId, {
+        connectorDefinitionId,
+        externalSystemId,
+        config,
+        credential: credentialPayload,
+        metadata,
+      }, (req.user as any)?.id);
+      res.status(201).json({ id: connectorInstanceId });
+    } catch (error: any) {
+      res.status(400).json({ error: error.message || String(error) });
+    }
+  });
+
+  app.post("/api/connectors/:id/test", requireAuth, requireRole("ADMIN"), async (req: any, res: any) => {
+    const tenantId = tenantIdFromReq(req);
+    const connectorId = req.params.id;
+
+    try {
+      const success = await connectorManager.testConnection(tenantId, connectorId, (req.user as any)?.id);
+      res.json({ success });
+    } catch (error: any) {
+      res.status(400).json({ success: false, error: error.message || String(error) });
+    }
+  });
+
+  app.get("/api/connectors/:id/health", requireAuth, requireRole("ADMIN"), async (req: any, res: any) => {
+    const tenantId = tenantIdFromReq(req);
+    const connectorId = req.params.id;
+    const health = await connectorManager.healthCheck(tenantId, connectorId);
+    res.json(health);
+  });
+
+  app.post("/api/connectors/:id/pause", requireAuth, requireRole("ADMIN"), async (req: any, res: any) => {
+    const tenantId = tenantIdFromReq(req);
+    const connectorId = req.params.id;
+    await connectorManager.pauseConnector(tenantId, connectorId, (req.user as any)?.id);
+    res.json({ id: connectorId, status: "PAUSED" });
+  });
+
+  app.post("/api/connectors/:id/resume", requireAuth, requireRole("ADMIN"), async (req: any, res: any) => {
+    const tenantId = tenantIdFromReq(req);
+    const connectorId = req.params.id;
+    await connectorManager.resumeConnector(tenantId, connectorId, (req.user as any)?.id);
+    res.json({ id: connectorId, status: "CONNECTED" });
+  });
+
+  app.post("/api/connectors/:id/revoke", requireAuth, requireRole("ADMIN"), async (req: any, res: any) => {
+    const tenantId = tenantIdFromReq(req);
+    const connectorId = req.params.id;
+    await connectorManager.revokeConnector(tenantId, connectorId, (req.user as any)?.id);
+    res.json({ id: connectorId, status: "REVOKED" });
+  });
+
+  app.post("/api/connectors/:id/sync", requireAuth, requireRole("ADMIN"), async (req: any, res: any) => {
+    const tenantId = tenantIdFromReq(req);
+    const connectorId = req.params.id;
+    const { operation, full, timeout } = req.body;
+
+    if (!operation || !["discover", "sync", "remediate"].includes(operation)) {
+      return res.status(400).json({ error: "operation must be one of discover, sync, remediate" });
+    }
+
+    try {
+      const jobId = await connectorManager.executeSync(tenantId, connectorId, operation, { full, timeout }, (req.user as any)?.id);
+      res.json({ jobId, operation });
+    } catch (error: any) {
+      res.status(400).json({ error: error.message || String(error) });
+    }
+  });
+
+  app.patch("/api/connectors/:id/credentials", requireAuth, requireRole("ADMIN"), async (req: any, res: any) => {
+    const tenantId = tenantIdFromReq(req);
+    const connectorId = req.params.id;
+    const { credential } = req.body;
+
+    if (!credential) {
+      return res.status(400).json({ error: "credential is required" });
+    }
+
+    const credentialPayload = {
+      id: credential.id || `cred_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      type: credential.type || "CUSTOM",
+      secrets: credential.secrets,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      expiresAt: credential.expiresAt ? new Date(credential.expiresAt) : undefined,
+      isActive: true,
+      metadata: credential.metadata,
+    };
+
+    try {
+      await connectorManager.rotateCredentials(tenantId, connectorId, credentialPayload, (req.user as any)?.id);
+      res.json({ id: connectorId, rotated: true });
+    } catch (error: any) {
+      res.status(400).json({ error: error.message || String(error) });
+    }
+  });
+
+  app.patch("/api/connectors/:id", requireAuth, requireRole("ADMIN"), async (req: any, res: any) => {
+    const tenantId = tenantIdFromReq(req);
+    const connectorId = req.params.id;
+    const updates = req.body;
+
+    try {
+      const existing = await db.select().from(connectorInstances).where(
+        and(eq(connectorInstances.id, connectorId), eq(connectorInstances.tenantId, tenantId))
+      );
+      if (!existing.length) {
+        return res.status(404).json({ error: "Connector not found" });
+      }
+
+      const allowed = ["name", "config", "syncMode", "scanSchedule", "scopeApproved"];
+      const patch = Object.fromEntries(Object.entries(updates).filter(([key]) => allowed.includes(key)));
+      await db.update(connectorInstances).set({ ...patch, updatedAt: new Date() }).where(
+        and(eq(connectorInstances.id, connectorId), eq(connectorInstances.tenantId, tenantId))
+      );
+
+      res.json({ id: connectorId, updated: true });
+    } catch (error: any) {
+      res.status(400).json({ error: error.message || String(error) });
+    }
+  });
+
+  app.get("/api/connectors/:id", requireAuth, requireRole("ADMIN"), async (req: any, res: any) => {
+    const tenantId = tenantIdFromReq(req);
+    const connectorId = req.params.id;
+    const instances = await db.select().from(connectorInstances).where(
+      and(eq(connectorInstances.id, connectorId), eq(connectorInstances.tenantId, tenantId))
+    );
+    if (!instances.length) {
+      return res.status(404).json({ error: "Connector not found" });
+    }
+    res.json(instances[0]);
+  });
+
   app.patch("/api/auth/users/:id", requireAuth, requireRole("ADMIN"), async (req: any, res: any) => {
     const ROLE_LEVEL: Record<string, number> = {
       SUPER_ADMIN: 6,
@@ -235,7 +474,7 @@ export async function registerRoutes(httpServer: any, app: Express): Promise<any
         resourceId: user.id,
         userId: adminUser?.id ?? "system",
         details: { username: user.username, oldRole: existing.role, newRole: updates.role, isPromotion },
-        tenantId: "TENANT-001",
+        tenantId: tenantIdFromReq(req),
       });
 
       // Send email notification for role promotion
@@ -259,7 +498,7 @@ export async function registerRoutes(httpServer: any, app: Express): Promise<any
         resourceId: user.id,
         userId: adminUser?.id ?? "system",
         details: { username: user.username, isActive: updates.isActive },
-        tenantId: "TENANT-001",
+        tenantId: tenantIdFromReq(req),
       });
     }
 
@@ -293,7 +532,7 @@ export async function registerRoutes(httpServer: any, app: Express): Promise<any
       resourceId: user.id,
       userId: user.id,
       details: { username: user.username, selfService: true },
-      tenantId: "TENANT-001",
+      tenantId: tenantIdFromReq(req),
     });
 
     // Notify user via email (fire-and-forget)
@@ -337,7 +576,7 @@ export async function registerRoutes(httpServer: any, app: Express): Promise<any
     }
     const accessReq = await storage.createAccessRequest({
       firstName, lastName, email, organisation,
-      requestedRole, reason, tenantId: "TENANT-001",
+      requestedRole, reason, tenantId: tenantIdFromReq(req),
     });
     await storage.createAuditLog({
       action: "ACCESS_REQUEST_SUBMITTED",
@@ -345,7 +584,7 @@ export async function registerRoutes(httpServer: any, app: Express): Promise<any
       resourceId: accessReq.id,
       userId: "anonymous",
       details: { firstName, lastName, email, organisation, requestedRole },
-      tenantId: "TENANT-001",
+      tenantId: tenantIdFromReq(req),
     });
     res.status(201).json({ id: accessReq.id, message: "Access request submitted successfully" });
   });
@@ -410,7 +649,7 @@ export async function registerRoutes(httpServer: any, app: Express): Promise<any
       resourceId: accessReq.id,
       userId: (req.user as any)?.id ?? "system",
       details: { email: accessReq.email, username, role: accessReq.requestedRole, newUserId: user.id },
-      tenantId: "TENANT-001",
+      tenantId: tenantIdFromReq(req),
     });
 
     const { previewUrl: approvePreviewUrl } = await sendAccessApprovedEmail({
@@ -445,7 +684,7 @@ export async function registerRoutes(httpServer: any, app: Express): Promise<any
       resourceId: accessReq.id,
       userId: (req.user as any)?.id ?? "system",
       details: { email: accessReq.email, rejectionReason: rejectionReason ?? null },
-      tenantId: "TENANT-001",
+      tenantId: tenantIdFromReq(req),
     });
 
     const { previewUrl: rejectPreviewUrl } = await sendAccessRejectedEmail({
@@ -535,6 +774,64 @@ export async function registerRoutes(httpServer: any, app: Express): Promise<any
     try { res.json(await getRegulatorFederatedSessions()); } catch (e) { console.error(e); res.status(500).json({ error: 'Failed' }); }
   });
 
+  app.post('/api/regulator/discovery', requireAuth, requireRole('REGULATOR'), async (req: any, res: any) => {
+    try {
+      const { sourceUrl, query } = req.body || {};
+      if (!sourceUrl || typeof sourceUrl !== 'string') {
+        return res.status(400).json({ error: 'sourceUrl is required and must be a string' });
+      }
+      const trimmedUrl = sourceUrl.trim();
+
+      if (/^https?:\/\//i.test(trimmedUrl)) {
+        const fetchOptions: any = { method: query ? 'POST' : 'GET', headers: { Accept: 'application/json' } };
+        if (query) {
+          fetchOptions.headers['Content-Type'] = 'application/json';
+          fetchOptions.body = JSON.stringify({ query });
+        }
+
+        const upstream = await fetch(trimmedUrl, fetchOptions);
+        if (!upstream.ok) {
+          const upstreamText = await upstream.text().catch(() => upstream.statusText);
+          return res.status(502).json({ error: `Remote API returned ${upstream.status}: ${upstreamText}` });
+        }
+
+        const contentType = upstream.headers.get('content-type') || '';
+        const payload = contentType.includes('application/json') ? await upstream.json() : await upstream.text();
+        return res.json({ source: 'api', url: trimmedUrl, status: upstream.status, contentType, payload });
+      }
+
+      if (/^postgres(?:ql)?:\/\//i.test(trimmedUrl)) {
+        if (query && typeof query !== 'string') {
+          return res.status(400).json({ error: 'query must be a string when provided' });
+        }
+
+        const pool = new Pool({ connectionString: trimmedUrl, max: 1, idleTimeoutMillis: 10000, connectionTimeoutMillis: 10000 });
+        try {
+          if (!query || !query.trim()) {
+            const meta = await pool.query(
+              `SELECT table_schema, table_name FROM information_schema.tables WHERE table_schema NOT IN ('pg_catalog','information_schema') ORDER BY table_schema, table_name;`
+            );
+            return res.json({ source: 'database', dbType: 'postgresql', metadata: { tables: meta.rows } });
+          }
+
+          const safeQuery = query.trim();
+          if (!safeQuery.toLowerCase().startsWith('select')) {
+            return res.status(400).json({ error: 'Only SELECT queries are allowed against database sources' });
+          }
+          const rows = await pool.query(safeQuery);
+          return res.json({ source: 'database', dbType: 'postgresql', rowCount: rows.rowCount, rows: Array.isArray(rows.rows) ? rows.rows.slice(0, 100) : rows.rows });
+        } finally {
+          await pool.end().catch(() => undefined);
+        }
+      }
+
+      return res.status(400).json({ error: 'Unsupported source. Paste a valid HTTP(s) API URL or PostgreSQL connection string.' });
+    } catch (err: any) {
+      console.error('Regulator discovery error:', err);
+      res.status(500).json({ error: err?.message || 'Failed to perform discovery' });
+    }
+  });
+
   // ─── SMTP / Email Settings ─────────────────────────────────────────────────
   app.get("/api/settings/smtp", requireAuth, requireRole("ADMIN"), async (_req: any, res: any) => {
     try {
@@ -589,7 +886,7 @@ export async function registerRoutes(httpServer: any, app: Express): Promise<any
     const parse = insertBatchSchema.safeParse({ ...req.body, batchCode: generateCode("BATCH") });
     if (!parse.success) return res.status(400).json({ error: parse.error });
     const batch = await storage.createBatch(parse.data);
-    await storage.createAuditLog({ action: "BATCH_CREATED", resourceType: "BATCH", resourceId: batch.id, userId: batch.createdBy, details: { batch_code: batch.batchCode }, tenantId: "TENANT-001" });
+    await storage.createAuditLog({ action: "BATCH_CREATED", resourceType: "BATCH", resourceId: batch.id, userId: batch.createdBy, details: { batch_code: batch.batchCode }, tenantId: tenantIdFromReq(req) });
     res.json(batch);
   });
   app.patch("/api/batches/:id", requireAuth, requireRole("ANALYST"), async (req: any, res: any) => {
@@ -659,7 +956,7 @@ export async function registerRoutes(httpServer: any, app: Express): Promise<any
         await assertBatchCapacity(parse.data.batchId);
         const file = await storage.createEvidenceFile(parse.data);
         if (file.batchId) await storage.incrementBatchScannedDocuments(file.batchId);
-        await storage.createAuditLog({ action: "EVIDENCE_INGESTED", resourceType: "EVIDENCE", resourceId: file.id, userId: file.uploadedBy, details: { file_name: file.fileName, hash: file.fileHash, method: "file_upload" }, tenantId: "TENANT-001" });
+        await storage.createAuditLog({ action: "EVIDENCE_INGESTED", resourceType: "EVIDENCE", resourceId: file.id, userId: file.uploadedBy, details: { file_name: file.fileName, hash: file.fileHash, method: "file_upload" }, tenantId: tenantIdFromReq(req) });
         res.json(file);
       } catch (e: any) {
         if (req.file?.path && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
@@ -713,7 +1010,7 @@ export async function registerRoutes(httpServer: any, app: Express): Promise<any
       }
       const file = await storage.createEvidenceFile(parse.data);
       if (file.batchId) await storage.incrementBatchScannedDocuments(file.batchId);
-      await storage.createAuditLog({ action: "EVIDENCE_INGESTED", resourceType: "EVIDENCE", resourceId: file.id, userId: file.uploadedBy, details: { file_name: file.fileName, hash: file.fileHash, method: "url_import", source_url: url }, tenantId: "TENANT-001" });
+      await storage.createAuditLog({ action: "EVIDENCE_INGESTED", resourceType: "EVIDENCE", resourceId: file.id, userId: file.uploadedBy, details: { file_name: file.fileName, hash: file.fileHash, method: "url_import", source_url: url }, tenantId: tenantIdFromReq(req) });
       res.json(file);
     } catch (e: any) {
       const status = (e as any)?.status ?? 500;
@@ -812,7 +1109,7 @@ export async function registerRoutes(httpServer: any, app: Express): Promise<any
             }
             const file = await storage.createEvidenceFile(parse.data);
             if (file.batchId) await storage.incrementBatchScannedDocuments(file.batchId);
-            await storage.createAuditLog({ action: "EVIDENCE_INGESTED", resourceType: "EVIDENCE", resourceId: file.id, userId: uploadedBy, details: { file_name: file.fileName, hash: file.fileHash, method: "zip_upload", source_zip: req.file.originalname }, tenantId: "TENANT-001" });
+            await storage.createAuditLog({ action: "EVIDENCE_INGESTED", resourceType: "EVIDENCE", resourceId: file.id, userId: uploadedBy, details: { file_name: file.fileName, hash: file.fileHash, method: "zip_upload", source_zip: req.file.originalname }, tenantId: tenantIdFromReq(req) });
             results.push(file);
           } catch (entryErr: any) {
             errors.push(`${path.basename(entry.path)}: ${entryErr?.message ?? "failed"}`);
@@ -827,11 +1124,12 @@ export async function registerRoutes(httpServer: any, app: Express): Promise<any
   });
 
   app.post("/api/evidence", requireAuth, requireRole("ANALYST"), async (req: any, res: any) => {
-    const body = { ...req.body, evidenceCode: generateCode("EVID"), fileHash: generateHash(req.body.fileName ?? "file"), storedUri: `s3://evidence/tenant-001/${new Date().getFullYear()}/${String(new Date().getMonth() + 1).padStart(2, "0")}/${randomUUID()}/original.${req.body.fileFormat ?? "pdf"}`, immutabilityStatus: "LOCKED" };
+    const tenantId = tenantIdFromReq(req);
+    const body = { ...req.body, evidenceCode: generateCode("EVID"), fileHash: generateHash(req.body.fileName ?? "file"), storedUri: `s3://evidence/${tenantId}/${new Date().getFullYear()}/${String(new Date().getMonth() + 1).padStart(2, "0")}/${randomUUID()}/original.${req.body.fileFormat ?? "pdf"}`, immutabilityStatus: "LOCKED" };
     const parse = insertEvidenceSchema.safeParse(body);
     if (!parse.success) return res.status(400).json({ error: parse.error });
     const file = await storage.createEvidenceFile(parse.data);
-    await storage.createAuditLog({ action: "EVIDENCE_INGESTED", resourceType: "EVIDENCE", resourceId: file.id, userId: file.uploadedBy, details: { file_name: file.fileName, hash: file.fileHash }, tenantId: "TENANT-001" });
+    await storage.createAuditLog({ action: "EVIDENCE_INGESTED", resourceType: "EVIDENCE", resourceId: file.id, userId: file.uploadedBy, details: { file_name: file.fileName, hash: file.fileHash }, tenantId: tenantIdFromReq(req) });
     res.json(file);
   });
   app.patch("/api/evidence/:id", requireAuth, requireRole("ANALYST"), async (req: any, res: any) => {
@@ -865,7 +1163,7 @@ export async function registerRoutes(httpServer: any, app: Express): Promise<any
       const VISION_FORMATS = ["pdf", "png", "jpg", "jpeg", "tiff", "tif", "bmp", "gif", "webp"];
       const useVision = !isAV && isTextExtractionFailure(rawText) && VISION_FORMATS.includes(evidenceFile.fileFormat.toLowerCase());
       const aiResult = useVision
-        ? await aiExtractWithVision(evidenceFile.storedUri, evidenceFile.fileName, evidenceFile.fileFormat)
+        ? await aiExtractWithVision(evidenceFile.storedUri, evidenceFile.fileName, evidenceFile.fileFormat, rawText)
         : await aiExtractDocumentFields(rawText, evidenceFile.fileName);
       const docType = aiResult.docType;
       const docTypeConfidence = aiResult.docTypeConfidence;
@@ -936,9 +1234,9 @@ export async function registerRoutes(httpServer: any, app: Express): Promise<any
       }
 
       // 9. Audit + field events
-      await storage.createAuditLog({ action: "EXTRACTION_RUN_CREATED", resourceType: "EXTRACTION", resourceId: run.id, userId: req.body?.operatorId || "system", details: { doc_type: docType, trust_score: trustScore, field_count: fieldCount, method: "auto_extract" }, tenantId: "TENANT-001" });
+      await storage.createAuditLog({ action: "EXTRACTION_RUN_CREATED", resourceType: "EXTRACTION", resourceId: run.id, userId: req.body?.operatorId || "system", details: { doc_type: docType, trust_score: trustScore, field_count: fieldCount, method: "auto_extract" }, tenantId: tenantIdFromReq(req) });
       for (const attr of dedupedAttrs) {
-        await storage.createAuditLog({ action: attr.validation_state === "AUTO_APPROVED" ? "APPROVE_FIELD" : "REVIEW_FIELD", resourceType: "ATTRIBUTE", resourceId: run.id, userId: "system", details: { field_key: attr.field_key, policy_rule: attr.approval_policy_rule ?? "PASSED", confidence: attr.confidence_score }, tenantId: "TENANT-001" });
+        await storage.createAuditLog({ action: attr.validation_state === "AUTO_APPROVED" ? "APPROVE_FIELD" : "REVIEW_FIELD", resourceType: "ATTRIBUTE", resourceId: run.id, userId: "system", details: { field_key: attr.field_key, policy_rule: attr.approval_policy_rule ?? "PASSED", confidence: attr.confidence_score }, tenantId: tenantIdFromReq(req) });
       }
 
       // 10. Auto-create validation task — fires on field conflicts OR trust < 70% (one task per run)
@@ -953,19 +1251,19 @@ export async function registerRoutes(httpServer: any, app: Express): Promise<any
         if (isLowTrust10) reasons.push(`trust score ${(trustScore * 100).toFixed(0)}% is below the ${(ADRS_CONFIG.thresholds.auto_validation_task * 100).toFixed(0)}% threshold`);
         const rule = hasConflicts10 ? "CONFLICT" : "LOW_TRUST";
         await storage.createValidationTask({ taskCode: generateCode("VAL"), extractionRunId: run.id, evidenceId: run.evidenceId, status: "PENDING_VALIDATION", fieldsToValidate: allFields, trustScore, approvalStage: 1, maxApprovalStages: 1, approvalPolicyRule: rule, approvalPolicyReason: `Requires human review: ${reasons.join("; ")}.`, weakFields: hasConflicts10 ? conflictKeys : undefined, conflictDetails: hasConflicts10 ? conflictDetails : undefined } as any);
-        await storage.createAuditLog({ action: "VALIDATION_TASK_AUTO_CREATED", resourceType: "VALIDATION", resourceId: run.id, userId: "system", details: { reason: rule, has_conflicts: hasConflicts10, conflict_count: conflictKeys.length, trust_score: trustScore, threshold: ADRS_CONFIG.thresholds.auto_validation_task }, tenantId: "TENANT-001" });
+        await storage.createAuditLog({ action: "VALIDATION_TASK_AUTO_CREATED", resourceType: "VALIDATION", resourceId: run.id, userId: "system", details: { reason: rule, has_conflicts: hasConflicts10, conflict_count: conflictKeys.length, trust_score: trustScore, threshold: ADRS_CONFIG.thresholds.auto_validation_task }, tenantId: tenantIdFromReq(req) });
       }
 
       // 11. Party inference — field-based + raw-entity-based
       if (ADRS_CONFIG.features.auto_party_creation) {
-        const inferredParties = inferParties(dedupedAttrs, run.evidenceId, docType, run.id);
+        const inferredParties = inferParties(dedupedAttrs, run.evidenceId, docType, run.id, tenantIdFromReq(req));
         // Always pass evidenceFile.fileName so every evidence gets a DOCUMENT CDM node
-        const inferredDoc = inferDocument(dedupedAttrs, run.evidenceId, docType, run.id, evidenceFile.fileName);
+        const inferredDoc = inferDocument(dedupedAttrs, run.evidenceId, docType, run.id, tenantIdFromReq(req), evidenceFile.fileName);
         let docEntityCode: string | null = null;
         if (inferredDoc) {
           const docEntity = await storage.createCdmEntity(inferredDoc.entity);
           docEntityCode = docEntity.entityCode;
-          await storage.createAuditLog({ action: "AUTO_DOC_INFERRED", resourceType: "CDM", resourceId: docEntity.entityCode, userId: "system", details: { display_name: docEntity.displayName, evidence_id: run.evidenceId }, tenantId: "TENANT-001" });
+          await storage.createAuditLog({ action: "AUTO_DOC_INFERRED", resourceType: "CDM", resourceId: docEntity.entityCode, userId: "system", details: { display_name: docEntity.displayName, evidence_id: run.evidenceId }, tenantId: tenantIdFromReq(req) });
         }
 
         // Collect normalised display names from field-based inference to avoid duplicates
@@ -976,7 +1274,7 @@ export async function registerRoutes(httpServer: any, app: Express): Promise<any
         );
 
         // Promote PERSON + ORGANIZATION entities from the raw AI entity list
-        const rawEntityParties = inferPartiesFromRawEntities(aiResult.entities, run.evidenceId, run.id, fieldInferredNames);
+        const rawEntityParties = inferPartiesFromRawEntities(aiResult.entities, run.evidenceId, run.id, tenantIdFromReq(req), fieldInferredNames);
 
         for (const inf of [...inferredParties, ...rawEntityParties]) {
           if (docEntityCode) {
@@ -985,7 +1283,7 @@ export async function registerRoutes(httpServer: any, app: Express): Promise<any
             inf.entity.relationships = [{ target_entity_id: docEntityCode, relationship_type: relType, confidence: inf.entity.confidenceScore, evidence_id: run.evidenceId }];
           }
           const party = await storage.createCdmEntity(inf.entity);
-          await storage.createAuditLog({ action: "AUTO_PARTY_INFERRED", resourceType: "CDM", resourceId: party.entityCode, userId: "system", details: { display_name: party.displayName, entity_type: party.entityType, evidence_id: run.evidenceId }, tenantId: "TENANT-001" });
+          await storage.createAuditLog({ action: "AUTO_PARTY_INFERRED", resourceType: "CDM", resourceId: party.entityCode, userId: "system", details: { display_name: party.displayName, entity_type: party.entityType, evidence_id: run.evidenceId }, tenantId: tenantIdFromReq(req) });
         }
       }
 
@@ -1053,7 +1351,7 @@ export async function registerRoutes(httpServer: any, app: Express): Promise<any
 
     // 4. Field-level audit events (APPROVE_FIELD / REVIEW_FIELD)
     for (const attr of dedupedAttrs) {
-      await storage.createAuditLog({ action: attr.validation_state === "AUTO_APPROVED" ? "APPROVE_FIELD" : "REVIEW_FIELD", resourceType: "ATTRIBUTE", resourceId: run.id, userId: "system", details: { field_key: attr.field_key, policy_rule: attr.approval_policy_rule ?? "PASSED", value_normalized: attr.value_normalized, confidence: attr.confidence_score }, tenantId: "TENANT-001" });
+      await storage.createAuditLog({ action: attr.validation_state === "AUTO_APPROVED" ? "APPROVE_FIELD" : "REVIEW_FIELD", resourceType: "ATTRIBUTE", resourceId: run.id, userId: "system", details: { field_key: attr.field_key, policy_rule: attr.approval_policy_rule ?? "PASSED", value_normalized: attr.value_normalized, confidence: attr.confidence_score }, tenantId: tenantIdFromReq(req) });
     }
 
     // 5 & 6. Auto-create validation task — fires on conflicts OR trust < 70% (one task per run)
@@ -1068,20 +1366,20 @@ export async function registerRoutes(httpServer: any, app: Express): Promise<any
       if (isLowTrust56) reasons.push(`trust score ${(trustScore * 100).toFixed(0)}% is below the ${(ADRS_CONFIG.thresholds.auto_validation_task * 100).toFixed(0)}% threshold`);
       const rule = hasConflicts56 ? "CONFLICT" : "LOW_TRUST";
       await storage.createValidationTask({ taskCode: generateCode("VAL"), extractionRunId: run.id, evidenceId: run.evidenceId, status: "PENDING_VALIDATION", fieldsToValidate: allFields, trustScore, approvalStage: 1, maxApprovalStages: 1, approvalPolicyRule: rule, approvalPolicyReason: `Requires human review: ${reasons.join("; ")}.`, weakFields: hasConflicts56 ? conflictKeys : undefined, conflictDetails: hasConflicts56 ? conflictDetails : undefined } as any);
-      await storage.createAuditLog({ action: "VALIDATION_TASK_AUTO_CREATED", resourceType: "VALIDATION", resourceId: run.id, userId: "system", details: { reason: rule, has_conflicts: hasConflicts56, conflict_count: conflictKeys.length, trust_score: trustScore, threshold: ADRS_CONFIG.thresholds.auto_validation_task }, tenantId: "TENANT-001" });
+      await storage.createAuditLog({ action: "VALIDATION_TASK_AUTO_CREATED", resourceType: "VALIDATION", resourceId: run.id, userId: "system", details: { reason: rule, has_conflicts: hasConflicts56, conflict_count: conflictKeys.length, trust_score: trustScore, threshold: ADRS_CONFIG.thresholds.auto_validation_task }, tenantId: tenantIdFromReq(req) });
     }
 
     // 7. Party inference — field-based + raw-entity-based
     if (ADRS_CONFIG.features.auto_party_creation) {
-      const inferredParties = inferParties(dedupedAttrs, run.evidenceId, docType, run.id);
+      const inferredParties = inferParties(dedupedAttrs, run.evidenceId, docType, run.id, tenantIdFromReq(req));
       const evidenceFile2   = await storage.getEvidenceFile(run.evidenceId);
-      const inferredDoc     = inferDocument(dedupedAttrs, run.evidenceId, docType, run.id, evidenceFile2?.fileName);
+      const inferredDoc     = inferDocument(dedupedAttrs, run.evidenceId, docType, run.id, tenantIdFromReq(req), evidenceFile2?.fileName);
       let docEntityCode: string | null = null;
 
       if (inferredDoc) {
         const docEntity = await storage.createCdmEntity(inferredDoc.entity);
         docEntityCode = docEntity.entityCode;
-        await storage.createAuditLog({ action: "AUTO_DOC_INFERRED", resourceType: "CDM", resourceId: docEntity.entityCode, userId: "system", details: { display_name: docEntity.displayName, evidence_id: run.evidenceId }, tenantId: "TENANT-001" });
+        await storage.createAuditLog({ action: "AUTO_DOC_INFERRED", resourceType: "CDM", resourceId: docEntity.entityCode, userId: "system", details: { display_name: docEntity.displayName, evidence_id: run.evidenceId }, tenantId: tenantIdFromReq(req) });
       }
 
       const fieldInferredNames = new Set<string>(
@@ -1089,7 +1387,7 @@ export async function registerRoutes(httpServer: any, app: Express): Promise<any
           p.entity.displayName.toLowerCase().split(/[\s,.\-&/]+/).filter(Boolean).sort().join(" ")
         )
       );
-      const rawEntityParties = inferPartiesFromRawEntities(extractedEntities, run.evidenceId, run.id, fieldInferredNames);
+      const rawEntityParties = inferPartiesFromRawEntities(extractedEntities, run.evidenceId, run.id, tenantIdFromReq(req), fieldInferredNames);
 
       for (const inferred of [...inferredParties, ...rawEntityParties]) {
         if (docEntityCode) {
@@ -1097,11 +1395,11 @@ export async function registerRoutes(httpServer: any, app: Express): Promise<any
           inferred.entity.relationships = [{ target_entity_id: docEntityCode, relationship_type: relType, confidence: inferred.entity.confidenceScore, evidence_id: run.evidenceId }];
         }
         const partyEntity = await storage.createCdmEntity(inferred.entity);
-        await storage.createAuditLog({ action: "AUTO_PARTY_INFERRED", resourceType: "CDM", resourceId: partyEntity.entityCode, userId: "system", details: { entity_type: partyEntity.entityType, display_name: partyEntity.displayName, identifiers: inferred.identifiers.length, evidence_id: run.evidenceId }, tenantId: "TENANT-001" });
+        await storage.createAuditLog({ action: "AUTO_PARTY_INFERRED", resourceType: "CDM", resourceId: partyEntity.entityCode, userId: "system", details: { entity_type: partyEntity.entityType, display_name: partyEntity.displayName, identifiers: inferred.identifiers.length, evidence_id: run.evidenceId }, tenantId: tenantIdFromReq(req) });
       }
     }
 
-    await storage.createAuditLog({ action: "EXTRACTION_COMPLETED", resourceType: "EXTRACTION", resourceId: run.id, userId: "system", details: { doc_type: run.docType, trust_score: run.trustScore, quality_gates_passed: run.qualityGatesPassed, attrs_total: dedupedAttrs.length, attrs_pending: dedupedAttrs.filter(a => a.validation_state === "PENDING").length }, tenantId: "TENANT-001" });
+    await storage.createAuditLog({ action: "EXTRACTION_COMPLETED", resourceType: "EXTRACTION", resourceId: run.id, userId: "system", details: { doc_type: run.docType, trust_score: run.trustScore, quality_gates_passed: run.qualityGatesPassed, attrs_total: dedupedAttrs.length, attrs_pending: dedupedAttrs.filter(a => a.validation_state === "PENDING").length }, tenantId: tenantIdFromReq(req) });
 
     res.json(ADRS_CONFIG.features.include_text_by_default ? run : stripText(run));
   });
@@ -1125,7 +1423,7 @@ export async function registerRoutes(httpServer: any, app: Express): Promise<any
     if (req.body.status && req.body.status !== existing.status) updates.validatedAt = new Date();
     const task = await storage.updateValidationTask(req.params.id, updates);
     const action = req.body.status === "APPROVED" ? "VALIDATION_APPROVED" : req.body.status === "REJECTED" ? "VALIDATION_REJECTED" : "VALIDATION_UPDATED";
-    await storage.createAuditLog({ action, resourceType: "VALIDATION", resourceId: task?.taskCode, userId: req.body.validator ?? "validator", details: { status: req.body.status, notes: req.body.validatorNotes, policy_rule: existing.approvalPolicyRule }, tenantId: "TENANT-001" });
+    await storage.createAuditLog({ action, resourceType: "VALIDATION", resourceId: task?.taskCode, userId: req.body.validator ?? "validator", details: { status: req.body.status, notes: req.body.validatorNotes, policy_rule: existing.approvalPolicyRule }, tenantId: tenantIdFromReq(req) });
 
     // ── Post-approval CDM enrichment ────────────────────────────────────────────
     // When a HITL reviewer approves a task, any PENDING attributes (e.g. email/phone
@@ -1149,11 +1447,13 @@ export async function registerRoutes(httpServer: any, app: Express): Promise<any
               .map(e => e.displayName.toLowerCase().trim())
           );
 
-          const newParties = inferParties(approvedAttrs, run.evidenceId, run.docType, run.id);
+          const tenantId = tenantIdFromReq(req);
+          const newParties = inferParties(approvedAttrs, run.evidenceId, run.docType, run.id, tenantId);
           const rawEntityParties = inferPartiesFromRawEntities(
             (run.extractedEntities as any[]) ?? [],
             run.evidenceId,
             run.id,
+            tenantId,
             new Set(Array.from(existingNames).map(n => n.split(/[\s,.\-&/]+/).filter(Boolean).sort().join(" ")))
           );
 
@@ -1177,7 +1477,7 @@ export async function registerRoutes(httpServer: any, app: Express): Promise<any
               }
             } else {
               const party = await storage.createCdmEntity(inf.entity);
-              await storage.createAuditLog({ action: "AUTO_PARTY_INFERRED", resourceType: "CDM", resourceId: party.entityCode, userId: req.body.validator ?? "validator", details: { display_name: party.displayName, entity_type: party.entityType, evidence_id: run.evidenceId, trigger: "validation_approved" }, tenantId: "TENANT-001" });
+              await storage.createAuditLog({ action: "AUTO_PARTY_INFERRED", resourceType: "CDM", resourceId: party.entityCode, userId: req.body.validator ?? "validator", details: { display_name: party.displayName, entity_type: party.entityType, evidence_id: run.evidenceId, trigger: "validation_approved" }, tenantId: tenantIdFromReq(req) });
             }
           }
         }
@@ -1257,7 +1557,7 @@ export async function registerRoutes(httpServer: any, app: Express): Promise<any
           extraction_run_id: task.extractionRunId,
           resolved_at: resolvedAt,
         },
-        tenantId: "TENANT-001",
+        tenantId: tenantIdFromReq(req),
       });
       auditEntries.push(auditEntry.id);
     }
@@ -1292,7 +1592,7 @@ export async function registerRoutes(httpServer: any, app: Express): Promise<any
       resourceId: task.taskCode,
       userId: resolvedBy,
       details: { resolved_count: resolutions.length, all_conflicts_cleared: allResolved, audit_entry_ids: auditEntries },
-      tenantId: "TENANT-001",
+      tenantId: tenantIdFromReq(req),
     });
 
     res.json({ resolved: resolutions.length, all_conflicts_cleared: allResolved, task_id: task.id });
@@ -1334,7 +1634,7 @@ export async function registerRoutes(httpServer: any, app: Express): Promise<any
     const parse = insertCdmEntitySchema.safeParse(body);
     if (!parse.success) return res.status(400).json({ error: parse.error });
     const entity = await storage.createCdmEntity(parse.data);
-    await storage.createAuditLog({ action: "ENTITY_CREATED", resourceType: "CDM", resourceId: entity.entityCode, userId: "system", details: { entity_type: entity.entityType, name: entity.displayName }, tenantId: "TENANT-001" });
+    await storage.createAuditLog({ action: "ENTITY_CREATED", resourceType: "CDM", resourceId: entity.entityCode, userId: "system", details: { entity_type: entity.entityType, name: entity.displayName }, tenantId: tenantIdFromReq(req) });
     res.json(entity);
   });
   app.patch("/api/cdm/:id", requireAuth, requireRole("ANALYST"), async (req: any, res: any) => {
@@ -1377,7 +1677,7 @@ export async function registerRoutes(httpServer: any, app: Express): Promise<any
           resourceId: entity.entityCode,
           userId: "system",
           details: { from: entity.entityType, to: aiType, confidence, display_name: entity.displayName },
-          tenantId: "TENANT-001",
+          tenantId: tenantIdFromReq(_req),
         });
         results.entitiesReclassified++;
         results.details.push({ id: entity.id, field: "entityType", from: entity.entityType, to: aiType });
@@ -1415,7 +1715,7 @@ export async function registerRoutes(httpServer: any, app: Express): Promise<any
           resourceId: run.id,
           userId: "system",
           details: { from: "OTHER", to: newType, confidence, file_name: fileName },
-          tenantId: "TENANT-001",
+          tenantId: tenantIdFromReq(_req),
         });
         results.docTypesReclassified++;
         results.details.push({ id: run.id, field: "docType", from: "OTHER", to: newType });
@@ -1430,7 +1730,7 @@ export async function registerRoutes(httpServer: any, app: Express): Promise<any
   // confidence record as the golden record.  Zero hallucination: only existing
   // field values are compared; the AI is not asked to invent anything.
   app.post("/api/cdm/golden-records/compute", requireAuth, requireRole("ANALYST"), async (req: any, res: any) => {
-    const tenantId = req.user?.tenantId ?? "TENANT-001";
+    const tenantId = tenantIdFromReq(req);
     const entities = await storage.getCdmEntities();
     const groups   = groupEntitiesForMerge(entities);
 
@@ -1611,11 +1911,11 @@ export async function registerRoutes(httpServer: any, app: Express): Promise<any
   });
 
   app.post("/api/datasets", requireAuth, requireRole("ANALYST"), async (req: any, res: any) => {
-    const body = { ...req.body, datasetCode: generateCode("DS"), tenantId: "TENANT-001" };
+    const body = { ...req.body, datasetCode: generateCode("DS"), tenantId: tenantIdFromReq(req) };
     const parse = insertDatasetSchema.safeParse(body);
     if (!parse.success) return res.status(400).json({ error: parse.error });
     const dataset = await storage.createPublishedDataset(parse.data);
-    await storage.createAuditLog({ action: "DATASET_CREATED", resourceType: "DATASET", resourceId: dataset.datasetCode, userId: (req.user as any)?.id ?? "system", details: { name: dataset.name, version: dataset.version }, tenantId: "TENANT-001" });
+    await storage.createAuditLog({ action: "DATASET_CREATED", resourceType: "DATASET", resourceId: dataset.datasetCode, userId: (req.user as any)?.id ?? "system", details: { name: dataset.name, version: dataset.version }, tenantId: tenantIdFromReq(req) });
     res.json(dataset);
   });
 
@@ -1658,11 +1958,11 @@ export async function registerRoutes(httpServer: any, app: Express): Promise<any
         const { override, overrideReason } = req.body;
         if (!override) {
           const blockingReason = `Dataset quality score ${(datasetTrustScore * 100).toFixed(0)}% is below the publishing threshold of ${(threshold * 100).toFixed(0)}%. Improve extraction quality or provide an override reason.`;
-          await storage.createAuditLog({ action: "PUBLISH_BLOCKED", resourceType: "DATASET", resourceId: dataset.datasetCode, userId: (req.user as any)?.id ?? "system", details: { avg_trust_score: datasetTrustScore, threshold, reason: blockingReason }, tenantId: "TENANT-001" });
+          await storage.createAuditLog({ action: "PUBLISH_BLOCKED", resourceType: "DATASET", resourceId: dataset.datasetCode, userId: (req.user as any)?.id ?? "system", details: { avg_trust_score: datasetTrustScore, threshold, reason: blockingReason }, tenantId: tenantIdFromReq(req) });
           return res.status(422).json({ blocked: true, avg_trust_score: datasetTrustScore, threshold, reason: blockingReason });
         }
         // Override granted — audit it
-        await storage.createAuditLog({ action: "PUBLISH_OVERRIDE", resourceType: "DATASET", resourceId: dataset.datasetCode, userId: (req.user as any)?.id ?? "system", details: { override_reason: overrideReason, avg_trust_score: datasetTrustScore, threshold }, tenantId: "TENANT-001" });
+        await storage.createAuditLog({ action: "PUBLISH_OVERRIDE", resourceType: "DATASET", resourceId: dataset.datasetCode, userId: (req.user as any)?.id ?? "system", details: { override_reason: overrideReason, avg_trust_score: datasetTrustScore, threshold }, tenantId: tenantIdFromReq(req) });
       }
     }
 
@@ -1672,8 +1972,8 @@ export async function registerRoutes(httpServer: any, app: Express): Promise<any
     const kgEdges      = artifacts.kg_graph.filter((r: any) => r.record_type === "EDGE").length;
     const updated      = await storage.updatePublishedDataset(req.params.id, { status: "PUBLISHED", publishedAt: new Date(), publishedBy: (req.user as any)?.id ?? "system", datasetCard: artifacts.dataset_card, artifactUris, artifactContents: artifacts, formats: ["ML_FEATURES", "KG_GRAPH", "KG_ENTITIES", "KG_EDGES", "KG_IDENTIFIERS", "RAG_CHUNKS"] });
 
-    await storage.createAuditLog({ action: "ARTIFACT_GENERATED", resourceType: "DATASET", resourceId: dataset.datasetCode, userId: "system", details: { artifacts: ["ml_features.csv", "kg_graph.jsonl", "kg_entities.jsonl", "kg_identifiers.jsonl", "kg_edges.jsonl", "rag_chunks.jsonl", "bundle.zip"], quality_gates_passed: artifacts.quality_gates.overall_passed }, tenantId: "TENANT-001" });
-    await storage.createAuditLog({ action: "DATASET_PUBLISHED", resourceType: "DATASET", resourceId: dataset.datasetCode, userId: (req.user as any)?.id ?? "system", details: { name: dataset.name, version: dataset.version, ml_rows: artifacts.ml_features.length, kg_nodes: kgNodes, kg_edges: kgEdges, rag_chunks: artifacts.rag_chunks.length }, tenantId: "TENANT-001" });
+    await storage.createAuditLog({ action: "ARTIFACT_GENERATED", resourceType: "DATASET", resourceId: dataset.datasetCode, userId: "system", details: { artifacts: ["ml_features.csv", "kg_graph.jsonl", "kg_entities.jsonl", "kg_identifiers.jsonl", "kg_edges.jsonl", "rag_chunks.jsonl", "bundle.zip"], quality_gates_passed: artifacts.quality_gates.overall_passed }, tenantId: tenantIdFromReq(req) });
+    await storage.createAuditLog({ action: "DATASET_PUBLISHED", resourceType: "DATASET", resourceId: dataset.datasetCode, userId: (req.user as any)?.id ?? "system", details: { name: dataset.name, version: dataset.version, ml_rows: artifacts.ml_features.length, kg_nodes: kgNodes, kg_edges: kgEdges, rag_chunks: artifacts.rag_chunks.length }, tenantId: tenantIdFromReq(req) });
 
     res.json({ dataset: updated, ml: artifacts.ml_features.length, kg_nodes: kgNodes, kg_edges: kgEdges, kg_entities: artifacts.kg_entities.length, kg_identifiers: artifacts.kg_identifiers.length, rag_chunks: artifacts.rag_chunks.length, quality_gates: artifacts.quality_gates });
   });
@@ -1682,7 +1982,7 @@ export async function registerRoutes(httpServer: any, app: Express): Promise<any
     const existing = await storage.getPublishedDataset(req.params.id);
     if (!existing) return res.status(404).json({ error: "Not found" });
     const updated = await storage.updatePublishedDataset(req.params.id, req.body);
-    if (req.body.status === "PUBLISHED") await storage.createAuditLog({ action: "DATASET_PUBLISHED", resourceType: "DATASET", resourceId: existing.datasetCode, userId: (req.user as any)?.id ?? "system", details: { name: existing.name, version: existing.version }, tenantId: "TENANT-001" });
+    if (req.body.status === "PUBLISHED") await storage.createAuditLog({ action: "DATASET_PUBLISHED", resourceType: "DATASET", resourceId: existing.datasetCode, userId: (req.user as any)?.id ?? "system", details: { name: existing.name, version: existing.version }, tenantId: tenantIdFromReq(req) });
     res.json(updated);
   });
 
@@ -1728,11 +2028,7 @@ When providing an answer, cite the source document name if possible.
 ${contextString}`;
 
       // 4. Generate Answer via OpenAI API
-      const OpenAI = require("openai").default;
-      const openai = new OpenAI({
-        apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
-        baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
-      });
+      const openai = createAiClient(getAiProviderConfig());
 
       const messages = [
         { role: "system", content: systemPrompt },
@@ -1741,7 +2037,7 @@ ${contextString}`;
       ];
 
       const response = await openai.chat.completions.create({
-        model: process.env.AI_TEXT_MODEL || "gpt-4o-mini",
+        model: getChatModel(),
         messages,
         temperature: 0.2, // Low temperature for factual RAG
       });
@@ -2095,7 +2391,7 @@ ${contextString}`;
   // ═══════════════════════════════════════════════════════════════════════════
 
   /** GET /api/agent/tasks — list all registered agent tasks, optionally filtered by layer */
-  app.get("/api/agent/tasks", requireAuth, requireRole("ANALYST"), async (req: any, res: any) => {
+  app.get("/api/agent/tasks", requireAuth, requireRole("SUPER_ADMIN", "ADMIN", "ANALYST", "DATA_CONTROLLER", "DATA_PROTECTION_OFFICER", "REGULATOR"), async (req: any, res: any) => {
     try {
       const { layer } = req.query;
       const tasks = layer
@@ -2109,7 +2405,7 @@ ${contextString}`;
   });
 
   /** POST /api/agent/run — execute an AI agent task */
-  app.post("/api/agent/run", requireAuth, requireRole("ANALYST"), async (req: any, res: any) => {
+  app.post("/api/agent/run", requireAuth, requireRole("SUPER_ADMIN", "ADMIN", "ANALYST", "DATA_CONTROLLER", "DATA_PROTECTION_OFFICER", "REGULATOR"), async (req: any, res: any) => {
     try {
       const { layer, taskId, query } = req.body;
       if (!layer || !taskId) {
@@ -2180,7 +2476,7 @@ ${contextString}`;
                 approvalPolicyRule,
                 approvalPolicyReason,
               },
-              tenantId: "TENANT-001",
+              tenantId: tenantIdFromReq(req),
             });
           }
           if (action.type === "TRIGGER_KG_SYNC") {
@@ -2191,7 +2487,7 @@ ${contextString}`;
               resourceId: "live-sync",
               userId: (req.user as any)?.id ?? "system",
               details: { triggeredBy: "agent orchestration" },
-              tenantId: "TENANT-001",
+              tenantId: tenantIdFromReq(req),
             });
           }
         }

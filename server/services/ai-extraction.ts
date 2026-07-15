@@ -1,15 +1,26 @@
-import OpenAI, { toFile } from "openai";
+import { toFile } from "openai";
 import fs from "fs";
 import path from "path";
 import os from "os";
 import { execSync } from "child_process";
 import { UPLOADS_DIR } from "../upload";
 import { resolveDynamicProfile } from "./attention";
+import {
+  createAiClient,
+  getAiProviderConfig,
+  getAudioModel,
+  getChatModel,
+  getTextModel,
+  getVisionModel,
+} from "./ai-provider";
 
-const openai = new OpenAI({
-  apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
-  baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
-});
+function getAiClient() {
+  const aiConfig = getAiProviderConfig();
+  return {
+    client: createAiClient(aiConfig),
+    config: aiConfig,
+  };
+}
 
 // ─── AI Field Extraction ─────────────────────────────────────────────────────
 
@@ -148,26 +159,171 @@ IMPORTANT:
 - For FORM documents: extract all visible form fields and their filled-in values
 - For POLICY documents: extract policy_number, effective_date, expiry_date, insured_name, premium_amount as applicable`;
 
+function buildFallbackExtractionResult(text: string, fileName: string): AiExtractionResult {
+  const normalizedText = String(text ?? "").replace(/\r/g, "\n").trim();
+  const lowerText = normalizedText.toLowerCase();
+  const docType = inferFallbackDocType(normalizedText, fileName, lowerText);
+  const fields: Record<string, AiExtractedField> = {};
+
+  const addField = (key: string, value: string, confidence: number) => {
+    if (!value) return;
+    fields[key] = { value, confidence, source: "ai" };
+  };
+
+  const invoiceNumber = extractFirstMatch(normalizedText, [
+    /\b(?:invoice|inv|bill|receipt|order|po)\s*(?:no|number)?\s*[:#-]?\s*([A-Za-z0-9\-\/]+)/i,
+    /\b(?:ref|reference)\s*(?:no|number)?\s*[:#-]?\s*([A-Za-z0-9\-\/]+)/i,
+  ]);
+  if (invoiceNumber) addField("invoice_number", invoiceNumber, 0.78);
+
+  const referenceNumber = extractFirstMatch(normalizedText, [
+    /\b(?:reference|ref|doc(?:ument)?\s+id|case\s+no)\s*[:#-]?\s*([A-Za-z0-9\-\/]+)/i,
+  ]);
+  if (referenceNumber) addField("reference_number", referenceNumber, 0.74);
+
+  const amountMatch = extractAmountMatch(normalizedText);
+  if (amountMatch) {
+    const value = amountMatch.replace(/\s+/g, " ").trim();
+    addField("total_amount", value, 0.74);
+    const currencyCode = value.match(/\b(?:USD|EUR|GBP|ZAR|ZWL|KES|GHS|NGN|AED|CHF|JPY|CNY|INR|MAD|TZS|UGX)\b/i);
+    if (currencyCode?.[0]) addField("currency", currencyCode[0].toUpperCase(), 0.8);
+  }
+
+  const dueDate = extractFirstMatch(normalizedText, [
+    /\b(?:due\s+date|payment\s+due|expiry\s+date|valid\s+until)\s*[:#-]?\s*([0-9]{4}-[0-9]{2}-[0-9]{2}|[0-9]{1,2}[-/][0-9]{1,2}[-/][0-9]{2,4})/i,
+  ]);
+  if (dueDate) addField("due_date", dueDate, 0.75);
+
+  const vendorName = extractFirstMatch(normalizedText, [
+    /\b(?:vendor|supplier|from|issued by|seller)\s*[:#-]?\s*([A-Za-z0-9&.,'() /-]+)/i,
+  ]);
+  if (vendorName) addField("vendor_name", vendorName, 0.72);
+
+  const customerName = extractFirstMatch(normalizedText, [
+    /\b(?:customer|client|bill\s+to|to)\s*[:#-]?\s*([A-Za-z0-9&.,'() /-]+)/i,
+  ]);
+  if (customerName) addField("customer_name", customerName, 0.68);
+
+  const description = normalizedText.split(/\n+/).find((line) => line.trim().length > 0 && !/^(invoice|vendor|supplier|customer|total|due|reference|date|amount)/i.test(line.trim()));
+  if (description) addField("description", description.trim(), 0.66);
+
+  const entities: Array<{ entity: string; value: string; confidence: number }> = [];
+  for (const match of normalizedText.matchAll(/([A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,})/gi)) {
+    entities.push({ entity: "EMAIL", value: match[1], confidence: 0.9 });
+  }
+  for (const match of normalizedText.matchAll(/(\+?[0-9][0-9\s().-]{7,}[0-9])/g)) {
+    entities.push({ entity: "PHONE", value: match[1], confidence: 0.82 });
+  }
+
+  const summaryText = normalizedText.slice(0, 220).replace(/\s+/g, " ").trim();
+  return {
+    docType,
+    docTypeConfidence: docType === "OTHER" ? 0.58 : 0.78,
+    fields,
+    entities,
+    summary: summaryText || `Document: ${fileName}`,
+    language: detectFallbackLanguage(lowerText),
+  };
+}
+
+function inferFallbackDocType(text: string, fileName: string, lowerText: string): string {
+  const source = `${fileName}\n${text}`.toLowerCase();
+  if (/\binvoice\b|\btax invoice\b|\breceipt\b/.test(source)) return "INVOICE";
+  if (/\bquotation\b|\bquote\b|\bproforma\b/.test(source)) return "QUOTATION";
+  if (/\bpurchase order\b|\bpo\b/.test(source)) return "PURCHASE_ORDER";
+  if (/\bcontract\b|\bagreement\b/.test(source)) return "CONTRACT";
+  if (/\bbank statement\b|\bstatement\b/.test(source)) return "BANK_STATEMENT";
+  if (/\bpayslip\b|\bsalary\b/.test(source)) return "PAYSLIP";
+  if (/\bpermit\b|\blicence\b|\blicense\b/.test(source)) return "PERMIT";
+  if (/\bcv\b|\bresume\b/.test(source)) return "CV";
+  if (/\bpolicy\b/.test(source)) return "POLICY";
+  if (/\bform\b/.test(source)) return "FORM";
+  if (/\breport\b/.test(source)) return "REPORT";
+  if (lowerText.includes("invoice")) return "INVOICE";
+  return "OTHER";
+}
+
+function extractFirstMatch(text: string, patterns: RegExp[]): string | undefined {
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    if (match?.[1]) {
+      return match[1].replace(/\s+/g, " ").trim();
+    }
+  }
+  return undefined;
+}
+
+function extractAmountMatch(text: string): string | undefined {
+  const patterns = [
+    /\b(?:total(?:\s+amount)?|grand\s+total|amount\s+due|balance\s+due|payable)\s*[:#-]?\s*([A-Z]{3}\s*)?([£$€¥₹]\s*)?([0-9][0-9,\.\s]*)/i,
+    /\b([A-Z]{3})\s*([0-9][0-9,\.\s]*)/i,
+    /([£$€¥₹]\s*[0-9][0-9,\.\s]*)/i,
+  ];
+
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    if (match?.[0]) {
+      const value = match[0].replace(/\s+/g, " ").trim();
+      return value.replace(/^total\s+amount\s*[:#-]?\s*/i, "").replace(/^amount\s+due\s*[:#-]?\s*/i, "").replace(/^balance\s+due\s*[:#-]?\s*/i, "").replace(/^payable\s*[:#-]?\s*/i, "").trim();
+    }
+  }
+  return undefined;
+}
+
+function detectFallbackLanguage(lowerText: string): string {
+  if (/(\bfr\b|français|bonjour)/i.test(lowerText)) return "fr";
+  if (/(\bpt\b|português|obrigado)/i.test(lowerText)) return "pt";
+  if (/(\bsw\b|swahili|habari)/i.test(lowerText)) return "sw";
+  if (/(\bzu\b|zulu|sawubona)/i.test(lowerText)) return "zu";
+  if (/(\bxh\b|xhosa|molo)/i.test(lowerText)) return "xh";
+  return "en";
+}
+
+export function mergeExtractionResults(
+  aiResult: Partial<AiExtractionResult>,
+  fallbackResult: AiExtractionResult
+): AiExtractionResult {
+  const fields: Record<string, AiExtractedField> = { ...fallbackResult.fields };
+  for (const [key, value] of Object.entries(aiResult.fields ?? {})) {
+    const candidate = value as AiExtractedField | undefined;
+    if (candidate?.value != null && String(candidate.value).trim() !== "") {
+      fields[key] = candidate;
+    }
+  }
+
+  const entities = (aiResult.entities?.length ?? 0) > 0
+    ? [...(aiResult.entities ?? [])]
+    : [...fallbackResult.entities];
+
+  return {
+    docType: aiResult.docType && aiResult.docType !== "OTHER" ? aiResult.docType : fallbackResult.docType,
+    docTypeConfidence: typeof aiResult.docTypeConfidence === "number" && aiResult.docTypeConfidence > 0.5
+      ? aiResult.docTypeConfidence
+      : fallbackResult.docTypeConfidence,
+    fields,
+    entities,
+    summary: String(aiResult.summary ?? "").trim() || fallbackResult.summary,
+    language: String(aiResult.language ?? "").trim() || fallbackResult.language,
+  };
+}
+
+export { buildFallbackExtractionResult };
+
 export async function aiExtractDocumentFields(
   text: string,
   fileName: string
 ): Promise<AiExtractionResult> {
+  const fallbackResult = buildFallbackExtractionResult(text, fileName);
   if (!text || text.length < 10 || text.startsWith("[")) {
-    return {
-      docType: "OTHER",
-      docTypeConfidence: 0.45,
-      fields: {},
-      entities: [],
-      summary: `Document: ${fileName}`,
-      language: "en",
-    };
+    return fallbackResult;
   }
 
   const truncatedText = text.slice(0, 12000);
 
   try {
+    const { client: openai, config: aiConfig } = getAiClient();
     const response = await openai.chat.completions.create({
-      model: process.env.AI_TEXT_MODEL || "gpt-5-mini",
+      model: getTextModel(aiConfig),
       messages: [
         { role: "system", content: EXTRACTION_SYSTEM_PROMPT },
         {
@@ -180,6 +336,10 @@ export async function aiExtractDocumentFields(
     });
 
     const raw = response.choices[0]?.message?.content ?? "{}";
+    if (!raw.trim() || raw.trim() === "{}") {
+      throw new Error("Empty AI response");
+    }
+
     const parsed = JSON.parse(raw);
 
     const fields: Record<string, AiExtractedField> = {};
@@ -215,7 +375,7 @@ export async function aiExtractDocumentFields(
       }
     }
 
-    return {
+    const aiResult = {
       docType: normalizeDocType(parsed.doc_type),
       docTypeConfidence: Math.min(1, Math.max(0.4, Number(parsed.doc_type_confidence) || 0.75)),
       fields,
@@ -223,16 +383,15 @@ export async function aiExtractDocumentFields(
       summary: String(parsed.summary ?? "").slice(0, 300),
       language: String(parsed.language ?? "en").slice(0, 10),
     };
+
+    if (Object.keys(fields).length === 0 && (entities.length === 0 || !String(parsed.summary ?? "").trim())) {
+      return fallbackResult;
+    }
+
+    return mergeExtractionResults(aiResult, fallbackResult);
   } catch (err: any) {
     console.error("[AI Extraction] Error:", err?.message ?? err);
-    return {
-      docType: "OTHER",
-      docTypeConfidence: 0.45,
-      fields: {},
-      entities: [],
-      summary: `${fileName} — AI extraction failed`,
-      language: "en",
-    };
+    return fallbackResult;
   }
 }
 
@@ -251,9 +410,10 @@ export async function aiReclassifyDocType(
   if (truncated.length < 20) {
     return { docType: "OTHER", confidence: 0.4 };
   }
+  const { client: openai, config: aiConfig } = getAiClient();
   try {
     const response = await openai.chat.completions.create({
-      model: process.env.AI_TEXT_MODEL || "gpt-5-mini",
+      model: getTextModel(aiConfig),
       messages: [
         {
           role: "system",
@@ -317,9 +477,10 @@ export async function aiClassifyEntityType(
     .slice(0, 8)
     .map(([k, v]) => `${k}: ${String(v).slice(0, 80)}`)
     .join("; ");
+  const { client: openai, config: aiConfig } = getAiClient();
   try {
     const response = await openai.chat.completions.create({
-      model: process.env.AI_TEXT_MODEL || "gpt-5-mini",
+      model: getTextModel(aiConfig),
       messages: [
         {
           role: "system",
@@ -358,6 +519,7 @@ export async function aiTranscribeAudio(storedUri: string, fileName: string): Pr
   if (!fs.existsSync(filePath)) return "[Audio file not found]";
 
   try {
+    const { client: openai, config: aiConfig } = getAiClient();
     const ext = path.extname(fileName).slice(1).toLowerCase() || "mp3";
     const supportedFormats = ["flac", "m4a", "mp3", "mp4", "mpeg", "mpga", "oga", "ogg", "wav", "webm"];
     const fileExt = supportedFormats.includes(ext) ? ext : "mp3";
@@ -367,7 +529,7 @@ export async function aiTranscribeAudio(storedUri: string, fileName: string): Pr
 
     const transcription = await openai.audio.transcriptions.create({
       file: audioFile,
-      model: process.env.AI_AUDIO_MODEL || "gpt-4o-mini-transcribe",
+      model: getAudioModel(aiConfig),
       response_format: "text",
     });
 
@@ -542,7 +704,8 @@ function buildImageContent(images: Array<{ base64: string; mimeType: string }>, 
 export async function aiExtractWithVision(
   storedUri: string,
   fileName: string,
-  fileFormat: string
+  fileFormat: string,
+  contextText?: string
 ): Promise<AiExtractionResult> {
   if (!storedUri.startsWith("local://")) {
     return { docType: "OTHER", docTypeConfidence: 0.4, fields: {}, entities: [], summary: fileName, language: "en" };
@@ -604,9 +767,10 @@ For PERSON entities: extract EVERY individual human name visible. For ORGANIZATI
 Be thorough — extract everything you can read. Return confidence 0.95+ for clearly printed text, 0.8+ for legible text, 0.6+ for partially obscured text.`;
 
   try {
+    const { client: openai, config: aiConfig } = getAiClient();
     const messageContent = buildImageContent(images, visionPrompt);
     const response = await openai.chat.completions.create({
-      model: process.env.AI_VISION_MODEL || "gpt-4o",
+      model: getVisionModel(aiConfig),
       messages: [{ role: "user", content: messageContent }],
       response_format: { type: "json_object" },
       max_completion_tokens: 4096,
@@ -638,7 +802,7 @@ Be thorough — extract everything you can read. Return confidence 0.95+ for cle
       }
     }
 
-    return {
+    const aiResult = {
       docType: normalizeDocType(parsed.doc_type),
       docTypeConfidence: Math.min(1, Math.max(0.5, Number(parsed.doc_type_confidence) || 0.80)),
       fields,
@@ -646,15 +810,18 @@ Be thorough — extract everything you can read. Return confidence 0.95+ for cle
       summary: String(parsed.summary ?? "").slice(0, 300),
       language: String(parsed.language ?? "en").slice(0, 10),
     };
+
+    const fallbackResult = buildFallbackExtractionResult(contextText ?? "", fileName);
+    if (Object.keys(fields).length === 0 && entities.length === 0) {
+      return mergeExtractionResults(aiResult, fallbackResult);
+    }
+
+    return mergeExtractionResults(aiResult, fallbackResult);
   } catch (err: any) {
     console.error("[Vision Extraction] Error:", err?.message ?? err);
     return {
-      docType: "OTHER",
-      docTypeConfidence: 0.4,
-      fields: {},
-      entities: [],
+      ...buildFallbackExtractionResult(contextText ?? "", fileName),
       summary: `${fileName} — vision extraction failed`,
-      language: "en",
     };
   }
 }

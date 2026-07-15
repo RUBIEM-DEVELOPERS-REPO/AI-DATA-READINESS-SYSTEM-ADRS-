@@ -486,7 +486,7 @@ function ContextPacketsTab() {
           </CardTitle>
           <CardDescription className="text-xs">
             Select an evidence file to generate its fused Context Packet — the complete structured, unstructured,
-            graph, and profile context assembled by Layer 5.
+            graph, and profile context assembled for this workspace.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
@@ -640,7 +640,7 @@ export default function IntelligenceLayer() {
             <h1 className="text-2xl font-bold text-foreground">Attention, Fusion &amp; Context</h1>
           </div>
           <p className="text-sm text-muted-foreground ml-10">
-            Layer 5 — Dynamic profile attention, multi-source fusion, conflict resolution &amp; context packet assembly.
+            Dynamic profile attention, multi-source fusion, conflict resolution, and context packet assembly.
           </p>
         </div>
         <Badge variant="outline" className="text-xs gap-1.5 border-emerald-500/30 text-emerald-400 bg-emerald-500/5">

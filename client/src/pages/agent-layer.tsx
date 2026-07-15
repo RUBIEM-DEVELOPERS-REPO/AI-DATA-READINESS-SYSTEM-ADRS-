@@ -58,6 +58,7 @@ const LAYERS = [
   { id: "validation",   num: 6, label: "Trust & Validation",         icon: Shield,     color: "from-rose-500/20 border-rose-500/20     text-rose-400" },
   { id: "graph",        num: 7, label: "Knowledge Graph",            icon: Network,    color: "from-pink-500/20 border-pink-500/20     text-pink-400" },
   { id: "publishing",   num: 8, label: "AI-Ready Publishing",        icon: FileText,   color: "from-orange-500/20 border-orange-500/20 text-orange-400" },
+  { id: "dpo",          num: 9, label: "DPO Portal AI",              icon: Shield,     color: "from-sky-500/20 border-sky-500/20 text-sky-400" },
 ];
 
 // ─── Tab 1: Agent Hub ─────────────────────────────────────────────────────────
@@ -102,13 +103,13 @@ function AgentHubTab() {
 
   return (
     <div className="space-y-5">
-      {/* Layer filter pills */}
+      {/* Workspace filter pills */}
       <div className="flex flex-wrap gap-2">
         <button
           onClick={() => setActiveLayer("system")}
           className={`text-xs px-3 py-1.5 rounded-full border transition-all ${activeLayer === "system" ? "bg-primary text-primary-foreground border-primary" : "border-border/50 hover:border-primary/30 text-muted-foreground"}`}
         >
-          All Layers
+          All Workspaces
         </button>
         {LAYERS.map(l => (
           <button
@@ -205,7 +206,7 @@ function AgentHubTab() {
                       data-testid={`button-run-agent-${task.id}`}
                     >
                       {isRunning ? <Loader2 className="w-3 h-3 animate-spin" /> : res ? <RefreshCw className="w-3 h-3" /> : <Zap className="w-3 h-3" />}
-                      {isRunning ? "Running…" : res ? "Re-run Agent" : "Run Agent"}
+                      {isRunning ? "Running…" : res ? `Re-run ${task.label}` : `Run ${task.label}`}
                     </Button>
                     {user?.role === "ADMIN" && (
                       <div className="space-y-3">
@@ -248,7 +249,7 @@ function AgentHubTab() {
 // ─── Tab 2: RAG Explorer (Full-screen Copilot) ────────────────────────────────
 function RagExplorerTab() {
   const [messages, setMessages] = useState<ChatMessage[]>([
-    { role: "assistant", content: "Welcome to the ADRS Knowledge Explorer. I can answer questions about your ingested documents, extraction results, entities, and system state. What would you like to investigate?" },
+    { role: "assistant", content: "Welcome to the IntelliNexus Knowledge Explorer. I can answer questions about your ingested documents, extraction results, entities, and system state. What would you like to investigate?" },
   ]);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
@@ -491,7 +492,7 @@ function WorkflowTab() {
               </div>
               <div>
                 <p className="text-sm font-bold">Pipeline Health Score</p>
-                <p className="text-xs text-muted-foreground">Based on live system metrics across all layers</p>
+                <p className="text-xs text-muted-foreground">Based on live system metrics across the full platform</p>
               </div>
             </div>
             <div className="space-y-1 flex-1 min-w-0 max-w-xs">
@@ -706,7 +707,7 @@ function SystemOverviewTab() {
   return (
     <div className="space-y-6">
       <p className="text-xs text-muted-foreground">
-        Layer 9 orchestrates the entire ADRS pipeline — surfacing AI applications, agentic workflows, and intelligence across all 8 underlying layers.
+        The AI workspace brings together agentic workflows, intelligence, and automation across the full platform.
       </p>
 
       {/* Layer pipeline diagram */}
@@ -733,14 +734,14 @@ function SystemOverviewTab() {
             </div>
           );
         })}
-        {/* Layer 9 special */}
+        {/* AI workspace special */}
         <div className="flex items-center gap-3 mt-2">
           <div className="w-8 h-8 rounded-xl border bg-gradient-to-br from-primary/20 to-primary/5 border-primary/30 flex items-center justify-center flex-shrink-0 shadow-[0_0_20px_rgba(var(--primary),0.2)]">
             <Bot className="w-4 h-4 text-primary" />
           </div>
           <div className="flex-1">
             <div className="flex items-center gap-2">
-              <span className="text-xs font-bold text-primary">Layer 9: AI Applications & Agentic Layer</span>
+              <span className="text-xs font-bold text-primary">AI Applications & Agentic Console</span>
               <Badge variant="outline" className="text-[9px] bg-primary/10 text-primary border-primary/20">You are here</Badge>
             </div>
           </div>
@@ -751,7 +752,7 @@ function SystemOverviewTab() {
       <Card className="glass-panel border-0 bg-gradient-to-br from-primary/10 to-primary/5">
         <CardHeader className="pb-3">
           <CardTitle className="text-sm font-bold flex items-center gap-2">
-            <Sparkles className="w-4 h-4 text-primary" /> 23 AI Agents Across All Layers
+            <Sparkles className="w-4 h-4 text-primary" /> 23 AI Agents Across All Workspaces
           </CardTitle>
           <CardDescription className="text-xs">Every layer has dedicated AI agents that automate tasks previously requiring human expertise.</CardDescription>
         </CardHeader>
@@ -794,7 +795,7 @@ export default function AgentLayer() {
             <h1 className="text-2xl font-bold text-foreground">AI Applications &amp; Agentic Layer</h1>
           </div>
           <p className="text-sm text-muted-foreground ml-10">
-            Layer 9 — Agent Hub, RAG Explorer, Workflow Automation, Decision Support &amp; System Analytics.
+            Agent Hub, RAG Explorer, workflow automation, decision support, and system analytics in one place.
           </p>
         </div>
         <div className="flex items-center gap-2">

@@ -1,4 +1,5 @@
 import { db } from "./db";
+import { regulatorDb } from "./regulatorDb";
 import { kgNodes, kgEdges, auditLogs, processingRecords, publishedDatasets, validationTasks, teeAttestations, zkpProofs, auditLedgerEvents, federatedAuditSessions, evidenceFiles } from "@shared/schema";
 import { desc, count, eq, sql } from "drizzle-orm";
 
@@ -27,16 +28,16 @@ export async function getRegulatorComplianceStatus() {
     federatedCount,
   ] = await Promise.all([
     db.select({ count: count() }).from(auditLogs),
-    db.select({ count: count() }).from(processingRecords),
+    regulatorDb.select({ count: count() }).from(processingRecords),
     db.select({ count: count() }).from(publishedDatasets),
     db.select({ count: count() }).from(validationTasks).where(eq(validationTasks.status, "PENDING_VALIDATION")),
-    db.select({ count: count() }).from(zkpProofs),
-    db.select({ count: count() }).from(teeAttestations),
-    db.select({ count: count() }).from(auditLedgerEvents),
-    db.select({ count: count() }).from(federatedAuditSessions),
+    regulatorDb.select({ count: count() }).from(zkpProofs),
+    regulatorDb.select({ count: count() }).from(teeAttestations),
+    regulatorDb.select({ count: count() }).from(auditLedgerEvents),
+    regulatorDb.select({ count: count() }).from(federatedAuditSessions),
   ]);
 
-  const allConditionsSatisfied = await db
+  const allConditionsSatisfied = await regulatorDb
     .select({ count: count() })
     .from(zkpProofs)
     .where(eq(zkpProofs.complianceAllConditionsSatisfied, true));
@@ -74,7 +75,7 @@ export async function getRegulatorAuditLogs() {
 
 // ─── Regulator API: Processing Records ───────────────────────────────────────
 export async function getRegulatorProcessingRecords() {
-  const rows = await db
+  const rows = await regulatorDb
     .select()
     .from(processingRecords)
     .orderBy(desc(processingRecords.createdAt));
@@ -102,7 +103,7 @@ export async function getRegulatorActivities() {
 
 // ─── Regulator API: ZKP Proofs ───────────────────────────────────────────────
 export async function getRegulatorZkpProofs() {
-  const rows = await db
+  const rows = await regulatorDb
     .select()
     .from(zkpProofs)
     .orderBy(desc(zkpProofs.createdAt))
@@ -112,7 +113,7 @@ export async function getRegulatorZkpProofs() {
 
 // ─── Regulator API: TEE Attestations ─────────────────────────────────────────
 export async function getRegulatorTeeAttestations() {
-  const rows = await db
+  const rows = await regulatorDb
     .select()
     .from(teeAttestations)
     .orderBy(desc(teeAttestations.createdAt))
@@ -122,7 +123,7 @@ export async function getRegulatorTeeAttestations() {
 
 // ─── Regulator API: Audit Ledger Events ──────────────────────────────────────
 export async function getRegulatorLedgerEvents() {
-  const rows = await db
+  const rows = await regulatorDb
     .select()
     .from(auditLedgerEvents)
     .orderBy(desc(auditLedgerEvents.createdAt))
@@ -132,7 +133,7 @@ export async function getRegulatorLedgerEvents() {
 
 // ─── Regulator API: Federated Audit Sessions ─────────────────────────────────
 export async function getRegulatorFederatedSessions() {
-  const rows = await db
+  const rows = await regulatorDb
     .select()
     .from(federatedAuditSessions)
     .orderBy(desc(federatedAuditSessions.createdAt))

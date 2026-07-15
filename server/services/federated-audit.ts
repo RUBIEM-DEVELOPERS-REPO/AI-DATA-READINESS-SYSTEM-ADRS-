@@ -55,6 +55,13 @@ export async function createFederatedAuditRequest(params: {
   };
 }
 
+export function deriveComplianceSummary(requiredComplianceConditions: string[], failedConditions: string[]) {
+  return {
+    allConditionsSatisfied: failedConditions.length === 0,
+    failedConditions,
+  };
+}
+
 export async function createFederatedAuditResponse(params: {
   request: FederatedAuditRequest;
   tenantId: string;
@@ -76,10 +83,7 @@ export async function createFederatedAuditResponse(params: {
     orgComputedAt: new Date().toISOString(),
     aggregatesCommitment,
     proofs: zkpProofs,
-    complianceSummary: {
-      allConditionsSatisfied: failedConditions.length === 0,
-      failedConditions,
-    },
+    complianceSummary: deriveComplianceSummary(request.requiredComplianceConditions, failedConditions),
   };
 }
 

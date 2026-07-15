@@ -1,0 +1,19 @@
+service_name,file_path,summary,key_dependencies
+ai-extraction,server/services/ai-extraction.ts,LLM-driven field extraction,ai-provider;local-language-llm;pdftoppm;openai
+extraction,server/services/extraction.ts,Text extraction from PDFs/DOCX/XLSX,pdftotext;pdf-parse;xlsx;jszip
+embeddings,server/services/embeddings.ts,Local embedding generation and semantic search,@xenova/transformers;pgvector;drizzle-orm
+ai-provider,server/services/ai-provider.ts,AI provider config and OpenAI client factory,env vars;.adrs-ai-config.json;openai
+local-language-llm,server/services/local-language-llm.ts,Local/sovereign LLM selection and commitment,ai-provider
+agent,server/services/agent.ts,Agent task registry, orchestration, function-calling,ai-provider;db
+connector-manager,server/services/connector-manager.ts,Connector lifecycle and sync orchestration,connector-registry;connector-vault;db
+connector-registry,server/services/connector-registry.ts,Connector definitions and plugin factory,connector-plugins
+normalization,server/services/normalization.ts,Field normalization, auto-approval policies,ADRS_CONFIG
+party-inference,server/services/party-inference.ts,Inference of party/cdm entity types,ai-extraction;db
+attention,server/services/attention.ts,Dynamic profile routing & attention for extraction,db;ai-extraction
+publishing,server/services/publishing.ts,Dataset publishing and quality gating,normalization;db
+golden-records,server/services/golden-records.ts,Golden record computation and merging,cdm;db
+entity-type-correction,server/services/entity-type-correction.ts,Entity type correction helpers,party-inference;db
+data-discovery,server/services/data-discovery.ts,External data discovery workflows,connector-manager;db
+ai-provider-helpers,server/services/ai-provider.ts (helpers),Utilities for ai-provider,openai
+email,server/services/email.ts,SMTP email sending and templates,nodemailer or smtp
+local-language-llm-tests,server/services/agent.test.ts,Unit tests for agent behaviors,jest or ava

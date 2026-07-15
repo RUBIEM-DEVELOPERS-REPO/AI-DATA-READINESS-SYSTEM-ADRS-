@@ -117,7 +117,7 @@ export default function Dashboard() {
     <div className="p-6 space-y-6 max-w-7xl mx-auto">
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
-          <h1 className="text-2xl font-bold text-foreground" data-testid="heading-dashboard">Data Readiness System</h1>
+          <h1 className="text-2xl font-bold text-foreground" data-testid="heading-dashboard">IntelliNexus</h1>
           <p className="text-sm text-muted-foreground mt-1">End-to-end pipeline from raw evidence to AI-ready datasets</p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
@@ -125,7 +125,7 @@ export default function Dashboard() {
             <span className="w-1.5 h-1.5 rounded-full bg-status-online" />
             All Systems Operational
           </Badge>
-          <Badge variant="outline" className="text-xs">v1.0 · DRS</Badge>
+          <Badge variant="outline" className="text-xs">v1.0 · IntelliNexus</Badge>
         </div>
       </div>
 
@@ -179,7 +179,7 @@ export default function Dashboard() {
               <Activity className="w-4 h-4 text-primary" />
               Pipeline Overview
             </CardTitle>
-            <CardDescription className="text-xs">Data flow through the DRS processing stages</CardDescription>
+            <CardDescription className="text-xs">Data flow through the IntelliNexus processing stages</CardDescription>
           </CardHeader>
           <CardContent className="space-y-2">
             {isLoading ? (
@@ -261,7 +261,7 @@ export default function Dashboard() {
       {/* AI Agent: System-wide pipeline health */}
       <InlineAgentWidget
         layer="system"
-        layerLabel="System · All Layers"
+        layerLabel="System · All Workspaces"
         maxTasks={3}
         defaultCollapsed={true}
       />

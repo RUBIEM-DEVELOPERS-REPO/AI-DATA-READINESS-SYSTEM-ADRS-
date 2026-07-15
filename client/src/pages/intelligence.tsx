@@ -452,7 +452,7 @@ export default function Intelligence() {
       {/* AI Agent: Intelligence layer — quality summaries, anomaly flagging, profile advice */}
       <InlineAgentWidget
         layer="intelligence"
-        layerLabel="Layer 2 · Intelligence"
+        layerLabel="Intelligence Workspace"
         maxTasks={3}
         defaultCollapsed={true}
       />

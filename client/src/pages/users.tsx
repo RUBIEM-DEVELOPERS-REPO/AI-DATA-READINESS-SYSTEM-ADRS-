@@ -1,5 +1,5 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useAuth } from "@/context/auth";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -19,6 +19,7 @@ import {
   Copy, Check, RefreshCw, Search, AlertCircle, Key, ClipboardList,
   Settings, Wifi, WifiOff, Eye, EyeOff, Save, FlaskConical
 } from "lucide-react";
+import AdminHeader from "@/components/admin-header";
 
 type UserRole = "SUPER_ADMIN" | "ADMIN" | "DATA_CONTROLLER" | "DATA_PROTECTION_OFFICER" | "ANALYST" | "REVIEWER" | "VIEWER" | "REGULATOR";
 
@@ -78,7 +79,7 @@ function CopyButton({ text }: { text: string }) {
     setTimeout(() => setCopied(false), 2000);
   };
   return (
-    <button onClick={copy} className="ml-1 text-muted-foreground hover:text-foreground transition-colors" title="Copy">
+    <button type="button" onClick={copy} className="ml-1 text-muted-foreground hover:text-foreground transition-colors" title="Copy credentials to clipboard" aria-label="Copy credentials">
       {copied ? <Check className="w-3.5 h-3.5 text-green-500" /> : <Copy className="w-3.5 h-3.5" />}
     </button>
   );
@@ -308,12 +309,12 @@ function AccessRequestCard({ request }: { request: AccessRequest }) {
   const [showReject, setShowReject] = useState(false);
 
   return (
-    <Card data-testid={`card-request-${request.id}`} className="flex flex-col">
+    <Card data-testid={`card-request-${request.id}`} className="flex flex-col border-border/60 bg-background/80 shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md">
       <CardContent className="p-4 flex flex-col gap-3">
         <div className="flex items-start justify-between gap-2">
           <div className="flex items-center gap-2 min-w-0">
-            <div className="w-9 h-9 rounded-full bg-muted flex items-center justify-center flex-shrink-0">
-              <span className="text-xs font-bold text-muted-foreground">
+            <div className="w-10 h-10 rounded-full bg-primary/10 border border-primary/20 flex items-center justify-center flex-shrink-0">
+              <span className="text-sm font-semibold text-primary">
                 {request.firstName[0]}{request.lastName[0]}
               </span>
             </div>
@@ -324,7 +325,7 @@ function AccessRequestCard({ request }: { request: AccessRequest }) {
               </p>
             </div>
           </div>
-          <Badge variant="outline" className={`text-xs flex-shrink-0 ${STATUS_COLORS[request.status]}`}>
+          <Badge variant="outline" className={`text-[11px] flex-shrink-0 rounded-full ${STATUS_COLORS[request.status]}`}>
             {request.status === "PENDING" && <Clock className="w-2.5 h-2.5 mr-1" />}
             {request.status === "APPROVED" && <CheckCircle2 className="w-2.5 h-2.5 mr-1" />}
             {request.status === "REJECTED" && <XCircle className="w-2.5 h-2.5 mr-1" />}
@@ -345,7 +346,7 @@ function AccessRequestCard({ request }: { request: AccessRequest }) {
           </div>
         </div>
 
-        <div className="p-2 rounded-md bg-muted/40 text-xs text-muted-foreground line-clamp-2">
+        <div className="rounded-xl border border-border/60 bg-muted/30 px-3 py-2 text-xs text-muted-foreground line-clamp-2">
           {request.reason}
         </div>
 
@@ -418,19 +419,21 @@ function SmtpSettingsTab() {
   const [user, setUser] = useState("");
   const [pass, setPass] = useState("");
   const [fromEmail, setFromEmail] = useState("");
-  const [fromName, setFromName] = useState("ADRS Platform – AI Institute Africa");
+  const [fromName, setFromName] = useState("IntelliNexus Platform – AI Institute Africa");
   const [showPass, setShowPass] = useState(false);
   const [testResult, setTestResult] = useState<{ ok: boolean; error?: string } | null>(null);
   const [initialised, setInitialised] = useState(false);
 
-  if (cfg && !initialised) {
-    setHost(cfg.smtpHost);
-    setPort(cfg.smtpPort);
-    setUser(cfg.smtpUser);
-    setFromEmail(cfg.fromEmail || cfg.smtpUser);
-    setFromName(cfg.fromName);
-    setInitialised(true);
-  }
+  useEffect(() => {
+    if (!initialised && cfg) {
+      setHost(cfg.smtpHost);
+      setPort(cfg.smtpPort);
+      setUser(cfg.smtpUser);
+      setFromEmail(cfg.fromEmail || cfg.smtpUser);
+      setFromName(cfg.fromName);
+      setInitialised(true);
+    }
+  }, [cfg, initialised]);
 
   const save = useMutation({
     mutationFn: () => apiRequest("POST", "/api/settings/smtp", {
@@ -474,13 +477,13 @@ function SmtpSettingsTab() {
         </Card>
       )}
 
-      <Card>
+      <Card className="border-border/60 bg-background/80 shadow-sm">
         <CardHeader className="pb-4">
           <CardTitle className="text-base flex items-center gap-2">
-            <Mail className="w-4 h-4" />
+            <Mail className="w-4 h-4 text-primary" />
             Email Delivery (SMTP)
           </CardTitle>
-          <p className="text-xs text-muted-foreground">
+          <p className="text-sm text-muted-foreground">
             Configure a Gmail account (or any SMTP server) to send approval and rejection emails to users.
             For Gmail, use your Gmail address and a 16-character App Password from your Google account settings.
           </p>
@@ -563,7 +566,7 @@ function SmtpSettingsTab() {
               <Input
                 value={fromName}
                 onChange={e => setFromName(e.target.value)}
-                placeholder="ADRS Platform – AI Institute Africa"
+                placeholder="IntelliNexus Platform – AI Institute Africa"
                 data-testid="input-smtp-from-name"
               />
             </div>
@@ -607,7 +610,7 @@ function SmtpSettingsTab() {
         <CardContent className="space-y-2 text-xs text-muted-foreground">
           <p>1. Go to <strong>myaccount.google.com</strong> → Security → turn on <strong>2-Step Verification</strong> (required)</p>
           <p>2. Search for <strong>"App passwords"</strong> in your Google Account search bar</p>
-          <p>3. Enter an app name (e.g. <em>ADRS Platform</em>) and click <strong>Create</strong></p>
+          <p>3. Enter an app name (e.g. <em>IntelliNexus Platform</em>) and click <strong>Create</strong></p>
           <p>4. Copy the 16-character password shown and paste it into the App Password field above</p>
           <p>5. Click <strong>Save Settings</strong>, then <strong>Test Connection</strong> to verify it works</p>
         </CardContent>
@@ -648,95 +651,115 @@ function UsersTab() {
 
   if (isLoading) return (
     <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-      {Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-40 rounded-lg" />)}
+      {Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-48 rounded-lg" />)}
     </div>
   );
 
   return (
-    <div className="space-y-4">
-      <div className="relative max-w-xs">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-        <Input
-          placeholder="Search users…"
-          value={search}
-          onChange={e => setSearch(e.target.value)}
-          className="pl-9 h-8 text-sm"
-          data-testid="input-search-users"
-        />
+    <div className="space-y-5">
+      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+        <div className="max-w-md flex-1">
+          <p className="text-sm font-medium text-foreground">Identity and permission overview</p>
+          <p className="text-sm text-muted-foreground">Use the search to quickly locate a user and review their role, status, and access requests in one place.</p>
+        </div>
+        <div className="flex flex-col gap-2 items-start sm:items-end">
+          <div className="relative max-w-xs w-full md:w-72">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+            <Input
+              aria-label="Search users"
+              placeholder="Search users…"
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              className="pl-10 h-10 text-sm rounded-xl border border-input/60 bg-background/80 focus:border-primary/50"
+              data-testid="input-search-users"
+            />
+          </div>
+          <p className="text-xs text-muted-foreground" aria-live="polite">{filtered.length} user{filtered.length === 1 ? "" : "s"} matching your search</p>
+        </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-        {filtered.map(user => {
-          const initials = `${user.firstName[0] ?? ""}${user.lastName[0] ?? ""}`.toUpperCase() || user.username.slice(0, 2).toUpperCase();
-          return (
-            <Card key={user.id} data-testid={`card-user-${user.id}`} className="flex flex-col">
-              <CardContent className="p-4 flex flex-col gap-3">
-                <div className="flex items-start justify-between gap-2">
-                  <div className="flex items-center gap-2.5 min-w-0">
-                    <div className="w-9 h-9 rounded-full bg-primary/15 flex items-center justify-center flex-shrink-0">
-                      <span className="text-xs font-bold text-primary">{initials}</span>
+      {filtered.length === 0 ? (
+        <Card className="bg-card/50 border-border/30 backdrop-blur-sm">
+          <CardContent className="p-12 text-center">
+            <Users className="w-12 h-12 text-muted-foreground/30 mx-auto mb-4" />
+            <p className="text-sm font-medium text-muted-foreground">No users found</p>
+            <p className="text-xs text-muted-foreground/70 mt-1">Try adjusting your search criteria or broaden the filter.</p>
+          </CardContent>
+        </Card>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+          {filtered.map(user => {
+            const initials = `${user.firstName[0] ?? ""}${user.lastName[0] ?? ""}`.toUpperCase() || user.username.slice(0, 2).toUpperCase();
+            return (
+              <Card key={user.id} data-testid={`card-user-${user.id}`} className="border-border/60 bg-background/80 shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md">
+                <CardContent className="p-5 flex flex-col gap-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex items-center gap-3 min-w-0 flex-1">
+                      <div className="w-11 h-11 rounded-full bg-primary/10 border border-primary/20 flex items-center justify-center flex-shrink-0">
+                        <span className="text-sm font-semibold text-primary">{initials}</span>
+                      </div>
+                      <div className="min-w-0">
+                        <p className="text-sm font-semibold truncate">{user.firstName} {user.lastName}</p>
+                        <p className="text-xs text-muted-foreground truncate">@{user.username}</p>
+                      </div>
                     </div>
-                    <div className="min-w-0">
-                      <p className="text-sm font-semibold truncate">{user.firstName} {user.lastName}</p>
-                      <p className="text-xs text-muted-foreground truncate">@{user.username}</p>
+                    <Badge variant="outline" className={`text-[11px] flex-shrink-0 font-medium rounded-full ${user.isActive ? "border-emerald-500/40 text-emerald-700 dark:text-emerald-400 bg-emerald-500/10" : "border-muted text-muted-foreground bg-muted/30"}`}>
+                      {user.isActive ? "Active" : "Inactive"}
+                    </Badge>
+                  </div>
+
+                  <div className="space-y-2.5">
+                    <div className="flex items-center gap-2 text-xs">
+                      <Mail className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
+                      <span className="text-muted-foreground truncate">{user.email}</span>
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label className="text-xs font-medium text-muted-foreground">Role</Label>
+                      <Select
+                        value={user.role}
+                        onValueChange={role => changeRole.mutate({ id: user.id, role })}
+                        disabled={!can("ADMIN")}
+                      >
+                        <SelectTrigger aria-label="Change user role" className="h-9 text-xs rounded-lg border-input/50" data-testid={`select-role-${user.id}`}>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {(["SUPER_ADMIN", "ADMIN", "DATA_CONTROLLER", "DATA_PROTECTION_OFFICER", "REGULATOR", "ANALYST", "REVIEWER", "VIEWER"] as UserRole[]).map(r => (
+                            <SelectItem key={r} value={r} className="text-xs">{r.replace("_", " ")}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
                     </div>
                   </div>
-                  <Badge variant="outline" className={`text-xs flex-shrink-0 ${user.isActive ? "border-green-500/40 text-green-600 bg-green-500/5" : "border-muted text-muted-foreground"}`}>
-                    {user.isActive ? "Active" : "Inactive"}
-                  </Badge>
-                </div>
 
-                <p className="text-xs text-muted-foreground flex items-center gap-1">
-                  <Mail className="w-3 h-3" /> {user.email}
-                </p>
-
-                <div className="flex items-center gap-2">
-                  <Label className="text-xs text-muted-foreground w-10 flex-shrink-0">Role</Label>
-                  <Select
-                    value={user.role}
-                    onValueChange={role => changeRole.mutate({ id: user.id, role })}
-                    disabled={!can("ADMIN")}
-                  >
-                    <SelectTrigger className="h-7 text-xs flex-1" data-testid={`select-role-${user.id}`}>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {(["SUPER_ADMIN", "ADMIN", "DATA_CONTROLLER", "DATA_PROTECTION_OFFICER", "REGULATOR", "ANALYST", "REVIEWER", "VIEWER"] as UserRole[]).map(r => (
-                        <SelectItem key={r} value={r} className="text-xs">{r.replace("_", " ")}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                <div className="flex items-center justify-between pt-1 border-t border-border">
-                  <span className="text-xs text-muted-foreground">
-                    {user.lastLoginAt
-                      ? `Last login ${formatDistanceToNow(new Date(user.lastLoginAt), { addSuffix: true })}`
-                      : "Never logged in"}
-                  </span>
-                  {can("ADMIN") && (
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="h-7 text-xs"
-                      disabled={toggleActive.isPending}
-                      onClick={() => toggleActive.mutate({ id: user.id, isActive: !user.isActive })}
-                      data-testid={`button-toggle-user-${user.id}`}
-                    >
-                      {user.isActive ? "Deactivate" : "Activate"}
-                    </Button>
-                  )}
-                </div>
-              </CardContent>
-            </Card>
-          );
-        })}
-        {filtered.length === 0 && (
-          <div className="col-span-full text-center py-12 text-sm text-muted-foreground">
-            No users found
-          </div>
-        )}
-      </div>
+                  <div className="flex items-center justify-between pt-3 border-t border-border/40">
+                    <span className="text-xs text-muted-foreground">
+                      {user.lastLoginAt
+                        ? `Last login ${formatDistanceToNow(new Date(user.lastLoginAt), { addSuffix: true })}`
+                        : "Never logged in"}
+                    </span>
+                    {can("ADMIN") && (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant={user.isActive ? "outline" : "default"}
+                        className="h-8 text-xs px-3"
+                        aria-pressed={user.isActive}
+                        disabled={toggleActive.isPending}
+                        onClick={() => toggleActive.mutate({ id: user.id, isActive: !user.isActive })}
+                        data-testid={`button-toggle-user-${user.id}`}
+                      >
+                        {user.isActive ? "Deactivate" : "Activate"}
+                      </Button>
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
@@ -764,9 +787,11 @@ function AccessRequestsTab() {
           {(["ALL", "PENDING", "APPROVED", "REJECTED"] as const).map(s => (
             <Button
               key={s}
+              type="button"
               size="sm"
               variant={statusFilter === s ? "default" : "outline"}
               className="h-7 text-xs"
+              aria-pressed={statusFilter === s}
               onClick={() => setStatusFilter(s)}
               data-testid={`filter-requests-${s.toLowerCase()}`}
             >
@@ -802,51 +827,63 @@ export default function UserManagement() {
   const activeUsers = (users ?? []).filter(u => u.isActive).length;
 
   return (
-    <div className="p-6 space-y-6 max-w-7xl mx-auto">
-      <div>
-        <h1 className="text-2xl font-bold tracking-tight">User Management</h1>
-        <p className="text-muted-foreground text-sm mt-1">Manage user accounts and access requests for the ADRS platform</p>
-      </div>
+    <div className="min-h-screen bg-gradient-to-b from-background via-background to-muted/20">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
+        
+        {/* Header Section */}
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        {[
-          { label: "Total Users", value: users?.length ?? 0, icon: Users, color: "text-blue-500" },
-          { label: "Active Users", value: activeUsers, icon: CheckCircle2, color: "text-green-500" },
-          { label: "Pending Requests", value: pendingCount, icon: Clock, color: "text-yellow-500" },
-          { label: "Total Requests", value: requests?.length ?? 0, icon: ClipboardList, color: "text-purple-500" },
-        ].map(({ label, value, icon: Icon, color }) => (
-          <Card key={label}>
-            <CardContent className="p-4 flex items-center gap-3">
-              <div className={`p-2 rounded-lg bg-muted ${color}`}>
-                <Icon className="w-4 h-4" />
-              </div>
-              <div>
-                <p className="text-2xl font-bold">{value}</p>
-                <p className="text-xs text-muted-foreground">{label}</p>
-              </div>
-            </CardContent>
-          </Card>
-        ))}
-      </div>
+        <AdminHeader
+          title="User & Access Management"
+          subtitle="Review access requests, manage role-based permissions, and keep the platform secure with a calmer, more guided workflow."
+          badges={["Enterprise", "RBAC"]}
+        />
 
-      <Tabs defaultValue="users">
-        <TabsList>
-          <TabsTrigger value="users" data-testid="tab-users">
-            <Users className="w-4 h-4 mr-1.5" />
-            Users
+        {/* Stats Grid */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4">
+
+          {/* Stats Grid */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4">
+            {[
+              { label: "Total Users", value: users?.length ?? 0, icon: Users, color: "from-blue-500/20 to-blue-500/5", textColor: "text-blue-700 dark:text-blue-400", borderColor: "border-blue-500/30" },
+              { label: "Active Users", value: activeUsers, icon: CheckCircle2, color: "from-green-500/20 to-green-500/5", textColor: "text-green-700 dark:text-green-400", borderColor: "border-green-500/30" },
+              { label: "Pending Requests", value: pendingCount, icon: Clock, color: "from-yellow-500/20 to-yellow-500/5", textColor: "text-yellow-700 dark:text-yellow-400", borderColor: "border-yellow-500/30" },
+              { label: "Total Requests", value: requests?.length ?? 0, icon: ClipboardList, color: "from-purple-500/20 to-purple-500/5", textColor: "text-purple-700 dark:text-purple-400", borderColor: "border-purple-500/30" },
+            ].map(({ label, value, icon: Icon, color, textColor, borderColor }) => (
+              <Card key={label} className={`border ${borderColor} bg-gradient-to-br ${color} shadow-sm hover:shadow-md transition-shadow`}>
+                <CardContent className="p-4 flex items-center gap-3">
+                  <div className={`p-2.5 rounded-xl bg-gradient-to-br ${color} flex-shrink-0`}>
+                    <Icon className={`w-5 h-5 ${textColor}`} />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-2xl sm:text-3xl font-semibold tracking-tight">{value}</p>
+                    <p className="text-xs text-muted-foreground font-medium">{label}</p>
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        </div>
+
+        {/* Main Content */}
+
+      <Tabs defaultValue="users" className="space-y-6">
+        <TabsList className="flex overflow-x-auto gap-3 rounded-3xl border border-border/20 bg-gradient-to-r from-background/95 to-background/80 p-3 backdrop-blur-sm scrollbar-thin scrollbar-thumb-slate-300/40" role="tablist">
+          <TabsTrigger value="users" data-testid="tab-users" role="tab" className="min-w-[11rem] rounded-2xl px-4 py-3 text-sm font-medium data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-sm hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 flex items-center gap-2 transition-all">
+            <Users className="w-4 h-4 flex-shrink-0" />
+            <span>Users</span>
           </TabsTrigger>
-          <TabsTrigger value="access-requests" data-testid="tab-access-requests" className="relative">
-            <ClipboardList className="w-4 h-4 mr-1.5" />
-            Access Requests
+          <TabsTrigger value="access-requests" data-testid="tab-access-requests" role="tab" className="min-w-[11rem] rounded-2xl px-4 py-3 text-sm font-medium data-[state=active]:bg-orange-500/10 data-[state=active]:text-orange-600 dark:data-[state=active]:text-orange-400 data-[state=active]:shadow-sm hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 flex items-center gap-2 transition-all relative">
+            <ClipboardList className="w-4 h-4 flex-shrink-0" />
+            <span>Requests</span>
             {pendingCount > 0 && (
-              <Badge variant="destructive" className="ml-1.5 text-xs px-1 py-0 h-4">
+              <Badge variant="destructive" className="ml-1 text-xs px-2 py-0.5 h-5 animate-pulse">
                 {pendingCount}
               </Badge>
             )}
           </TabsTrigger>
-          <TabsTrigger value="settings" data-testid="tab-settings">
-            <Settings className="w-4 h-4 mr-1.5" />
-            Email Settings
+          <TabsTrigger value="settings" data-testid="tab-settings" role="tab" className="min-w-[11rem] rounded-2xl px-4 py-3 text-sm font-medium data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-sm hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 flex items-center gap-2 transition-all">
+            <Settings className="w-4 h-4 flex-shrink-0" />
+            <span>Email Settings</span>
           </TabsTrigger>
         </TabsList>
 
@@ -860,6 +897,7 @@ export default function UserManagement() {
           <SmtpSettingsTab />
         </TabsContent>
       </Tabs>
+      </div>
     </div>
   );
 }

@@ -139,7 +139,7 @@ export function inferParties(
   evidenceId: string,
   docType: string,
   runId: string,
-  tenantId: string = "TENANT-001"
+  tenantId: string
 ): InferredParty[] {
   if (!ADRS_CONFIG.features.auto_party_creation) return [];
 
@@ -292,8 +292,8 @@ export function inferPartiesFromRawEntities(
   rawEntities: Array<{ entity: string; value: string; confidence: number }>,
   evidenceId: string,
   runId: string,
-  skipNames: Set<string> = new Set(),
-  tenantId: string = "TENANT-001"
+  tenantId: string,
+  skipNames: Set<string> = new Set()
 ): InferredParty[] {
   if (!ADRS_CONFIG.features.auto_party_creation) return [];
 
@@ -414,8 +414,8 @@ export function inferDocument(
   evidenceId: string,
   docType: string,
   runId: string,
-  evidenceFileName?: string,
-  tenantId: string = "TENANT-001"
+  tenantId: string,
+  evidenceFileName?: string
 ): InferredDocument | null {
   if (!ADRS_CONFIG.features.auto_party_creation) return null;
 

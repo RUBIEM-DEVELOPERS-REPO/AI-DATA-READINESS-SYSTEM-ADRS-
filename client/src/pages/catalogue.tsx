@@ -190,7 +190,7 @@ export default function Catalogue() {
           </p>
         </div>
         <Badge variant="outline" className="text-xs gap-1.5 border-primary/30 text-primary bg-primary/5">
-          <Database className="w-3 h-3" /> Layer 8 — Dataset Publishing
+          <Database className="w-3 h-3" /> Publishing Workspace
         </Badge>
       </div>
 

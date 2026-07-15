@@ -572,7 +572,7 @@ export default function Validation() {
       {/* AI Agent: Validation layer — queue prioritization, trust explain, conflict fixes */}
       <InlineAgentWidget
         layer="validation"
-        layerLabel="Layer 6 · Validation"
+        layerLabel="Validation Workspace"
         maxTasks={3}
         defaultCollapsed={false}
       />

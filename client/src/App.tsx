@@ -22,16 +22,32 @@ import Evaluate from "@/pages/evaluate";
 import IntelligenceLayer from "@/pages/intelligence-layer";
 import FeatureRepresentation from "@/pages/feature-representation";
 import { useEffect, useState } from "react";
-import { Moon, Sun, LogOut, ChevronDown, Shield, Lock, KeyRound } from "lucide-react";
+import { Moon, Sun, LogOut, ChevronDown, Shield, Lock, KeyRound, RefreshCw, HelpCircle } from "lucide-react";
+import { formatDistanceToNow } from "date-fns";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Link } from "wouter";
 import { ChangePasswordDialog } from "@/components/change-password-dialog";
-import { AiCopilot } from "@/components/ai-copilot";
-import { AgentAssist } from "@/components/agent-assist";
 import AgentLayer from "@/pages/agent-layer";
 import RegistryPage from "@/pages/registry";
 import RegulatorDashboard from "@/pages/regulator";
+import DsrrPublicPage from "@/pages/dsrr-public";
+import ConnectedSystems from "@/pages/connected-systems";
+import SystemDashboard from "@/pages/connected-systems-detail";
+import FindingsPage from "@/pages/findings";
+import MyWorkPage from "@/pages/my-work";
+import DataProcessingPage from "@/pages/data-processing";
+import PrivacyRightsPage from "@/pages/privacy-rights";
+import IncidentsPage from "@/pages/incidents";
+import RiskAssessmentsPage from "@/pages/risk-assessments";
+import ThirdPartiesPage from "@/pages/third-parties";
+import RetentionPage from "@/pages/retention";
+import PoliciesPage from "@/pages/policies";
+import ReportsPage from "@/pages/reports";
+import AdministrationPage from "@/pages/administration";
+import { AiCopilot } from "@/components/ai-copilot";
+import { AgentAssist } from "@/components/agent-assist";
+import { getPortalAssistantConfig } from "@/components/assistant-config";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem,
   DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger
@@ -47,6 +63,45 @@ const ROLE_LABEL: Record<UserRole, string> = {
   VIEWER: "Viewer",
   REGULATOR: "Regulator",
 };
+
+function capitalize(s: string) {
+  return s.replace(/[-_]/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+}
+
+function getPageTitle(path: string) {
+  if (!path || path === "/") return "Dashboard";
+  const p = path.split("/").filter(Boolean)[0];
+  switch (p) {
+    case "evidence": return "Evidence";
+    case "validation": return "Validation Queue";
+    case "cdm": return "CDM Explorer";
+    case "publishing": return "Publishing";
+    case "audit": return "Audit Log";
+    case "regulator": return "Regulator Dashboard";
+    case "users": return "User Management";
+    case "intelligence": return "Intelligence";
+    case "registry": return "Registry";
+    case "connected-systems": return "Connected Systems";
+    case "findings": return "Findings & Alerts";
+    case "my-work": return "My Work";
+    case "data-processing": return "Data & Processing";
+    case "privacy-rights": return "Privacy Rights";
+    case "incidents": return "Incidents & Breaches";
+    case "risk-assessments": return "Risk & Assessments";
+    case "third-parties": return "Third Parties";
+    case "retention": return "Retention & Disposal";
+    case "policies": return "Policies & Evidence";
+    case "reports": return "Reports";
+    case "administration": return "Administration";
+    default: return capitalize(p || "Dashboard");
+  }
+}
+
+function getBreadcrumb(path: string) {
+  if (!path || path === "/") return "Home / Dashboard";
+  const parts = path.split("/").filter(Boolean).map(capitalize);
+  return ["Home", ...parts].join(" / ");
+}
 
 function AccessDenied({ requiredRole }: { requiredRole: UserRole }) {
   const { user } = useAuth();
@@ -80,6 +135,53 @@ function RoleGuard({ minRole, component: Component }: { minRole: UserRole; compo
   const { can } = useAuth();
   if (!can(minRole)) return <AccessDenied requiredRole={minRole} />;
   return <Component />;
+}
+
+function PortalAssistantLayer() {
+  const [location] = useLocation();
+
+  let portal: "admin" | "dpo" | "regulator" | "data-subject" | null = null;
+
+  if (location === "/administration") {
+    portal = "admin";
+  } else if (location === "/regulator") {
+    portal = "regulator";
+  } else if (location === "/dsrr") {
+    portal = "data-subject";
+  } else if (
+    [
+      "/registry",
+      "/connected-systems",
+      "/findings",
+      "/my-work",
+      "/data-processing",
+      "/privacy-rights",
+      "/incidents",
+      "/risk-assessments",
+      "/third-parties",
+      "/retention",
+      "/policies",
+      "/reports",
+    ].includes(location) ||
+    location.startsWith("/connected-systems/")
+  ) {
+    portal = "dpo";
+  }
+
+  if (!portal) return null;
+
+  const config = getPortalAssistantConfig(portal);
+
+  return (
+    <>
+      <AiCopilot {...config.copilot} />
+      <AgentAssist
+        {...config.agent}
+        layerOverride={config.agent.layer}
+        layerLabel={config.agent.subtitle}
+      />
+    </>
+  );
 }
 
 function ThemeToggle() {
@@ -208,6 +310,7 @@ function ProtectedApp() {
   const { isAuthenticated, isLoading, user } = useAuth();
   const [, navigate] = useLocation();
   const [location] = useLocation();
+  const [lastSync, setLastSync] = useState<Date | null>(() => new Date());
 
   useEffect(() => {
     if (!isLoading && !isAuthenticated && location !== "/auth") {
@@ -220,7 +323,7 @@ function ProtectedApp() {
       <div className="min-h-screen flex items-center justify-center bg-background">
         <div className="text-center space-y-3">
           <div className="w-8 h-8 border-2 border-primary/30 border-t-primary rounded-full animate-spin mx-auto" />
-          <p className="text-sm text-muted-foreground">Loading ADRS…</p>
+          <p className="text-sm text-muted-foreground">Loading IntelliNexus…</p>
         </div>
       </div>
     );
@@ -240,18 +343,30 @@ function ProtectedApp() {
           {/* Animated Background Mesh */}
           <div className="absolute inset-0 z-0 overflow-hidden pointer-events-none">
             <div className="absolute -top-[20%] -left-[10%] w-[50%] h-[50%] rounded-full bg-primary/10 blur-[120px] animate-float" />
-            <div className="absolute top-[60%] -right-[10%] w-[40%] h-[60%] rounded-full bg-accent/10 blur-[120px] animate-float" style={{ animationDelay: '2s' }} />
+            <div className="absolute top-[60%] -right-[10%] w-[40%] h-[60%] rounded-full bg-accent/10 blur-[120px] animate-float delay-1000" />
           </div>
           <AppSidebar />
           <div className="flex flex-col flex-1 min-w-0 relative z-10">
             <header className="flex items-center justify-between px-6 py-3 border-b border-border/50 bg-background/40 backdrop-blur-xl sticky top-0 z-50 h-16 shadow-sm">
-              <div className="flex items-center gap-2">
-                <SidebarTrigger data-testid="button-sidebar-toggle" className="h-8 w-8" />
-                <span className="text-sm font-medium text-muted-foreground hidden sm:block ml-2">AI Institute Africa</span>
-              </div>
+                <div className="flex items-center gap-4 min-w-0">
+                  <SidebarTrigger aria-label="Toggle sidebar navigation" data-testid="button-sidebar-toggle" className="h-8 w-8" />
+                  <div className="min-w-0">
+                    <h2 className="text-sm font-semibold text-foreground truncate" data-testid="header-page-title">{getPageTitle(location)}</h2>
+                    <div className="text-[11px] text-muted-foreground truncate hidden sm:block">{getBreadcrumb(location)}</div>
+                  </div>
+                </div>
               <div className="flex items-center gap-3">
-                <ThemeToggle />
-                <UserMenu />
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-muted-foreground hidden sm:inline">{lastSync ? `Synced ${formatDistanceToNow(lastSync, { addSuffix: true })}` : "Not synced"}</span>
+                    <Button size="icon" variant="ghost" onClick={async () => { queryClient.invalidateQueries(); setLastSync(new Date()); }} aria-label="Refresh" data-testid="button-refresh">
+                      <RefreshCw className="w-4 h-4" />
+                    </Button>
+                    <Button size="icon" variant="ghost" aria-label="Help" data-testid="button-help">
+                      <HelpCircle className="w-4 h-4" />
+                    </Button>
+                  </div>
+                  <ThemeToggle />
+                  <UserMenu />
               </div>
             </header>
             <main className="flex-1 overflow-auto">
@@ -261,6 +376,9 @@ function ProtectedApp() {
                     const { user } = useAuth();
                     if (user?.role === "REGULATOR") {
                       return <RegulatorDashboard />;
+                    }
+                    if (user?.role === "DATA_CONTROLLER" || user?.role === "DATA_PROTECTION_OFFICER") {
+                      return <RegistryPage />;
                     }
                     return <Dashboard />;
                   }}
@@ -292,6 +410,45 @@ function ProtectedApp() {
                 <Route path="/registry">
                   {() => <RoleGuard minRole="DATA_CONTROLLER" component={RegistryPage} />}
                 </Route>
+                <Route path="/connected-systems">
+                  {() => <RoleGuard minRole="DATA_CONTROLLER" component={ConnectedSystems} />}
+                </Route>
+                <Route path="/connected-systems/:systemId">
+                  {() => <RoleGuard minRole="DATA_CONTROLLER" component={SystemDashboard} />}
+                </Route>
+                <Route path="/findings">
+                  {() => <RoleGuard minRole="DATA_CONTROLLER" component={FindingsPage} />}
+                </Route>
+                <Route path="/my-work">
+                  {() => <RoleGuard minRole="DATA_CONTROLLER" component={MyWorkPage} />}
+                </Route>
+                <Route path="/data-processing">
+                  {() => <RoleGuard minRole="DATA_CONTROLLER" component={DataProcessingPage} />}
+                </Route>
+                <Route path="/privacy-rights">
+                  {() => <RoleGuard minRole="DATA_CONTROLLER" component={PrivacyRightsPage} />}
+                </Route>
+                <Route path="/incidents">
+                  {() => <RoleGuard minRole="DATA_CONTROLLER" component={IncidentsPage} />}
+                </Route>
+                <Route path="/risk-assessments">
+                  {() => <RoleGuard minRole="DATA_CONTROLLER" component={RiskAssessmentsPage} />}
+                </Route>
+                <Route path="/third-parties">
+                  {() => <RoleGuard minRole="DATA_CONTROLLER" component={ThirdPartiesPage} />}
+                </Route>
+                <Route path="/retention">
+                  {() => <RoleGuard minRole="DATA_CONTROLLER" component={RetentionPage} />}
+                </Route>
+                <Route path="/policies">
+                  {() => <RoleGuard minRole="DATA_CONTROLLER" component={PoliciesPage} />}
+                </Route>
+                <Route path="/reports">
+                  {() => <RoleGuard minRole="DATA_CONTROLLER" component={ReportsPage} />}
+                </Route>
+                <Route path="/administration">
+                  {() => <RoleGuard minRole="DATA_CONTROLLER" component={AdministrationPage} />}
+                </Route>
                 <Route path="/regulator">
                   {() => <RoleGuard minRole="REGULATOR" component={RegulatorDashboard} />}
                 </Route>
@@ -317,12 +474,6 @@ function ProtectedApp() {
               </Switch>
             </main>
           </div>
-          {user?.role !== "REGULATOR" && (
-            <>
-              <AiCopilot />
-              <AgentAssist />
-            </>
-          )}
         </div>
       </SidebarProvider>
     </MandatoryPasswordChangeGate>
@@ -341,10 +492,14 @@ function Router() {
   }, [isLoading, isAuthenticated, location, navigate]);
 
   return (
-    <Switch>
-      <Route path="/auth" component={AuthPage} />
-      <Route component={ProtectedApp} />
-    </Switch>
+    <>
+      <Switch>
+        <Route path="/auth" component={AuthPage} />
+        <Route path="/dsrr" component={DsrrPublicPage} />
+        <Route component={ProtectedApp} />
+      </Switch>
+      <PortalAssistantLayer />
+    </>
   );
 }
 

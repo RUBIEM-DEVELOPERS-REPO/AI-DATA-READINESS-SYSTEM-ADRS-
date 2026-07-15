@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useLocation } from "wouter";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
@@ -8,7 +8,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Bot, X, ChevronRight, Sparkles, Loader2, CheckCircle2,
-  RefreshCw, Send, Layers,
+  RefreshCw, Layers,
 } from "lucide-react";
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
@@ -18,6 +18,14 @@ interface AgentTask {
 
 interface AgentResult {
   taskId: string; layer: string; output: string; suggestions: string[];
+}
+
+interface AgentAssistProps {
+  title?: string;
+  subtitle?: string;
+  initialMessage?: string;
+  layerOverride?: string;
+  layerLabel?: string;
 }
 
 // ─── Route → Layer mapping ─────────────────────────────────────────────────────
@@ -38,27 +46,133 @@ const ROUTE_LAYER: Record<string, string> = {
 };
 
 const LAYER_META: Record<string, { label: string; color: string; bg: string }> = {
-  evidence:     { label: "Layer 1 · Evidence",           color: "text-blue-400",    bg: "bg-blue-500/10" },
-  intelligence: { label: "Layer 2 · Intelligence",       color: "text-violet-400",  bg: "bg-violet-500/10" },
-  cdm:          { label: "Layer 3 · CDM",                color: "text-amber-400",   bg: "bg-amber-500/10" },
-  validation:   { label: "Layer 6 · Validation",         color: "text-rose-400",    bg: "bg-rose-500/10" },
-  feature:      { label: "Layer 4 · Feature Store",      color: "text-emerald-400", bg: "bg-emerald-500/10" },
-  attention:    { label: "Layer 5 · Attention",          color: "text-cyan-400",    bg: "bg-cyan-500/10" },
-  graph:        { label: "Layer 7 · Knowledge Graph",    color: "text-pink-400",    bg: "bg-pink-500/10" },
-  publishing:   { label: "Layer 8 · Publishing",         color: "text-orange-400",  bg: "bg-orange-500/10" },
-  system:       { label: "System · All Layers",          color: "text-primary",     bg: "bg-primary/10" },
+  evidence:     { label: "Evidence",                    color: "text-blue-400",    bg: "bg-blue-500/10" },
+  intelligence: { label: "Intelligence",                color: "text-violet-400",  bg: "bg-violet-500/10" },
+  cdm:          { label: "CDM",                         color: "text-amber-400",   bg: "bg-amber-500/10" },
+  validation:   { label: "Validation",                 color: "text-rose-400",    bg: "bg-rose-500/10" },
+  feature:      { label: "Feature Store",              color: "text-emerald-400", bg: "bg-emerald-500/10" },
+  attention:    { label: "Context Intelligence",       color: "text-cyan-400",    bg: "bg-cyan-500/10" },
+  graph:        { label: "Knowledge Graph",            color: "text-pink-400",    bg: "bg-pink-500/10" },
+  publishing:   { label: "Publishing",                 color: "text-orange-400",  bg: "bg-orange-500/10" },
+  system:       { label: "System · All Workspaces",    color: "text-primary",     bg: "bg-primary/10" },
 };
 
+const BTN_SIZE = 56; // px — explicit size to avoid Tailwind custom class issues
+
 // ─── Main AgentAssist Component ───────────────────────────────────────────────
-export function AgentAssist() {
+export function AgentAssist({
+  title = "AI Agent Assist",
+  subtitle = "Workflow automation",
+  initialMessage,
+  layerOverride,
+  layerLabel,
+}: AgentAssistProps) {
   const [location] = useLocation();
   const [isOpen, setIsOpen] = useState(false);
   const [selectedTask, setSelectedTask] = useState<AgentTask | null>(null);
   const [query, setQuery] = useState("");
   const [result, setResult] = useState<AgentResult | null>(null);
 
-  // Determine active layer from route
-  const layer = ROUTE_LAYER[location] ?? "system";
+  // Position stored as viewport top-left offsets
+  const [pos, setPos] = useState<{ x: number; y: number } | null>(null);
+
+  // Initialize after mount so window dimensions are available
+  useEffect(() => {
+    setPos({
+      x: window.innerWidth - BTN_SIZE - 24,
+      y: window.innerHeight - BTN_SIZE - 24 - BTN_SIZE - 16, // above copilot button
+    });
+  }, []);
+
+  // Clamp on resize
+  useEffect(() => {
+    const onResize = () => {
+      setPos((prev) => {
+        if (!prev) return prev;
+        return {
+          x: Math.max(10, Math.min(window.innerWidth - BTN_SIZE - 10, prev.x)),
+          y: Math.max(10, Math.min(window.innerHeight - BTN_SIZE - 10, prev.y)),
+        };
+      });
+    };
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+
+  const handleMouseDown = (e: React.MouseEvent) => {
+    if (e.button !== 0 || !pos) return;
+    e.preventDefault();
+    const startX = e.clientX;
+    const startY = e.clientY;
+    const initX = pos.x;
+    const initY = pos.y;
+    let moved = false;
+
+    const onMove = (ev: MouseEvent) => {
+      const dx = ev.clientX - startX;
+      const dy = ev.clientY - startY;
+      if (Math.abs(dx) > 5 || Math.abs(dy) > 5) moved = true;
+      setPos({
+        x: Math.max(10, Math.min(window.innerWidth - BTN_SIZE - 10, initX + dx)),
+        y: Math.max(10, Math.min(window.innerHeight - BTN_SIZE - 10, initY + dy)),
+      });
+    };
+
+    const onUp = () => {
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+      if (!moved) setIsOpen((v) => !v);
+    };
+
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+  };
+
+  const handleTouchStart = (e: React.TouchEvent) => {
+    if (!pos) return;
+    const touch = e.touches[0];
+    const startX = touch.clientX;
+    const startY = touch.clientY;
+    const initX = pos.x;
+    const initY = pos.y;
+    let moved = false;
+
+    const onMove = (ev: TouchEvent) => {
+      const t = ev.touches[0];
+      const dx = t.clientX - startX;
+      const dy = t.clientY - startY;
+      if (Math.abs(dx) > 5 || Math.abs(dy) > 5) moved = true;
+      setPos({
+        x: Math.max(10, Math.min(window.innerWidth - BTN_SIZE - 10, initX + dx)),
+        y: Math.max(10, Math.min(window.innerHeight - BTN_SIZE - 10, initY + dy)),
+      });
+    };
+
+    const onEnd = () => {
+      document.removeEventListener("touchmove", onMove);
+      document.removeEventListener("touchend", onEnd);
+      if (!moved) setIsOpen((v) => !v);
+    };
+
+    document.addEventListener("touchmove", onMove, { passive: true });
+    document.addEventListener("touchend", onEnd);
+  };
+
+  const getCardStyle = (): React.CSSProperties => {
+    if (!pos) return { display: "none" };
+    const cardW = window.innerWidth < 640 ? 320 : 380;
+    const cardH = Math.min(520, window.innerHeight - 40);
+    let left = pos.x + BTN_SIZE - cardW;
+    let top = pos.y - cardH - 12;
+    if (left < 12) left = 12;
+    if (left + cardW > window.innerWidth - 12) left = window.innerWidth - cardW - 12;
+    if (top < 12) top = pos.y + BTN_SIZE + 12;
+    if (top + cardH > window.innerHeight - 12) top = window.innerHeight - cardH - 12;
+    return { left: `${left}px`, top: `${top}px`, maxHeight: `${cardH}px` };
+  };
+
+  // Determine active layer from route or explicit portal override
+  const layer = layerOverride ?? ROUTE_LAYER[location] ?? "system";
   const meta  = LAYER_META[layer] ?? LAYER_META.system;
 
   // Fetch tasks for this layer
@@ -94,25 +208,63 @@ export function AgentAssist() {
 
   const tasks = tasksData?.tasks ?? [];
 
+  if (!pos) return null;
+
   return (
     <>
-      {/* Floating Trigger — bottom-left, opposite side from copilot */}
-      {!isOpen && (
-        <Button
-          onClick={() => setIsOpen(true)}
-          className="fixed bottom-6 left-6 h-14 w-14 rounded-full shadow-2xl bg-gradient-to-br from-emerald-600 to-teal-700 hover:from-emerald-500 hover:to-teal-600 hover:scale-105 transition-all duration-300 z-50 flex items-center justify-center group"
-          title="AI Agent Assist"
-          data-testid="button-agent-assist-open"
-        >
-          <Bot className="h-6 w-6 text-white absolute group-hover:opacity-0 transition-opacity" />
-          <Sparkles className="h-6 w-6 text-white opacity-0 group-hover:opacity-100 transition-opacity absolute" />
-        </Button>
-      )}
+      {/* Floating Draggable Button */}
+      <button
+        onMouseDown={handleMouseDown}
+        onTouchStart={handleTouchStart}
+        style={{
+          position: "fixed",
+          left: `${pos.x}px`,
+          top: `${pos.y}px`,
+          width: `${BTN_SIZE}px`,
+          height: `${BTN_SIZE}px`,
+          zIndex: 9999,
+          borderRadius: "50%",
+          background: isOpen
+            ? "linear-gradient(135deg, #065f46, #0f766e)"
+            : "linear-gradient(135deg, #059669, #0d9488)",
+          boxShadow: "0 8px 32px rgba(16,185,129,0.4), 0 2px 8px rgba(0,0,0,0.18)",
+          border: "none",
+          cursor: "grab",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          userSelect: "none",
+          touchAction: "none",
+          transition: "box-shadow 0.2s, transform 0.15s",
+          outline: "3px solid rgba(255,255,255,0.18)",
+        }}
+        title="AI Agent Assist — drag to move, click to open"
+        data-testid="button-agent-assist-open"
+        aria-label="Toggle AI Agent Assist"
+      >
+        {isOpen ? (
+          <X size={24} color="white" />
+        ) : (
+          <>
+            <Bot size={22} color="white" style={{ position: "absolute" }} />
+            {/* Pulse ring */}
+            <span style={{
+              position: "absolute",
+              inset: "-4px",
+              borderRadius: "50%",
+              border: "2px solid rgba(16,185,129,0.4)",
+              animation: "agent-pulse 2.4s ease-in-out infinite",
+              pointerEvents: "none",
+            }} />
+          </>
+        )}
+      </button>
 
       {/* Agent Panel */}
       <Card
-        className={`fixed bottom-6 left-6 w-80 sm:w-[380px] shadow-2xl flex flex-col z-50 overflow-hidden border border-border/50 backdrop-blur-sm transition-all duration-300 origin-bottom-left max-h-[85vh] ${
-          isOpen ? "scale-100 opacity-100" : "scale-95 opacity-0 pointer-events-none"
+        style={{ ...getCardStyle(), zIndex: 9998, position: "fixed" }}
+        className={`w-80 sm:w-[380px] shadow-2xl flex flex-col overflow-hidden border border-emerald-200/30 dark:border-emerald-900/40 backdrop-blur-sm transition-all duration-200 transform ${
+          isOpen ? "scale-100 opacity-100 pointer-events-auto" : "scale-95 opacity-0 pointer-events-none"
         }`}
       >
         {/* Header */}
@@ -144,9 +296,15 @@ export function AgentAssist() {
             {/* Current layer badge */}
             <div className={`flex items-center gap-2 px-3 py-2 rounded-lg ${meta.bg}`}>
               <Layers className={`w-3.5 h-3.5 ${meta.color}`} />
-              <span className={`text-xs font-semibold ${meta.color}`}>{meta.label}</span>
+              <span className={`text-xs font-semibold ${meta.color}`}>{layerLabel ?? meta.label}</span>
               <span className="text-[10px] text-muted-foreground ml-auto">{tasks.length} agents</span>
             </div>
+
+            {initialMessage && (
+              <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/5 px-3 py-2">
+                <p className="text-[10px] leading-relaxed text-muted-foreground">{initialMessage}</p>
+              </div>
+            )}
 
             {/* Task list or result */}
             {!result && !isPending && (
@@ -240,6 +398,13 @@ export function AgentAssist() {
           </div>
         </ScrollArea>
       </Card>
+
+      <style>{`
+        @keyframes agent-pulse {
+          0%, 100% { opacity: 0.6; transform: scale(1); }
+          50% { opacity: 0.1; transform: scale(1.2); }
+        }
+      `}</style>
     </>
   );
 }

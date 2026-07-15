@@ -1,11 +1,6 @@
 import type { Express, Request, Response } from "express";
-import OpenAI from "openai";
+import { createAiClient, getAiProviderConfig, getChatModel } from "../../services/ai-provider";
 import { chatStorage } from "./storage";
-
-const openai = new OpenAI({
-  apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
-  baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
-});
 
 export function registerChatRoutes(app: Express): void {
   // Get all conversations
@@ -80,9 +75,10 @@ export function registerChatRoutes(app: Express): void {
       res.setHeader("Cache-Control", "no-cache");
       res.setHeader("Connection", "keep-alive");
 
-      // Stream response from OpenAI
+      // Stream response from OpenAI-compatible provider
+      const openai = createAiClient(getAiProviderConfig());
       const stream = await openai.chat.completions.create({
-        model: "gpt-5.1",
+        model: getChatModel(),
         messages: chatMessages,
         stream: true,
         max_completion_tokens: 8192,

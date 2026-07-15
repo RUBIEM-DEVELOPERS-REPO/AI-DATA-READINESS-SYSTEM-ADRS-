@@ -527,7 +527,7 @@ export default function FeatureRepresentation() {
             <h1 className="text-2xl font-bold text-foreground">AI Feature &amp; Representation</h1>
           </div>
           <p className="text-sm text-muted-foreground ml-10">
-            Layer 4 — Vectorisation, embedding store, semantic search &amp; feature engineering pipeline.
+            Vectorisation, embedding storage, semantic search, and feature engineering in one workspace.
           </p>
         </div>
         <Badge variant="outline" className="text-xs gap-1.5 border-amber-500/30 text-amber-400 bg-amber-500/5">

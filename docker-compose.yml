@@ -1,7 +1,6 @@
-version: '3.8'
-
 services:
-  db:
+  # ─── ADRS Main Database (Evidence, Extraction, CDM, Datasets) ────────────────
+  adrs-db:
     image: pgvector/pgvector:pg15
     container_name: adrs-db
     environment:
@@ -11,7 +10,53 @@ services:
     ports:
       - "5444:5432"
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - adrs_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d storage_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ─── DPO Portal Database (Compliance, Registry, Enforcement) ───────────────
+  dpo-db:
+    image: pgvector/pgvector:pg15
+    container_name: dpo-db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: dpo_db
+    ports:
+      - "5445:5432"
+    volumes:
+      - dpo_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d dpo_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ─── Regulator Portal Database (Regulator-only artifacts) ────────────────
+  regulator-db:
+    image: pgvector/pgvector:pg15
+    container_name: regulator-db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: regulator_db
+    ports:
+      - "5446:5432"
+    volumes:
+      - regulator_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d regulator_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
 volumes:
-  postgres_data:
+  adrs_postgres_data:
+    name: adrs_postgres_data
+  dpo_postgres_data:
+    name: dpo_postgres_data
+  regulator_postgres_data:
+    name: regulator_postgres_data
