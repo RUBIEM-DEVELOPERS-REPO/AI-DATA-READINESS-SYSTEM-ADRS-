@@ -4,15 +4,15 @@ services:
     image: pgvector/pgvector:pg15
     container_name: adrs-db
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
+      POSTGRES_USER: ${DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres}
       POSTGRES_DB: storage_db
     ports:
       - "5444:5432"
     volumes:
       - adrs_postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d storage_db"]
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres} -d storage_db"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -22,15 +22,15 @@ services:
     image: pgvector/pgvector:pg15
     container_name: dpo-db
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
+      POSTGRES_USER: ${DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres}
       POSTGRES_DB: dpo_db
     ports:
       - "5445:5432"
     volumes:
       - dpo_postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d dpo_db"]
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres} -d dpo_db"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -40,18 +40,94 @@ services:
     image: pgvector/pgvector:pg15
     container_name: regulator-db
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
+      POSTGRES_USER: ${DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres}
       POSTGRES_DB: regulator_db
     ports:
       - "5446:5432"
     volumes:
       - regulator_postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d regulator_db"]
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres} -d regulator_db"]
       interval: 10s
       timeout: 5s
       retries: 5
+
+  # ─── ADRS Application Service ───────────────────────────────────────────────
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: adrs-app
+    ports:
+      - "5000:5000"
+    environment:
+      - DATABASE_URL=postgresql://${DB_USER:-postgres}:${DB_PASSWORD:-postgres}@adrs-db:5432/storage_db
+      - DPO_DATABASE_URL=postgresql://${DB_USER:-postgres}:${DB_PASSWORD:-postgres}@dpo-db:5432/dpo_db
+      - REGULATOR_DATABASE_URL=postgresql://${DB_USER:-postgres}:${DB_PASSWORD:-postgres}@regulator-db:5432/regulator_db
+      - SESSION_DATABASE_URL=postgresql://${DB_USER:-postgres}:${DB_PASSWORD:-postgres}@adrs-db:5432/storage_db
+      - SESSION_SECRET=${SESSION_SECRET:-dev-secret-change-me}
+      - PORT=5000
+      - AI_PROVIDER=${AI_PROVIDER:-groq}
+      - AI_INTEGRATIONS_OPENAI_API_KEY=${AI_INTEGRATIONS_OPENAI_API_KEY}
+      - AI_INTEGRATIONS_OPENAI_BASE_URL=${AI_INTEGRATIONS_OPENAI_BASE_URL}
+      - AI_TEXT_MODEL=${AI_TEXT_MODEL:-gpt-4.1-mini}
+      - OBJECT_STORE_BACKEND=${OBJECT_STORE_BACKEND:-local}
+      - ENABLE_REPLIT_INTEGRATIONS=${ENABLE_REPLIT_INTEGRATIONS:-false}
+      - JOB_QUEUE_BACKEND=${JOB_QUEUE_BACKEND:-pg}
+      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+    depends_on:
+      adrs-db:
+        condition: service_healthy
+      dpo-db:
+        condition: service_healthy
+      regulator-db:
+        condition: service_healthy
+    volumes:
+      - uploads_data:/app/uploads
+
+  # ─── Prometheus (Metrics Collection) ────────────────────────────────────────
+  prometheus:
+    image: prom/prometheus:v2.53.0
+    container_name: intellinexus-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/prometheus/alert-rules.yml:/etc/prometheus/alert-rules.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=30d"
+      - "--web.enable-lifecycle"
+    depends_on:
+      - app
+
+  # ─── Grafana (Dashboards & Visualization) ──────────────────────────────────
+  grafana:
+    image: grafana/grafana:11.1.0
+    container_name: intellinexus-grafana
+    ports:
+      - "3001:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      - prometheus
+
+  # ─── Node Exporter (Host Metrics) ──────────────────────────────────────────
+  node-exporter:
+    image: prom/node-exporter:v1.8.1
+    container_name: intellinexus-node-exporter
+    ports:
+      - "9100:9100"
+    pid: host
 
 volumes:
   adrs_postgres_data:
@@ -60,3 +136,10 @@ volumes:
     name: dpo_postgres_data
   regulator_postgres_data:
     name: regulator_postgres_data
+  uploads_data:
+    name: uploads_data
+  prometheus_data:
+    name: intellinexus_prometheus_data
+  grafana_data:
+    name: intellinexus_grafana_data
+

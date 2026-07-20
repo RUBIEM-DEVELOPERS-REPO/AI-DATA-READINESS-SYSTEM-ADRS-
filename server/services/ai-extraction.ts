@@ -5,6 +5,8 @@ import os from "os";
 import { execSync } from "child_process";
 import { UPLOADS_DIR } from "../upload";
 import { resolveDynamicProfile } from "./attention";
+import { buildSafeExtractionMessages, PROMPT_INJECTION_REJECTION_RULE } from "./prompt-guard";
+import { sanitizePii } from "./pii-sanitizer";
 import {
   createAiClient,
   getAiProviderConfig,
@@ -13,6 +15,7 @@ import {
   getTextModel,
   getVisionModel,
 } from "./ai-provider";
+import { withTimeout, aiCircuitBreaker, AI_TIMEOUT_MS } from "./circuit-breaker";
 
 function getAiClient() {
   const aiConfig = getAiProviderConfig();
@@ -318,22 +321,23 @@ export async function aiExtractDocumentFields(
     return fallbackResult;
   }
 
-  const truncatedText = text.slice(0, 12000);
-
   try {
     const { client: openai, config: aiConfig } = getAiClient();
-    const response = await openai.chat.completions.create({
-      model: getTextModel(aiConfig),
-      messages: [
-        { role: "system", content: EXTRACTION_SYSTEM_PROMPT },
-        {
-          role: "user",
-          content: `Extract all structured information from this document.\n\nFilename: ${fileName}\n\nDocument text:\n${truncatedText}`,
-        },
-      ],
-      response_format: { type: "json_object" },
-      max_completion_tokens: 4096,
-    });
+    // ── Prompt-injection defence: sanitise + delimit document text ──────────
+    const sanitizedText = sanitizePii(text);
+    const safeMessages = buildSafeExtractionMessages(EXTRACTION_SYSTEM_PROMPT, sanitizedText, fileName);
+    const response = await aiCircuitBreaker.execute(() =>
+      withTimeout(
+        openai.chat.completions.create({
+          model: getTextModel(aiConfig),
+          messages: safeMessages,
+          response_format: { type: "json_object" },
+          max_completion_tokens: 4096,
+        }),
+        AI_TIMEOUT_MS,
+        "AI Field Extraction"
+      )
+    );
 
     const raw = response.choices[0]?.message?.content ?? "{}";
     if (!raw.trim() || raw.trim() === "{}") {
@@ -412,46 +416,52 @@ export async function aiReclassifyDocType(
   }
   const { client: openai, config: aiConfig } = getAiClient();
   try {
-    const response = await openai.chat.completions.create({
-      model: getTextModel(aiConfig),
-      messages: [
-        {
-          role: "system",
-          content:
-            "You are a document classifier for an African financial data platform. " +
-            "Classify the document type from its text content. " +
-            "Return ONLY a valid JSON object — no markdown, no preamble:\n" +
-            '{"doc_type":"INVOICE|QUOTATION|PURCHASE_ORDER|RECEIPT|CONTRACT|AGREEMENT|LEASE|DEED|REPORT|FINANCIAL|BANK_STATEMENT|PAYSLIP|PERMIT|CERTIFICATE|LICENSE|IDENTITY|CV|FORM|POLICY|CORRESPONDENCE|MEMORANDUM|OTHER","confidence":0.0-1.0}\n' +
-            "RULES:\n" +
-            "- INVOICE: bill for delivered goods/services with invoice number and amounts\n" +
-            "- QUOTATION: price quote before delivery (pro-forma, estimate, quote)\n" +
-            "- PURCHASE_ORDER: buyer's order to a supplier requesting goods/services\n" +
-            "- RECEIPT: proof of payment already made, RECEIVED stamp\n" +
-            "- CONTRACT: formal legally-binding agreement with signatures\n" +
-            "- AGREEMENT: MOU, partnership agreement, SLA, informal agreement\n" +
-            "- LEASE: tenancy, rental, or hire agreement\n" +
-            "- DEED: property transfer deed, title deed\n" +
-            "- BANK_STATEMENT: bank or mobile-money transaction statement\n" +
-            "- PAYSLIP: employee salary advice with earnings and deductions\n" +
-            "- CERTIFICATE: certificate of incorporation, completion, compliance\n" +
-            "- LICENSE: business licence, professional licence, software licence\n" +
-            "- IDENTITY: national ID, passport, birth certificate, voter card\n" +
-            "- CV: curriculum vitae or resume with personal details and work history\n" +
-            "- FORM: application form, claim form, survey, registration form\n" +
-            "- POLICY: insurance policy, company policy document, T&Cs\n" +
-            "- CORRESPONDENCE: letter, email, notice, circular\n" +
-            "- MEMORANDUM: internal memo or circular\n" +
-            "- Only use OTHER if truly impossible to classify after careful reading\n" +
-            "- confidence must reflect how certain you are from the actual content",
-        },
-        {
-          role: "user",
-          content: `Classify this document.\n\nFilename: ${fileName}\n\nContent:\n${truncated}`,
-        },
-      ],
-      response_format: { type: "json_object" },
-      max_completion_tokens: 80,
-    });
+    const response = await aiCircuitBreaker.execute(() =>
+      withTimeout(
+        openai.chat.completions.create({
+          model: getTextModel(aiConfig),
+          messages: [
+            {
+              role: "system",
+              content:
+                "You are a document classifier for an African financial data platform. " +
+                "Classify the document type from its text content. " +
+                "Return ONLY a valid JSON object — no markdown, no preamble:\n" +
+                '{"doc_type":"INVOICE|QUOTATION|PURCHASE_ORDER|RECEIPT|CONTRACT|AGREEMENT|LEASE|DEED|REPORT|FINANCIAL|BANK_STATEMENT|PAYSLIP|PERMIT|CERTIFICATE|LICENSE|IDENTITY|CV|FORM|POLICY|CORRESPONDENCE|MEMORANDUM|OTHER","confidence":0.0-1.0}\n' +
+                "RULES:\n" +
+                "- INVOICE: bill for delivered goods/services with invoice number and amounts\n" +
+                "- QUOTATION: price quote before delivery (pro-forma, estimate, quote)\n" +
+                "- PURCHASE_ORDER: buyer's order to a supplier requesting goods/services\n" +
+                "- RECEIPT: proof of payment already made, RECEIVED stamp\n" +
+                "- CONTRACT: formal legally-binding agreement with signatures\n" +
+                "- AGREEMENT: MOU, partnership agreement, SLA, informal agreement\n" +
+                "- LEASE: tenancy, rental, or hire agreement\n" +
+                "- DEED: property transfer deed, title deed\n" +
+                "- BANK_STATEMENT: bank or mobile-money transaction statement\n" +
+                "- PAYSLIP: employee salary advice with earnings and deductions\n" +
+                "- CERTIFICATE: certificate of incorporation, completion, compliance\n" +
+                "- LICENSE: business licence, professional licence, software licence\n" +
+                "- IDENTITY: national ID, passport, birth certificate, voter card\n" +
+                "- CV: curriculum vitae or resume with personal details and work history\n" +
+                "- FORM: application form, claim form, survey, registration form\n" +
+                "- POLICY: insurance policy, company policy document, T&Cs\n" +
+                "- CORRESPONDENCE: letter, email, notice, circular\n" +
+                "- MEMORANDUM: internal memo or circular\n" +
+                "- Only use OTHER if truly impossible to classify after careful reading\n" +
+                "- confidence must reflect how certain you are from the actual content",
+            },
+            {
+              role: "user",
+              content: `Classify this document.\n\nFilename: ${fileName}\n\nContent:\n${truncated}`,
+            },
+          ],
+          response_format: { type: "json_object" },
+          max_completion_tokens: 80,
+        }),
+        AI_TIMEOUT_MS,
+        "AI Reclassify DocType"
+      )
+    );
     const parsed = JSON.parse(response.choices[0]?.message?.content ?? "{}");
     return {
       docType: normalizeDocType(parsed.doc_type ?? "OTHER"),
@@ -479,25 +489,31 @@ export async function aiClassifyEntityType(
     .join("; ");
   const { client: openai, config: aiConfig } = getAiClient();
   try {
-    const response = await openai.chat.completions.create({
-      model: getTextModel(aiConfig),
-      messages: [
-        {
-          role: "system",
-          content:
-            "You are an entity classifier. Classify the entity as PERSON (individual human) or " +
-            "ORGANIZATION (company, institution, NGO, bank, government body, association, etc.).\n" +
-            "Return ONLY valid JSON — no markdown:\n" +
-            '{"entity_type":"PERSON|ORGANIZATION","confidence":0.0-1.0}',
-        },
-        {
-          role: "user",
-          content: `Name: ${displayName}\nContext: ${context}`,
-        },
-      ],
-      response_format: { type: "json_object" },
-      max_completion_tokens: 50,
-    });
+    const response = await aiCircuitBreaker.execute(() =>
+      withTimeout(
+        openai.chat.completions.create({
+          model: getTextModel(aiConfig),
+          messages: [
+            {
+              role: "system",
+              content:
+                "You are an entity classifier. Classify the entity as PERSON (individual human) or " +
+                "ORGANIZATION (company, institution, NGO, bank, government body, association, etc.).\n" +
+                "Return ONLY valid JSON — no markdown:\n" +
+                '{"entity_type":"PERSON|ORGANIZATION","confidence":0.0-1.0}',
+            },
+            {
+              role: "user",
+              content: `Name: ${displayName}\nContext: ${context}`,
+            },
+          ],
+          response_format: { type: "json_object" },
+          max_completion_tokens: 50,
+        }),
+        AI_TIMEOUT_MS,
+        "AI Entity Classification"
+      )
+    );
     const parsed = JSON.parse(response.choices[0]?.message?.content ?? "{}");
     const entityType: "PERSON" | "ORGANIZATION" =
       String(parsed.entity_type ?? "").toUpperCase() === "PERSON" ? "PERSON" : "ORGANIZATION";
@@ -527,11 +543,17 @@ export async function aiTranscribeAudio(storedUri: string, fileName: string): Pr
     const fileStream = fs.createReadStream(filePath);
     const audioFile = await toFile(fileStream, `audio.${fileExt}`, { type: `audio/${fileExt}` });
 
-    const transcription = await openai.audio.transcriptions.create({
-      file: audioFile,
-      model: getAudioModel(aiConfig),
-      response_format: "text",
-    });
+    const transcription = await aiCircuitBreaker.execute(() =>
+      withTimeout(
+        openai.audio.transcriptions.create({
+          file: audioFile,
+          model: getAudioModel(aiConfig),
+          response_format: "text",
+        }),
+        AI_TIMEOUT_MS,
+        "AI Audio Transcription"
+      )
+    );
 
     const result = typeof transcription === "string" ? transcription : (transcription as any).text ?? "";
     return result.trim() || "[Transcription returned empty]";
@@ -769,12 +791,18 @@ Be thorough — extract everything you can read. Return confidence 0.95+ for cle
   try {
     const { client: openai, config: aiConfig } = getAiClient();
     const messageContent = buildImageContent(images, visionPrompt);
-    const response = await openai.chat.completions.create({
-      model: getVisionModel(aiConfig),
-      messages: [{ role: "user", content: messageContent }],
-      response_format: { type: "json_object" },
-      max_completion_tokens: 4096,
-    });
+    const response = await aiCircuitBreaker.execute(() =>
+      withTimeout(
+        openai.chat.completions.create({
+          model: getVisionModel(aiConfig),
+          messages: [{ role: "user", content: messageContent }],
+          response_format: { type: "json_object" },
+          max_completion_tokens: 4096,
+        }),
+        AI_TIMEOUT_MS,
+        "AI Vision Extraction"
+      )
+    );
 
     const raw = response.choices[0]?.message?.content ?? "{}";
     const parsed = JSON.parse(raw);

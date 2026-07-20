@@ -4,7 +4,7 @@ Columns: Module | Feature | Preconditions | Test Steps | Expected Result | Actua
 
 | Module | Feature | Preconditions | Test Steps | Expected Result | Actual Result | Status | Priority | Severity |
 |---|---|---|---|---|---|---:|---:|---:|
-| Authentication | Login Page | Server running; DB seeded with `admin` | Open `http://localhost:5000` → Click Login → enter `admin` / `Admin@12345!` | Login screen loads; login accepted; prompt to change password on first login |  | Not Run | P0 | Critical |
+| Authentication | Login Page | Server running; DB seeded with `admin` | Open `http://localhost:5000` (local dev only) → Click Login → enter `admin` / `Admin@12345!` | Login screen loads; login accepted; prompt to change password on first login |  | Not Run | P0 | Critical |
 | Authentication | Password Change | Logged in as seeded admin | Follow password change flow, set new strong password | Password updated; subsequent logins accept new password; session issued |  | Not Run | P0 | Critical |
 | RBAC | Role Enforcement (ADMIN vs VIEWER) | Two users seeded with roles | Login as Viewer; attempt admin-only action (publish dataset) | UI disabled or 403 from API when attempted |  | Not Run | P0 | Critical |
 | Ingestion | Multipart File Upload | Server running; tenant exists | Create batch → Upload small PDF via UI or `POST /api/batches/:id/upload` | File saved in `uploads/`; `evidence_files` row created with SHA-256; extraction run queued |  | Not Run | P0 | High |

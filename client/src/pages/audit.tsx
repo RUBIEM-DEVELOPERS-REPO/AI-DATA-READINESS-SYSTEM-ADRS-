@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -94,11 +95,21 @@ function AuditRow({ log }: { log: AuditLog }) {
   );
 }
 
+const PAGE_SIZE = 50;
+
 export default function AuditLog() {
   const [search, setSearch] = useState("");
   const [resourceFilter, setResourceFilter] = useState("ALL");
+  const [page, setPage] = useState(1);
 
-  const { data: logs, isLoading } = useQuery<AuditLog[]>({ queryKey: ["/api/audit"] });
+  const { data: logs, isLoading } = useQuery<AuditLog[]>({
+    queryKey: ["/api/audit", page, PAGE_SIZE],
+    queryFn: async () => {
+      const res = await fetch(`/api/audit?page=${page}&limit=${PAGE_SIZE}`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch audit logs");
+      return res.json();
+    },
+  });
 
   const filtered = (logs ?? []).filter(l => {
     const matchSearch = !search || l.action.toLowerCase().includes(search.toLowerCase()) || l.userId.toLowerCase().includes(search.toLowerCase()) || (l.resourceId && l.resourceId.toLowerCase().includes(search.toLowerCase()));
@@ -114,6 +125,7 @@ export default function AuditLog() {
   };
 
   const resourceTypes = ["ALL", ...Array.from(new Set((logs ?? []).map(l => l.resourceType)))];
+  const hasNextPage = (logs?.length ?? 0) === PAGE_SIZE;
 
   return (
     <div className="p-6 space-y-6 max-w-7xl mx-auto">
@@ -185,9 +197,31 @@ export default function AuditLog() {
           ) : (
             <div>
               {filtered.map((log) => <AuditRow key={log.id} log={log} />)}
-              <p className="text-xs text-muted-foreground mt-3 text-center">
-                Showing {filtered.length} of {logs?.length ?? 0} events
-              </p>
+              <div className="flex items-center justify-between mt-4 pt-3 border-t border-border/40">
+                <p className="text-xs text-muted-foreground">
+                  Page {page} &mdash; showing {filtered.length} events
+                </p>
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setPage(p => Math.max(1, p - 1))}
+                    disabled={page === 1}
+                    data-testid="btn-audit-prev"
+                  >
+                    Previous
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setPage(p => p + 1)}
+                    disabled={!hasNextPage}
+                    data-testid="btn-audit-next"
+                  >
+                    Next
+                  </Button>
+                </div>
+              </div>
             </div>
           )}
         </CardContent>

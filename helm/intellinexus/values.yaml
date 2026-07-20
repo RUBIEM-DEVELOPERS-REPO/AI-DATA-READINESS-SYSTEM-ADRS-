@@ -1,0 +1,193 @@
+# ─── IntelliNexus Helm Values ─────────────────────────────────────────────────
+# Default values for intellinexus chart.
+# Override per environment using --set or -f overlays/production/values.yaml
+
+# ─── Global ────────────────────────────────────────────────────────────────────
+global:
+  # Image pull policy
+  imagePullPolicy: IfNotPresent
+  # Default tenant for bootstrap seeding
+  defaultTenant: "TENANT-001"
+  # Deployment environment label
+  environment: production
+
+# ─── Application ───────────────────────────────────────────────────────────────
+image:
+  repository: ghcr.io/intellinexus/intellinexus
+  tag: "latest"
+  pullPolicy: IfNotPresent
+
+replicaCount: 2
+
+# ─── Service ───────────────────────────────────────────────────────────────────
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 5000
+  annotations: {}
+
+# ─── Ingress ───────────────────────────────────────────────────────────────────
+ingress:
+  enabled: true
+  className: "nginx"
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/proxy-body-size: "500m"
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+  hosts:
+    - host: intellinexus.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: intellinexus-tls
+      hosts:
+        - intellinexus.example.com
+
+# ─── Resources ────────────────────────────────────────────────────────────────
+resources:
+  requests:
+    cpu: "500m"
+    memory: "512Mi"
+  limits:
+    cpu: "2000m"
+    memory: "2Gi"
+
+# ─── Horizontal Pod Autoscaler ─────────────────────────────────────────────────
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 20
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: 80
+
+# ─── Pod Disruption Budget ────────────────────────────────────────────────────
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+# ─── Environment Variables ────────────────────────────────────────────────────
+env:
+  NODE_ENV: production
+  PORT: "5000"
+  HOST: "0.0.0.0"
+  # Job queue backend — use pg for persistent queue (cloud-native)
+  JOB_QUEUE_BACKEND: "pg"
+  # Event bus backend — use redis for multi-replica pub/sub
+  EVENT_BUS_BACKEND: "memory"
+  # Object storage backend — use s3 for cloud-native storage
+  OBJECT_STORE_BACKEND: "local"
+  # OpenTelemetry (set OTEL_ENABLED=true and OTEL_EXPORTER_OTLP_ENDPOINT)
+  OTEL_ENABLED: "false"
+  OTEL_SERVICE_NAME: "intellinexus"
+  PROMETHEUS_ENABLED: "true"
+  # Distributed state backend
+  DISTRIBUTED_STATE_BACKEND: "pg"
+
+# ─── Secrets (values from Kubernetes Secret) ──────────────────────────────────
+# These reference a Secret named {{ Release.Name }}-secrets
+secretEnv:
+  DATABASE_URL: "DATABASE_URL"
+  DPO_DATABASE_URL: "DPO_DATABASE_URL"
+  REGULATOR_DATABASE_URL: "REGULATOR_DATABASE_URL"
+  SESSION_DATABASE_URL: "SESSION_DATABASE_URL"
+  SESSION_SECRET: "SESSION_SECRET"
+  BOOTSTRAP_ADMIN_USERNAME: "BOOTSTRAP_ADMIN_USERNAME"
+  BOOTSTRAP_ADMIN_PASSWORD: "BOOTSTRAP_ADMIN_PASSWORD"
+  DEFAULT_TENANT: "DEFAULT_TENANT"
+  AI_PROVIDER: "AI_PROVIDER"
+  AI_INTEGRATIONS_OPENAI_API_KEY: "AI_INTEGRATIONS_OPENAI_API_KEY"
+  AI_INTEGRATIONS_OPENAI_BASE_URL: "AI_INTEGRATIONS_OPENAI_BASE_URL"
+
+# ─── Probes ────────────────────────────────────────────────────────────────────
+livenessProbe:
+  httpGet:
+    path: /healthz
+    port: 5000
+  initialDelaySeconds: 30
+  periodSeconds: 15
+  timeoutSeconds: 5
+  failureThreshold: 3
+
+readinessProbe:
+  httpGet:
+    path: /readyz
+    port: 5000
+  initialDelaySeconds: 15
+  periodSeconds: 10
+  timeoutSeconds: 3
+  failureThreshold: 3
+
+# ─── Service Account ───────────────────────────────────────────────────────────
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+# ─── Pod Security Context ─────────────────────────────────────────────────────
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  fsGroup: 1000
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: false
+  capabilities:
+    drop:
+      - ALL
+
+# ─── Node Selector / Tolerations / Affinity ──────────────────────────────────
+nodeSelector: {}
+tolerations: []
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          labelSelector:
+            matchExpressions:
+              - key: app.kubernetes.io/name
+                operator: In
+                values:
+                  - intellinexus
+          topologyKey: kubernetes.io/hostname
+
+# ─── PostgreSQL Sub-chart ─────────────────────────────────────────────────────
+postgresql:
+  enabled: false   # Set to true to deploy PostgreSQL via sub-chart
+  auth:
+    database: storage_db
+    username: postgres
+    existingSecret: intellinexus-postgresql-secret
+  primary:
+    persistence:
+      enabled: true
+      size: 20Gi
+
+# ─── Redis Sub-chart ──────────────────────────────────────────────────────────
+redis:
+  enabled: false   # Set to true to deploy Redis via sub-chart
+  auth:
+    enabled: true
+    existingSecret: intellinexus-redis-secret
+  master:
+    persistence:
+      enabled: true
+      size: 2Gi
+
+# ─── Prometheus ServiceMonitor ────────────────────────────────────────────────
+serviceMonitor:
+  enabled: true
+  interval: 30s
+  path: /metrics
+  labels:
+    release: prometheus
+
+# ─── Volumes (for uploads when using local backend) ───────────────────────────
+volumes:
+  uploads:
+    enabled: false          # Disable in production — use S3 backend instead
+    storageClass: ""
+    size: 10Gi
+    mountPath: /app/uploads

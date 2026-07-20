@@ -68,7 +68,8 @@ export class MysqlConnector implements ConnectorPlugin {
       user: credentials.username,
       password: credentials.password,
       database: this.config.database,
-      ssl: this.config.ssl ? { rejectUnauthorized: false } : undefined,
+      // Enforce certificate verification by default when SSL is enabled.
+      ssl: this.config.ssl ? { rejectUnauthorized: true } : undefined,
     });
     this.logger.info("MySQL authentication successful");
   }
@@ -268,7 +269,8 @@ export class MysqlConnector implements ConnectorPlugin {
         user: this.credentials.username,
         password: this.credentials.password,
         database: this.config.database,
-        ssl: this.config.ssl ? { rejectUnauthorized: false } : undefined,
+        // Enforce certificate verification by default when SSL is enabled.
+        ssl: this.config.ssl ? { rejectUnauthorized: true } : undefined,
       });
     }
     return this.connection;

@@ -3,18 +3,19 @@ import { kgNodes, kgEdges } from "@shared/schema";
 import { generateKgGraph } from "./publishing";
 import { storage } from "../storage";
 import { sql } from "drizzle-orm";
+import { type TenantContext } from "../middleware/tenant-guard";
 
 /**
  * Synchronizes the Live Knowledge Graph (Layer 7).
  * Reads all resolved entities (Layer 5/6), builds the global graph, 
  * and UPSERTs into the live kg_nodes and kg_edges tables.
  */
-export async function syncLiveKnowledgeGraph() {
-  console.log("[Graph Sync] Starting live Knowledge Graph synchronisation...");
+export async function syncLiveKnowledgeGraph(ctx: TenantContext) {
+  console.log(`[Graph Sync] Starting live Knowledge Graph synchronisation for tenant ${ctx.tenantId}...`);
 
   try {
     // 1. Fetch all Golden Records / resolved entities
-    const entities = await storage.getCdmEntities();
+    const entities = await storage.getCdmEntities(ctx);
     
     // 2. Generate the graph records using the existing logic 
     //    (deduplication, semantic relationship inference)
@@ -33,6 +34,7 @@ export async function syncLiveKnowledgeGraph() {
         displayName: node.properties?.display_name || "Unknown",
         properties: node.properties,
         confidenceScore: node.properties?.confidence_score ?? 0,
+        tenantId: ctx.tenantId,
       }).onConflictDoUpdate({
         target: kgNodes.id,
         set: {
@@ -56,6 +58,7 @@ export async function syncLiveKnowledgeGraph() {
         relationshipType: edge.type_label!,
         confidence: edge.properties?.confidence ?? 0,
         properties: edge.properties,
+        tenantId: ctx.tenantId,
       }).onConflictDoUpdate({
         target: kgEdges.id,
         set: {

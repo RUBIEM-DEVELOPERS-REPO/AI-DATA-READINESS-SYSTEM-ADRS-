@@ -4,9 +4,38 @@ import fs from "fs";
 import { createHash } from "crypto";
 import https from "https";
 import http from "http";
+import { isSafeRemoteUrl } from "./security";
 
 export const UPLOADS_DIR = path.join(process.cwd(), "uploads");
 if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+
+const allowedExtensions = new Set([
+  ".pdf",
+  ".docx",
+  ".xlsx",
+  ".pptx",
+  ".txt",
+  ".csv",
+  ".json",
+  ".png",
+  ".jpg",
+  ".jpeg",
+  ".tiff",
+  ".bmp",
+  ".gif",
+  ".mp3",
+  ".wav",
+  ".aac",
+  ".flac",
+  ".ogg",
+  ".m4a",
+  ".mp4",
+  ".mov",
+  ".webm",
+  ".avi",
+  ".mkv",
+  ".m4v",
+]);
 
 const diskStorage = multer.diskStorage({
   destination: UPLOADS_DIR,
@@ -16,10 +45,55 @@ const diskStorage = multer.diskStorage({
   },
 });
 
-export const uploadMiddleware = multer({
+export function validateUploadFile(file: Express.Multer.File): { ok: true } | { ok: false; error: string } {
+  const ext = path.extname(file.originalname).toLowerCase();
+  const basename = path.basename(file.originalname);
+
+  if (!basename || basename.includes("..") || basename.includes("/")) {
+    return { ok: false, error: "Invalid filename" };
+  }
+
+  if (!allowedExtensions.has(ext)) {
+    return { ok: false, error: `Unsupported file type: ${ext || "unknown"}` };
+  }
+
+  if (process.env.NODE_ENV === "production") {
+    const suspicious = [".exe", ".bat", ".cmd", ".com", ".scr", ".jar", ".ps1", ".dll", ".so", ".dylib"];
+    if (suspicious.includes(ext)) {
+      return { ok: false, error: `Unsupported file type: ${ext || "unknown"}` };
+    }
+  }
+
+  return { ok: true };
+}
+
+import { assertFileSafe } from "./malware-scan";
+
+function fileFilter(_req: any, file: Express.Multer.File, cb: multer.FileFilterCallback) {
+  const result = validateUploadFile(file);
+  if (!result.ok) return cb(new Error(result.error));
+  cb(null, true);
+}
+
+const multerUpload = multer({
   storage: diskStorage,
   limits: { fileSize: 500 * 1024 * 1024 },
+  fileFilter,
 }).single("file");
+
+export const uploadMiddleware = (req: any, res: any, next: any) => {
+  multerUpload(req, res, (err: any) => {
+    if (err) return next(err);
+    if (req.file) {
+      try {
+        assertFileSafe(req.file.path);
+      } catch (scanErr: any) {
+        return next(scanErr);
+      }
+    }
+    next();
+  });
+};
 
 export function computeFileHash(filePath: string): string {
   const content = fs.readFileSync(filePath);
@@ -98,6 +172,11 @@ export function detectCloudSource(url: string): { source: string; downloadUrl: s
 
 export function downloadFile(url: string, destPath: string): Promise<void> {
   return new Promise((resolve, reject) => {
+    if (!isSafeRemoteUrl(url)) {
+      reject(new Error("Refusing to download from an unsafe or local URL"));
+      return;
+    }
+
     const proto = url.startsWith("https") ? https : http;
     const file = fs.createWriteStream(destPath);
 

@@ -1,0 +1,31 @@
+apiVersion: v2
+name: intellinexus
+description: |
+  IntelliNexus — AI-Powered Dataset Factory delivered as a cloud-native,
+  multi-tenant SaaS platform. Transforms fragmented information into trusted,
+  AI-ready datasets using autonomous AI agents.
+type: application
+version: 1.0.0
+appVersion: "1.0.0"
+keywords:
+  - ai
+  - dataset
+  - machine-learning
+  - data-governance
+  - multi-tenant
+  - knowledge-graph
+home: https://github.com/intellinexus
+maintainers:
+  - name: IntelliNexus Platform Team
+    email: platform@intellinexus.io
+dependencies:
+  - name: postgresql
+    version: "13.x.x"
+    repository: https://charts.bitnami.com/bitnami
+    condition: postgresql.enabled
+    alias: postgresql
+  - name: redis
+    version: "18.x.x"
+    repository: https://charts.bitnami.com/bitnami
+    condition: redis.enabled
+    alias: redis

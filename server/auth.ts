@@ -95,17 +95,22 @@ export async function setupSession(app: Express) {
   }
 
 
+  const sessionSecret = process.env.SESSION_SECRET || (process.env.NODE_ENV === "production" ? undefined : "development-only-session-secret-change-me");
+  if (!process.env.SESSION_SECRET && process.env.NODE_ENV === "production") {
+    throw new Error("SESSION_SECRET must be configured in production");
+  }
+
   app.use(
     session({
       store: sessionStore,
-      secret: process.env.SESSION_SECRET!,
+      secret: sessionSecret as string,
       resave: false,
       saveUninitialized: false,
       name: "adrs.sid",
       cookie: {
         httpOnly: true,
-        secure: process.env.NODE_ENV === "production",
-        sameSite: "lax",
+        secure: process.env.NODE_ENV === "production" || process.env.FORCE_SECURE_COOKIES === "true",
+        sameSite: process.env.NODE_ENV === "production" ? "strict" : "lax",
         maxAge: 1000 * 60 * 60 * 24 * 7, // 7 days
       },
     })
@@ -134,6 +139,54 @@ export function requireAuth(req: Request, res: Response, next: NextFunction) {
     return res.status(401).json({ error: "Authentication required", code: "UNAUTHENTICATED" });
   }
   next();
+}
+
+export function requireMfa(req: Request, res: Response, next: NextFunction) {
+  if (!req.isAuthenticated()) {
+    return res.status(401).json({ error: "Authentication required", code: "UNAUTHENTICATED" });
+  }
+
+  // Exclude MFA setup/verify endpoints from block
+  if (req.path.startsWith("/mfa/") || req.path.startsWith("/api/mfa/")) {
+    return next();
+  }
+
+  const user = req.user as any;
+  const isRequired = user.role === "SUPER_ADMIN" || user.role === "REGULATOR";
+
+  if ((isRequired || user.mfaEnabled) && !(req.session as any).mfaVerified) {
+    return res.status(403).json({
+      error: "MFA verification required",
+      code: "MFA_REQUIRED",
+      message: "You must complete Multi-Factor Authentication to access this resource."
+    });
+  }
+  next();
+}
+
+export function requireRecentAuth(maxAgeMs = 15 * 60 * 1000) {
+  return (req: Request, res: Response, next: NextFunction) => {
+    if (!req.isAuthenticated()) {
+      return res.status(401).json({ error: "Authentication required", code: "UNAUTHENTICATED" });
+    }
+
+    const sessionTimestamp = (req.session as any)?.recentAuthAt;
+    const userTimestamp = (req.user as any)?.lastLoginAt;
+    const recentAuthAt = typeof sessionTimestamp === "number"
+      ? sessionTimestamp
+      : typeof userTimestamp === "string" || userTimestamp instanceof Date
+        ? new Date(userTimestamp).getTime()
+        : undefined;
+
+    if (typeof recentAuthAt === "number" && !Number.isNaN(recentAuthAt) && Date.now() - recentAuthAt <= maxAgeMs) {
+      return next();
+    }
+
+    return res.status(401).json({
+      error: "Re-authentication required to perform this action",
+      code: "RECENT_AUTH_REQUIRED",
+    });
+  };
 }
 
 export function requireRole(...roles: UserRole[]) {
@@ -170,3 +223,4 @@ export function requireRole(...roles: UserRole[]) {
 }
 
 export { passport };
+

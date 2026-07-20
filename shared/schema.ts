@@ -1,6 +1,6 @@
 
 import { sql, relations } from "drizzle-orm";
-import { pgTable, text, varchar, integer, real, boolean, jsonb, timestamp, pgEnum, customType } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, integer, real, boolean, jsonb, timestamp, pgEnum, customType, index } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -89,6 +89,9 @@ export const users = pgTable("users", {
   isActive: boolean("is_active").notNull().default(true),
   mustChangePassword: boolean("must_change_password").notNull().default(false),
   lastLoginAt: timestamp("last_login_at"),
+  mfaSecret: text("mfa_secret"),
+  mfaEnabled: boolean("mfa_enabled").notNull().default(false),
+  mfaBackupCodes: jsonb("mfa_backup_codes").default(sql`'[]'::jsonb`),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
@@ -102,6 +105,7 @@ export const batches = pgTable("batches", {
   scannedDocuments: integer("scanned_documents").notNull().default(0),
   createdBy: text("created_by").notNull(),
   notes: text("notes"),
+  tenantId: text("tenant_id").notNull().default("TENANT-001"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
@@ -138,6 +142,12 @@ export const evidenceFiles = pgTable("evidence_files", {
   mediaMetadata: jsonb("media_metadata"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
+}, (table) => {
+  return {
+    tenantIdIdx: index("evidence_files_tenant_id_idx").on(table.tenantId),
+    statusIdx: index("evidence_files_status_idx").on(table.status),
+    batchIdIdx: index("evidence_files_batch_id_idx").on(table.batchId),
+  };
 });
 
 export const extractionRuns = pgTable("extraction_runs", {
@@ -173,6 +183,11 @@ export const extractionRuns = pgTable("extraction_runs", {
   // Reference to deduplicated text store — use ?include_text=true to hydrate rawText
   extractionTextId: varchar("extraction_text_id"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
+}, (table) => {
+  return {
+    evidenceIdIdx: index("extraction_runs_evidence_id_idx").on(table.evidenceId),
+    trustScoreIdx: index("extraction_runs_trust_score_idx").on(table.trustScore),
+  };
 });
 
 export const validationTasks = pgTable("validation_tasks", {
@@ -199,6 +214,12 @@ export const validationTasks = pgTable("validation_tasks", {
   validatedAt: timestamp("validated_at"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
+}, (table) => {
+  return {
+    evidenceIdIdx: index("validation_tasks_evidence_id_idx").on(table.evidenceId),
+    statusIdx: index("validation_tasks_status_idx").on(table.status),
+    assignedToIdx: index("validation_tasks_assigned_to_idx").on(table.assignedTo),
+  };
 });
 
 export const cdmEntities = pgTable("cdm_entities", {
@@ -234,6 +255,12 @@ export const cdmEntities = pgTable("cdm_entities", {
   contactBindingAudit: jsonb("contact_binding_audit"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
+}, (table) => {
+  return {
+    tenantIdIdx: index("cdm_entities_tenant_id_idx").on(table.tenantId),
+    entityTypeIdx: index("cdm_entities_entity_type_idx").on(table.entityType),
+    entityLifecycleIdx: index("cdm_entities_entity_lifecycle_idx").on(table.entityLifecycle),
+  };
 });
 
 export const publishedDatasets = pgTable("published_datasets", {
@@ -284,6 +311,10 @@ export const chunkEmbeddings = pgTable("chunk_embeddings", {
   tokenCount: integer("token_count").notNull().default(0),
   tenantId: text("tenant_id").notNull().default("TENANT-001"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
+}, (table) => {
+  return {
+    evidenceIdIdx: index("chunk_embeddings_evidence_id_idx").on(table.evidenceId),
+  };
 });
 
 export const entityEmbeddings = pgTable("entity_embeddings", {
@@ -316,6 +347,11 @@ export const auditLogs = pgTable("audit_logs", {
   ipAddress: text("ip_address"),
   tenantId: text("tenant_id").notNull().default("TENANT-001"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
+}, (table) => {
+  return {
+    tenantIdIdx: index("audit_logs_tenant_id_idx").on(table.tenantId),
+    createdAtIdx: index("audit_logs_created_at_idx").on(table.createdAt),
+  };
 });
 
 // ─── Data Controller Registry ───────────────────────────────────────────────

@@ -38,9 +38,10 @@ export async function generateEmbedding(text: string): Promise<number[]> {
  * Perform a semantic search across ingested documents using pgvector.
  * @param query The user's natural language question
  * @param limit Max number of results to return (default 5)
+ * @param tenantId Optional tenant ID to isolate results
  * @returns Array of text chunks with their similarity score and source file name
  */
-export async function semanticSearch(query: string, limit: number = 5) {
+export async function semanticSearch(query: string, limit: number = 5, tenantId?: string) {
   if (!query || query.trim() === "") return [];
 
   // 1. Embed the query
@@ -51,7 +52,7 @@ export async function semanticSearch(query: string, limit: number = 5) {
   const similarity = sql<number>`1 - (${chunkEmbeddings.embedding} <=> ${JSON.stringify(queryVector)})`;
 
   try {
-    const results = await db
+    let q = db
       .select({
         score: similarity,
         text: extractionTexts.text,
@@ -60,7 +61,13 @@ export async function semanticSearch(query: string, limit: number = 5) {
       })
       .from(chunkEmbeddings)
       .innerJoin(extractionTexts, eq(chunkEmbeddings.extractionTextId, extractionTexts.id))
-      .innerJoin(evidenceFiles, eq(chunkEmbeddings.evidenceId, evidenceFiles.id))
+      .innerJoin(evidenceFiles, eq(chunkEmbeddings.evidenceId, evidenceFiles.id));
+
+    if (tenantId) {
+      q = q.where(eq(chunkEmbeddings.tenantId, tenantId)) as any;
+    }
+
+    const results = await q
       .orderBy(sql`${chunkEmbeddings.embedding} <=> ${JSON.stringify(queryVector)}`)
       .limit(limit);
 

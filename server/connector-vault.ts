@@ -207,9 +207,26 @@ let vaultInstance: IConnectorVault | null = null;
 
 export function getVault(): IConnectorVault {
   if (!vaultInstance) {
-    // Default implementation uses an in-memory vault for development and test.
-    // In production, inject a secure vault client via setVault().
-    vaultInstance = new InMemoryVault();
+    // If HashiCorp Vault is configured, use it as the backing implementation.
+    const addr = process.env.VAULT_ADDR?.trim();
+    const token = process.env.VAULT_TOKEN?.trim();
+    const kvMount = process.env.VAULT_KV_MOUNT || "secret";
+
+    if (addr) {
+      if (!token && process.env.NODE_ENV === "production") {
+        throw new Error("VAULT_TOKEN is required when VAULT_ADDR is set in production");
+      }
+      try {
+        vaultInstance = new HashiCorpVault(addr, token || "", kvMount);
+        console.log("[VAULT] Using HashiCorp Vault for credential storage");
+      } catch (err) {
+        console.error("[VAULT] Failed to initialize HashiCorp Vault client, falling back to in-memory vault:", err);
+        vaultInstance = new InMemoryVault();
+      }
+    } else {
+      // Default implementation uses an in-memory vault for development and test.
+      vaultInstance = new InMemoryVault();
+    }
   }
   return vaultInstance;
 }
@@ -219,4 +236,90 @@ export function getVault(): IConnectorVault {
  */
 export function setVault(vault: IConnectorVault): void {
   vaultInstance = vault;
+}
+
+/**
+ * Minimal HashiCorp Vault KV v2 client implementation.
+ * Uses the Vault HTTP API and the global `fetch` available in Node 18+.
+ * This keeps the dependency surface small and avoids forcing external SDKs.
+ */
+class HashiCorpVault implements IConnectorVault {
+  private addr: string;
+  private token: string;
+  private kvMount: string;
+
+  constructor(addr: string, token: string, kvMount = "secret") {
+    this.addr = addr.replace(/\/$/, "");
+    this.token = token;
+    this.kvMount = kvMount.replace(/^\//, "").replace(/\/$/, "");
+  }
+
+  private async req(path: string, opts: any = {}) {
+    const url = `${this.addr}/v1/${path.replace(/^\//, "")}`;
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (this.token) headers["X-Vault-Token"] = this.token;
+    const res = await fetch(url, { headers, ...opts });
+    if (!res.ok) {
+      const txt = await res.text().catch(() => "");
+      throw new Error(`Vault API ${res.status} ${res.statusText}: ${txt}`);
+    }
+    return res.json().catch(() => ({}));
+  }
+
+  private keyPath(tenantId: string, connectorInstanceId: string) {
+    const safeTenant = encodeURIComponent(tenantId);
+    const safeInstance = encodeURIComponent(connectorInstanceId);
+    return `${this.kvMount}/data/adrs/${safeTenant}/${safeInstance}`;
+  }
+
+  async storeCredential(tenantId: string, connectorInstanceId: string, credential: VaultCredential): Promise<void> {
+    const path = this.keyPath(tenantId, connectorInstanceId);
+    const payload = { data: { credential } };
+    await this.req(path, { method: "POST", body: JSON.stringify(payload) });
+  }
+
+  async getCredential(tenantId: string, connectorInstanceId: string): Promise<VaultCredential | null> {
+    const path = this.keyPath(tenantId, connectorInstanceId);
+    try {
+      const body = await this.req(path, { method: "GET" });
+      // KV v2 returns { data: { data: {...}, metadata: {...} } }
+      const data = body?.data?.data?.credential as VaultCredential | undefined;
+      return data && data.isActive !== false ? data : null;
+    } catch (err) {
+      if ((err as any).message?.includes("404")) return null;
+      throw err;
+    }
+  }
+
+  async rotateCredential(tenantId: string, connectorInstanceId: string, newCredential: VaultCredential): Promise<void> {
+    // Store new credential and mark rotatedFrom in metadata
+    const prev = await this.getCredential(tenantId, connectorInstanceId).catch(() => null);
+    if (prev) {
+      // Optionally mark previous credential inactive by writing a copy with isActive=false
+      const prevPath = this.keyPath(tenantId, `${connectorInstanceId}_history_${Date.now()}`);
+      await this.req(prevPath, { method: "POST", body: JSON.stringify({ data: { credential: { ...prev, isActive: false } } }) });
+    }
+    const payload = { data: { credential: { ...newCredential, metadata: { ...(newCredential.metadata || {}), rotatedFrom: prev?.id || null } } } };
+    const path = this.keyPath(tenantId, connectorInstanceId);
+    await this.req(path, { method: "POST", body: JSON.stringify(payload) });
+  }
+
+  async revokeCredential(tenantId: string, connectorInstanceId: string): Promise<void> {
+    const cred = await this.getCredential(tenantId, connectorInstanceId);
+    if (!cred) return;
+    cred.isActive = false;
+    const path = this.keyPath(tenantId, connectorInstanceId);
+    await this.req(path, { method: "POST", body: JSON.stringify({ data: { credential: cred } }) });
+  }
+
+  async hasActiveCredential(tenantId: string, connectorInstanceId: string): Promise<boolean> {
+    const cred = await this.getCredential(tenantId, connectorInstanceId);
+    return !!cred;
+  }
+
+  async deleteCredential(tenantId: string, connectorInstanceId: string): Promise<void> {
+    // KV v2 delete (metadata) endpoint
+    const metaPath = `${this.kvMount}/metadata/adrs/${encodeURIComponent(tenantId)}/${encodeURIComponent(connectorInstanceId)}`;
+    await this.req(metaPath, { method: "DELETE" });
+  }
 }

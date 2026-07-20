@@ -19,6 +19,8 @@ curl -b cookies.txt http://localhost:3000/api/evidence
 curl -b cookies.txt -H "Content-Type: application/json" -d '{"name":"test batch"}' http://localhost:3000/api/batches
 ```
 
+> Note: These examples use HTTP for local development only. Production deployments must serve the API over HTTPS.
+
 - **Smoke tests (suggested order):**
   1. Start server: `npm run dev`.
   2. Register admin user (`/api/auth/register`) or run `seedAdminUser()` via scripts.

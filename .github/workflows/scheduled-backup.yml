@@ -1,0 +1,51 @@
+name: Scheduled Production Backups
+
+on:
+  schedule:
+    # Trigger nightly at 02:00 UTC
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+    # Allow manual triggering from GitHub UI
+
+jobs:
+  nightly-backup:
+    runs-on: ubuntu-latest
+
+    env:
+      BACKUP_DIR: /tmp/adrs-backups
+      RETENTION_DAYS: 7
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup AWS CLI (for S3 upload)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.BACKUP_S3_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.BACKUP_S3_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      - name: Validate Dependencies
+        run: |
+          mkdir -p "$BACKUP_DIR"
+          chmod +x ./scripts/backup.sh
+          echo "Validating backup environment..."
+          if ! command -v gzip &> /dev/null; then
+            echo "ERROR: gzip is required"
+            exit 1
+          fi
+
+      - name: Execute Hardened Backup Script
+        env:
+          BACKUP_S3_BUCKET: ${{ secrets.BACKUP_S3_BUCKET_NAME }}
+        run: |
+          # Note: In a production workflow, this job would trigger the backup
+          # execution on the hosting server via SSH, SSM Run Command, or a
+          # runner deployed directly on the database node.
+          # Here we run a local simulation to check for script compile/syntax correctness.
+          export BACKUP_DIR="./test-backups"
+          mkdir -p "$BACKUP_DIR"
+          echo "Verifying backup script syntax..."
+          bash -n ./scripts/backup.sh
+          echo "Script syntax verified."

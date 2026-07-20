@@ -1,6 +1,6 @@
 import { db } from "../db";
 import { evidenceFiles, extractionRuns, validationTasks, cdmEntities, chunkEmbeddings, kgNodes, kgEdges, publishedDatasets } from "@shared/schema";
-import { sql } from "drizzle-orm";
+import { sql, eq, and } from "drizzle-orm";
 import { createAiClient, getChatModel, getAiProviderConfig } from "./ai-provider";
 
 export type AgentLayer =
@@ -90,11 +90,30 @@ export const AGENT_TASKS: AgentTask[] = [
   { id: "system.roi_report",       layer: "system",       icon: "BarChart3",      label: "Business Analyst",           description: "Estimate time and cost savings delivered by AI automation vs. manual processing." },
 ];
 
+function scopeSqlToTenant(sqlQuery: string, tenantId: string): string {
+  let query = sqlQuery;
+  // Replace table names with tenant-scoped subqueries.
+  query = query.replace(/\bevidence_files\b/gi, `(SELECT * FROM evidence_files WHERE tenant_id = '${tenantId}')`);
+  query = query.replace(/\bbatches\b/gi, `(SELECT * FROM batches WHERE tenant_id = '${tenantId}')`);
+  query = query.replace(/\bcdm_entities\b/gi, `(SELECT * FROM cdm_entities WHERE tenant_id = '${tenantId}')`);
+  query = query.replace(/\bpublished_datasets\b/gi, `(SELECT * FROM published_datasets WHERE tenant_id = '${tenantId}')`);
+  query = query.replace(/\bchunk_embeddings\b/gi, `(SELECT * FROM chunk_embeddings WHERE tenant_id = '${tenantId}')`);
+  query = query.replace(/\bentity_embeddings\b/gi, `(SELECT * FROM entity_embeddings WHERE tenant_id = '${tenantId}')`);
+  query = query.replace(/\bkg_nodes\b/gi, `(SELECT * FROM kg_nodes WHERE tenant_id = '${tenantId}')`);
+  query = query.replace(/\bkg_edges\b/gi, `(SELECT * FROM kg_edges WHERE tenant_id = '${tenantId}')`);
+  query = query.replace(/\bextraction_runs\b/gi, `(SELECT er.* FROM extraction_runs er INNER JOIN evidence_files ef ON er.evidence_id = ef.id WHERE ef.tenant_id = '${tenantId}')`);
+  query = query.replace(/\bvalidation_tasks\b/gi, `(SELECT vt.* FROM validation_tasks vt INNER JOIN evidence_files ef ON vt.evidence_id = ef.id WHERE ef.tenant_id = '${tenantId}')`);
+  return query;
+}
+
 // Helper functions for agent tools
-async function executeQuery(sqlQuery: string): Promise<string> {
-  const trimmed = sqlQuery.trim();
+async function executeQuery(sqlQuery: string, tenantId?: string): Promise<string> {
+  let trimmed = sqlQuery.trim();
   if (!trimmed.toLowerCase().startsWith("select")) {
     return JSON.stringify({ error: "Only SELECT queries are allowed for safety and security." });
+  }
+  if (tenantId) {
+    trimmed = scopeSqlToTenant(trimmed, tenantId);
   }
   try {
     const res = await db.execute(sql.raw(trimmed));
@@ -105,8 +124,18 @@ async function executeQuery(sqlQuery: string): Promise<string> {
   }
 }
 
-async function escalateToHitl(taskId: string, reason: string): Promise<string> {
+async function escalateToHitl(taskId: string, reason: string, tenantId?: string): Promise<string> {
   try {
+    if (tenantId) {
+      const task = await db.select()
+        .from(validationTasks)
+        .innerJoin(evidenceFiles, eq(validationTasks.evidenceId, evidenceFiles.id))
+        .where(and(eq(validationTasks.id, taskId), eq(evidenceFiles.tenantId, tenantId)))
+        .limit(1);
+      if (!task || task.length === 0) {
+        return JSON.stringify({ error: `Validation task ${taskId} not found or access denied.` });
+      }
+    }
     await db.update(validationTasks)
       .set({
         status: "ESCALATED",
@@ -120,11 +149,28 @@ async function escalateToHitl(taskId: string, reason: string): Promise<string> {
   }
 }
 
-async function suggestFieldCorrection(taskId: string, fieldName: string, correctedValue: string): Promise<string> {
+async function suggestFieldCorrection(taskId: string, fieldName: string, correctedValue: string, tenantId?: string): Promise<string> {
   try {
-    const task = await db.select().from(validationTasks).where(sql`id = ${taskId}`).limit(1);
+    const queryBuilder = db.select({
+      id: validationTasks.id,
+      validatorNotes: validationTasks.validatorNotes,
+    })
+    .from(validationTasks);
+
+    let task;
+    if (tenantId) {
+      task = await queryBuilder
+        .innerJoin(evidenceFiles, eq(validationTasks.evidenceId, evidenceFiles.id))
+        .where(and(eq(validationTasks.id, taskId), eq(evidenceFiles.tenantId, tenantId)))
+        .limit(1);
+    } else {
+      task = await queryBuilder
+        .where(eq(validationTasks.id, taskId))
+        .limit(1);
+    }
+
     if (!task || task.length === 0) {
-      return JSON.stringify({ error: `Validation task ${taskId} not found.` });
+      return JSON.stringify({ error: `Validation task ${taskId} not found or access denied.` });
     }
     const currentNotes = task[0].validatorNotes || "";
     const updatedNotes = `${currentNotes}\n[AI Auto-Suggestion] Proposed correction: Set ${fieldName} = "${correctedValue}"`.trim();
@@ -189,17 +235,33 @@ const agentTools = [
 ];
 
 // ─── Main agent execution ─────────────────────────────────────────────────────
-export async function runAgentTask(ctx: AgentContext): Promise<AgentResult> {
+export async function runAgentTask(ctx: AgentContext, tenantId?: string): Promise<AgentResult> {
   // Gather live system stats to ground the agent
   const [ev, runs, val, ent, chunks, nodes, edges, datasets] = await Promise.all([
-    db.select({ n: sql<number>`count(*)` }).from(evidenceFiles),
-    db.select({ n: sql<number>`count(*)` }).from(extractionRuns),
-    db.select({ n: sql<number>`count(*)` }).from(validationTasks),
-    db.select({ n: sql<number>`count(*)` }).from(cdmEntities),
-    db.select({ n: sql<number>`count(*)` }).from(chunkEmbeddings),
-    db.select({ n: sql<number>`count(*)` }).from(kgNodes),
-    db.select({ n: sql<number>`count(*)` }).from(kgEdges),
-    db.select({ n: sql<number>`count(*)` }).from(publishedDatasets),
+    tenantId
+      ? db.select({ n: sql<number>`count(*)` }).from(evidenceFiles).where(eq(evidenceFiles.tenantId, tenantId))
+      : db.select({ n: sql<number>`count(*)` }).from(evidenceFiles),
+    tenantId
+      ? db.select({ n: sql<number>`count(*)` }).from(extractionRuns).innerJoin(evidenceFiles, eq(extractionRuns.evidenceId, evidenceFiles.id)).where(eq(evidenceFiles.tenantId, tenantId))
+      : db.select({ n: sql<number>`count(*)` }).from(extractionRuns),
+    tenantId
+      ? db.select({ n: sql<number>`count(*)` }).from(validationTasks).innerJoin(evidenceFiles, eq(validationTasks.evidenceId, evidenceFiles.id)).where(eq(evidenceFiles.tenantId, tenantId))
+      : db.select({ n: sql<number>`count(*)` }).from(validationTasks),
+    tenantId
+      ? db.select({ n: sql<number>`count(*)` }).from(cdmEntities).where(eq(cdmEntities.tenantId, tenantId))
+      : db.select({ n: sql<number>`count(*)` }).from(cdmEntities),
+    tenantId
+      ? db.select({ n: sql<number>`count(*)` }).from(chunkEmbeddings).where(eq(chunkEmbeddings.tenantId, tenantId))
+      : db.select({ n: sql<number>`count(*)` }).from(chunkEmbeddings),
+    tenantId
+      ? db.select({ n: sql<number>`count(*)` }).from(kgNodes).where(eq(kgNodes.tenantId, tenantId))
+      : db.select({ n: sql<number>`count(*)` }).from(kgNodes),
+    tenantId
+      ? db.select({ n: sql<number>`count(*)` }).from(kgEdges).where(eq(kgEdges.tenantId, tenantId))
+      : db.select({ n: sql<number>`count(*)` }).from(kgEdges),
+    tenantId
+      ? db.select({ n: sql<number>`count(*)` }).from(publishedDatasets).where(eq(publishedDatasets.tenantId, tenantId))
+      : db.select({ n: sql<number>`count(*)` }).from(publishedDatasets),
   ]);
 
   const stats = {
@@ -283,11 +345,11 @@ Instructions:
           let toolResult = "";
 
           if (toolName === "query_database") {
-            toolResult = await executeQuery(toolArgs.sqlQuery);
+            toolResult = await executeQuery(toolArgs.sqlQuery, tenantId);
           } else if (toolName === "escalate_to_hitl") {
-            toolResult = await escalateToHitl(toolArgs.taskId, toolArgs.reason);
+            toolResult = await escalateToHitl(toolArgs.taskId, toolArgs.reason, tenantId);
           } else if (toolName === "suggest_field_correction") {
-            toolResult = await suggestFieldCorrection(toolArgs.taskId, toolArgs.fieldName, toolArgs.correctedValue);
+            toolResult = await suggestFieldCorrection(toolArgs.taskId, toolArgs.fieldName, toolArgs.correctedValue, tenantId);
           } else {
             toolResult = JSON.stringify({ error: `Unknown tool: ${toolName}` });
           }
@@ -426,17 +488,34 @@ function isValidOrchestrationAction(action: any): action is OrchestrationAction 
 }
 
 export async function getAgentOrchestrationPlan(
-  ctx: AgentContext & { objective?: string; mode?: "DRY_RUN" | "APPLY" }
+  ctx: AgentContext & { objective?: string; mode?: "DRY_RUN" | "APPLY" },
+  tenantId?: string
 ): Promise<AgentOrchestrationPlan> {
   const [ev, runs, val, ent, chunks, nodes, edges, datasets] = await Promise.all([
-    db.select({ n: sql<number>`count(*)` }).from(evidenceFiles),
-    db.select({ n: sql<number>`count(*)` }).from(extractionRuns),
-    db.select({ n: sql<number>`count(*)` }).from(validationTasks),
-    db.select({ n: sql<number>`count(*)` }).from(cdmEntities),
-    db.select({ n: sql<number>`count(*)` }).from(chunkEmbeddings),
-    db.select({ n: sql<number>`count(*)` }).from(kgNodes),
-    db.select({ n: sql<number>`count(*)` }).from(kgEdges),
-    db.select({ n: sql<number>`count(*)` }).from(publishedDatasets),
+    tenantId
+      ? db.select({ n: sql<number>`count(*)` }).from(evidenceFiles).where(eq(evidenceFiles.tenantId, tenantId))
+      : db.select({ n: sql<number>`count(*)` }).from(evidenceFiles),
+    tenantId
+      ? db.select({ n: sql<number>`count(*)` }).from(extractionRuns).innerJoin(evidenceFiles, eq(extractionRuns.evidenceId, evidenceFiles.id)).where(eq(evidenceFiles.tenantId, tenantId))
+      : db.select({ n: sql<number>`count(*)` }).from(extractionRuns),
+    tenantId
+      ? db.select({ n: sql<number>`count(*)` }).from(validationTasks).innerJoin(evidenceFiles, eq(validationTasks.evidenceId, evidenceFiles.id)).where(eq(evidenceFiles.tenantId, tenantId))
+      : db.select({ n: sql<number>`count(*)` }).from(validationTasks),
+    tenantId
+      ? db.select({ n: sql<number>`count(*)` }).from(cdmEntities).where(eq(cdmEntities.tenantId, tenantId))
+      : db.select({ n: sql<number>`count(*)` }).from(cdmEntities),
+    tenantId
+      ? db.select({ n: sql<number>`count(*)` }).from(chunkEmbeddings).where(eq(chunkEmbeddings.tenantId, tenantId))
+      : db.select({ n: sql<number>`count(*)` }).from(chunkEmbeddings),
+    tenantId
+      ? db.select({ n: sql<number>`count(*)` }).from(kgNodes).where(eq(kgNodes.tenantId, tenantId))
+      : db.select({ n: sql<number>`count(*)` }).from(kgNodes),
+    tenantId
+      ? db.select({ n: sql<number>`count(*)` }).from(kgEdges).where(eq(kgEdges.tenantId, tenantId))
+      : db.select({ n: sql<number>`count(*)` }).from(kgEdges),
+    tenantId
+      ? db.select({ n: sql<number>`count(*)` }).from(publishedDatasets).where(eq(publishedDatasets.tenantId, tenantId))
+      : db.select({ n: sql<number>`count(*)` }).from(publishedDatasets),
   ]);
 
   const stats = {
@@ -453,8 +532,12 @@ export async function getAgentOrchestrationPlan(
   const task = AGENT_TASKS.find(t => t.id === ctx.taskId);
   const requestedMode: "DRY_RUN" | "APPLY" = ctx.mode === "APPLY" ? "APPLY" : "DRY_RUN";
 
-  const latestRun = await db.select({ id: extractionRuns.id, evidenceId: extractionRuns.evidenceId })
-    .from(extractionRuns)
+  let latestRunQuery = db.select({ id: extractionRuns.id, evidenceId: extractionRuns.evidenceId })
+    .from(extractionRuns);
+  if (tenantId) {
+    latestRunQuery = latestRunQuery.innerJoin(evidenceFiles, eq(extractionRuns.evidenceId, evidenceFiles.id)).where(eq(evidenceFiles.tenantId, tenantId)) as any;
+  }
+  const latestRun = await latestRunQuery
     .orderBy(sql`created_at DESC`)
     .limit(1);
 
@@ -555,7 +638,7 @@ Base metrics:
           const toolArgs = JSON.parse((toolCall as any).function.arguments);
           let toolResult = "";
           if (toolName === "query_database") {
-            toolResult = await executeQuery(toolArgs.sqlQuery);
+            toolResult = await executeQuery(toolArgs.sqlQuery, tenantId);
           } else {
             toolResult = JSON.stringify({ error: `Unknown tool: ${toolName}` });
           }
@@ -594,13 +677,23 @@ Base metrics:
 }
 
 // ─── System-level insights (no specific task) ─────────────────────────────────
-export async function getSystemInsights(): Promise<{ insights: string[]; score: number }> {
+export async function getSystemInsights(tenantId?: string): Promise<{ insights: string[]; score: number }> {
   const [ev, runs, val, ent, chunks] = await Promise.all([
-    db.select({ n: sql<number>`count(*)` }).from(evidenceFiles),
-    db.select({ n: sql<number>`count(*)` }).from(extractionRuns),
-    db.select({ n: sql<number>`count(*)` }).from(validationTasks),
-    db.select({ n: sql<number>`count(*)` }).from(cdmEntities),
-    db.select({ n: sql<number>`count(*)` }).from(chunkEmbeddings),
+    tenantId
+      ? db.select({ n: sql<number>`count(*)` }).from(evidenceFiles).where(eq(evidenceFiles.tenantId, tenantId))
+      : db.select({ n: sql<number>`count(*)` }).from(evidenceFiles),
+    tenantId
+      ? db.select({ n: sql<number>`count(*)` }).from(extractionRuns).innerJoin(evidenceFiles, eq(extractionRuns.evidenceId, evidenceFiles.id)).where(eq(evidenceFiles.tenantId, tenantId))
+      : db.select({ n: sql<number>`count(*)` }).from(extractionRuns),
+    tenantId
+      ? db.select({ n: sql<number>`count(*)` }).from(validationTasks).innerJoin(evidenceFiles, eq(validationTasks.evidenceId, evidenceFiles.id)).where(eq(evidenceFiles.tenantId, tenantId))
+      : db.select({ n: sql<number>`count(*)` }).from(validationTasks),
+    tenantId
+      ? db.select({ n: sql<number>`count(*)` }).from(cdmEntities).where(eq(cdmEntities.tenantId, tenantId))
+      : db.select({ n: sql<number>`count(*)` }).from(cdmEntities),
+    tenantId
+      ? db.select({ n: sql<number>`count(*)` }).from(chunkEmbeddings).where(eq(chunkEmbeddings.tenantId, tenantId))
+      : db.select({ n: sql<number>`count(*)` }).from(chunkEmbeddings),
   ]);
 
   const evidenceFiles_n  = Number(ev[0]?.n    ?? 0);

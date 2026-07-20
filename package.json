@@ -8,9 +8,11 @@
     "build": "cross-env NODE_ENV=production tsx script/build.ts",
     "start": "cross-env NODE_ENV=production node --env-file=.env dist/index.cjs",
     "check": "tsc",
+    "test": "node --import tsx --test tests/**/*.test.ts",
     "db:push": "drizzle-kit push",
     "db:migrate-compliance": "tsx script/init-db.ts",
-    "db:find-orphans": "node scripts/find_orphans.cjs"
+    "db:find-orphans": "node scripts/find_orphans.cjs",
+    "wait-for-db": "tsx script/wait-for-db.ts"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",

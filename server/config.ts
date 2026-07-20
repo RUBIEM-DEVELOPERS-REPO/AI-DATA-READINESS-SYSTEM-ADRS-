@@ -2,22 +2,72 @@
 // All thresholds and feature flags are centralised here.
 // In production these would be loaded from environment variables or a database config table.
 
+import { getSecret } from "./secrets-manager";
+
+function normalizeAllowedOrigin(value: string): string | null {
+  try {
+    const parsed = new URL(value.trim());
+    if (!["http:", "https:"].includes(parsed.protocol)) return null;
+    if (!parsed.hostname) return null;
+    return `${parsed.protocol}//${parsed.hostname}${parsed.port ? `:${parsed.port}` : ""}`;
+  } catch {
+    return null;
+  }
+}
+
 export function validateRuntimeConfig() {
   const isProduction = process.env.NODE_ENV === "production";
-  const enforce = isProduction || process.env.ENFORCE_RUNTIME_CONFIG === "true";
+  const enforce = isProduction || getSecret("ENFORCE_RUNTIME_CONFIG") === "true";
 
   const errors: string[] = [];
 
-  if (!process.env.DATABASE_URL) {
+  const databaseUrl = getSecret("DATABASE_URL");
+  const sessionSecret = getSecret("SESSION_SECRET");
+  const defaultTenant = getSecret("DEFAULT_TENANT");
+  let portVal = getSecret("PORT") || "5000";
+  let hostVal = getSecret("HOST");
+
+  if (!databaseUrl) {
     errors.push("DATABASE_URL is required");
   }
 
-  if (!process.env.SESSION_SECRET) {
+  if (!sessionSecret) {
     errors.push("SESSION_SECRET is required");
   }
 
-  if (!process.env.DEFAULT_TENANT) {
+  if (!defaultTenant) {
     errors.push("DEFAULT_TENANT is required");
+  }
+
+  if (!hostVal && isProduction) {
+    hostVal = "0.0.0.0";
+  }
+
+  const allowedOriginsStr = getSecret("ALLOWED_ORIGINS");
+  const allowedOrigins = allowedOriginsStr
+    ? allowedOriginsStr.split(",").map((origin) => origin.trim()).filter(Boolean)
+    : [];
+
+  if (isProduction && allowedOrigins.length === 0) {
+    errors.push("ALLOWED_ORIGINS is required in production");
+  }
+
+  const normalizedOrigins: string[] = [];
+  for (const origin of allowedOrigins) {
+    if (origin === "*") {
+      errors.push("ALLOWED_ORIGINS must not include wildcard '*' in production");
+      continue;
+    }
+    const normalized = normalizeAllowedOrigin(origin);
+    if (!normalized) {
+      errors.push(`ALLOWED_ORIGINS contains an invalid origin: ${origin}`);
+      continue;
+    }
+    if (isProduction && normalized.startsWith("http://")) {
+      errors.push(`ALLOWED_ORIGINS must use https:// in production: ${origin}`);
+      continue;
+    }
+    normalizedOrigins.push(normalized);
   }
 
   if (enforce && errors.length > 0) {
@@ -27,9 +77,12 @@ export function validateRuntimeConfig() {
   return {
     isProduction,
     enforce,
-    databaseUrl: process.env.DATABASE_URL,
-    sessionSecret: process.env.SESSION_SECRET,
-    defaultTenant: process.env.DEFAULT_TENANT,
+    databaseUrl,
+    sessionSecret,
+    defaultTenant,
+    port: parseInt(portVal, 10),
+    host: hostVal || (isProduction ? "0.0.0.0" : "127.0.0.1"),
+    allowedOrigins: normalizedOrigins,
   };
 }
 
