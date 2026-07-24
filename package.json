@@ -15,6 +15,8 @@
     "wait-for-db": "tsx script/wait-for-db.ts"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1090.0",
+    "@aws-sdk/lib-storage": "^3.1090.0",
     "@hookform/resolvers": "^3.10.0",
     "@jridgewell/trace-mapping": "^0.3.25",
     "@radix-ui/react-accordion": "^1.2.4",
@@ -52,6 +54,7 @@
     "@types/pdf-parse": "^1.1.5",
     "@types/unzipper": "^0.10.11",
     "@xenova/transformers": "^2.0.1",
+    "ably": "^2.25.0",
     "bcryptjs": "^3.0.3",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
@@ -68,14 +71,14 @@
     "jszip": "^3.10.1",
     "lucide-react": "^0.453.0",
     "memorystore": "^1.6.7",
+    "mongodb": "^7.5.0",
+    "mssql": "^10.0.1",
     "multer": "^2.1.1",
     "mysql2": "^3.6.0",
-    "mssql": "^10.0.1",
-    "mongodb": "^7.5.0",
-    "oracledb": "^7.0.0",
     "next-themes": "^0.4.6",
     "nodemailer": "^9.0.1",
     "openai": "^6.27.0",
+    "oracledb": "^7.0.0",
     "p-limit": "^7.3.0",
     "p-retry": "^7.1.1",
     "passport": "^0.7.0",
@@ -110,14 +113,14 @@
     "@types/connect-pg-simple": "^7.0.3",
     "@types/express": "^5.0.0",
     "@types/express-session": "^1.18.0",
+    "@types/mssql": "^12.3.0",
     "@types/node": "20.19.27",
+    "@types/oracledb": "^7.0.1",
     "@types/passport": "^1.0.16",
     "@types/passport-local": "^1.0.38",
     "@types/react": "^18.3.11",
     "@types/react-dom": "^18.3.1",
     "@types/ws": "^8.5.13",
-    "@types/mssql": "^12.3.0",
-    "@types/oracledb": "^7.0.1",
     "@vitejs/plugin-react": "^4.7.0",
     "autoprefixer": "^10.4.20",
     "cross-env": "^10.1.0",
@@ -132,7 +135,8 @@
   "overrides": {
     "drizzle-kit": {
       "@esbuild-kit/esm-loader": "npm:tsx@^4.20.4"
-    }
+    },
+    "canvas": false
   },
   "optionalDependencies": {
     "bufferutil": "^4.0.8"

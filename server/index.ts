@@ -149,7 +149,16 @@ app.use((req, res, next) => {
   next();
 });
 
-export async function startServer() {
+export interface StartServerOptions {
+  /**
+   * When true, the server is fully initialised (DB, middleware, routes) but
+   * does NOT bind a TCP port. Used by the Vercel serverless entry point
+   * (api/index.ts) where Vercel manages the HTTP layer.
+   */
+  skipListen?: boolean;
+}
+
+export async function startServer(opts: StartServerOptions = {}) {
   // GAP-007: Initialize OpenTelemetry before anything else
   await initTelemetry();
 
@@ -162,7 +171,7 @@ export async function startServer() {
   await waitForDatabaseConnection();
   await initAiProviderConfig();
   await setupSession(app);
-  
+
   // CSRF middleware must be loaded after session setup
   app.use(csrfMiddleware);
 
@@ -182,14 +191,25 @@ export async function startServer() {
     return res.status(status).json({ message });
   });
 
-  // importantly only setup vite in development and after
+  // Importantly only setup vite in development and after
   // setting up all the other routes so the catch-all route
-  // doesn't interfere with the other routes
-  if (process.env.NODE_ENV === "production") {
-    serveStatic(app);
-  } else {
-    const { setupVite } = await import("./vite");
-    await setupVite(httpServer, app);
+  // doesn't interfere with the other routes.
+  // On Vercel (skipListen=true), static files are served by the CDN layer —
+  // serveStatic() is not needed and would interfere with the serverless handler.
+  if (!opts.skipListen) {
+    if (process.env.NODE_ENV === "production") {
+      serveStatic(app);
+    } else {
+      const { setupVite } = await import("./vite");
+      await setupVite(httpServer, app);
+    }
+  }
+
+  // Skip port binding when running inside a Vercel serverless function.
+  // Vercel manages the HTTP layer; we only need the initialised Express app.
+  if (opts.skipListen) {
+    log("running in serverless mode — skipping port binding");
+    return;
   }
 
   // ALWAYS serve the app on the port specified in the environment variable PORT
@@ -211,5 +231,6 @@ export async function startServer() {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  await startServer();
+  // Direct invocation (npm run dev / npm start) — bind the port normally
+  await startServer({ skipListen: false });
 }

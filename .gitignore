@@ -10,3 +10,11 @@ uploads/
 scratch/
 scratch.ts
 migrations/
+
+# Vercel — project metadata (created by `vercel link`; contains project IDs)
+# Commit .vercel/project.json if you want CI to auto-detect the project
+# without VERCEL_ORG_ID/VERCEL_PROJECT_ID secrets (not recommended for private repos)
+.vercel
+
+# Local Vercel env overrides (use .env.vercel.example as the reference)
+.env.vercel

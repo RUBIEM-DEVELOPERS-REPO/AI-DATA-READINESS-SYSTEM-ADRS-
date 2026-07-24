@@ -63,6 +63,13 @@ passport.deserializeUser(async (id: string, done) => {
 // ─── Session setup ─────────────────────────────────────────────────────────
 const SESSION_TABLE_NAME = process.env.SESSION_TABLE_NAME || "adrs_sessions";
 
+/**
+ * The session handler instance — exported so the WebSocket server can
+ * authenticate upgrade requests against the same session store.
+ * Populated after setupSession() is called during app initialisation.
+ */
+export let sessionMiddleware: any = null;
+
 export async function setupSession(app: Express) {
   const PgStore = connectPg(session);
   let sessionStore: session.Store;
@@ -100,8 +107,7 @@ export async function setupSession(app: Express) {
     throw new Error("SESSION_SECRET must be configured in production");
   }
 
-  app.use(
-    session({
+  const sessionHandler = session({
       store: sessionStore,
       secret: sessionSecret as string,
       resave: false,
@@ -113,9 +119,12 @@ export async function setupSession(app: Express) {
         sameSite: process.env.NODE_ENV === "production" ? "strict" : "lax",
         maxAge: 1000 * 60 * 60 * 24 * 7, // 7 days
       },
-    })
-  );
+    });
 
+  // Capture the middleware instance for use by the WebSocket server
+  sessionMiddleware = sessionHandler;
+
+  app.use(sessionHandler);
   app.use(passport.initialize());
   app.use(passport.session());
 }

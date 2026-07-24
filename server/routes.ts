@@ -3,6 +3,8 @@ import { storage } from "./storage";
 import { isBootstrapSeedingEnabled } from "./security";
 import { hashPassword } from "./auth";
 import { registerRegistryRoutes } from "./routes_registry";
+import { setupWebSocket } from "./websocket";
+import { isAblyEnabled, issueClientToken } from "./services/ably-realtime";
 
 // Import domain sub-routers
 import authRouter from "./routes/auth";
@@ -118,6 +120,41 @@ export async function registerRoutes(httpServer: any, app: Express): Promise<any
 
   // Register compliance registry routes (Ropa / Data breaches)
   registerRegistryRoutes(app);
+
+  // ─── Ably Token Endpoint ────────────────────────────────────────────────────
+  // Authenticated clients call this to receive a short-lived Ably token request.
+  // The browser then connects to Ably directly using this token.
+  // Returns 404 when Ably is not configured (native ws mode).
+  app.get("/api/ably/token", async (req: any, res: any) => {
+    if (!isAblyEnabled()) {
+      return res.status(404).json({
+        error: "Ably not configured",
+        message: "Set ABLY_API_KEY to enable Ably real-time mode.",
+      });
+    }
+
+    if (!req.isAuthenticated() || !req.user) {
+      return res.status(401).json({ error: "Authentication required" });
+    }
+
+    try {
+      const { id: userId, tenantId } = req.user as any;
+      const tokenRequest = await issueClientToken(
+        tenantId || "TENANT-001",
+        String(userId),
+      );
+      res.json(tokenRequest);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || "Failed to issue Ably token" });
+    }
+  });
+
+  // ─── WebSocket Setup ────────────────────────────────────────────────────────
+  // In Ably mode this wires the event bus → Ably relay and returns early.
+  // In native ws mode this attaches the WebSocket server to the http.Server.
+  // Must be called after session middleware is set up (done in startServer()).
+  const { sessionMiddleware } = await import("./auth");
+  setupWebSocket(httpServer, sessionMiddleware);
 
   return httpServer;
 }

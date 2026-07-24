@@ -155,9 +155,9 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
 
-  # ─── Deploy to Staging ──────────────────────────────────────────────
+  # ─── Deploy to Staging (K8s) ──────────────────────────────────────────
   deploy-staging:
-    name: Deploy to Staging
+    name: Deploy to Staging (K8s)
     runs-on: ubuntu-latest
     needs: build
     if: github.ref == 'refs/heads/main'
@@ -182,9 +182,32 @@ jobs:
           kustomize build k8s/kustomize/overlays/staging | kubectl apply -f -
           kubectl rollout status deployment/intellinexus -n intellinexus-staging --timeout=300s
 
-  # ─── Deploy to Production ───────────────────────────────────────────
+  # ─── Deploy to Vercel ─────────────────────────────────────────────────
+  deploy-vercel:
+    name: Deploy to Vercel
+    runs-on: ubuntu-latest
+    needs: [test, security]
+    if: github.ref == 'refs/heads/main'
+    environment: vercel-production
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - run: npm ci
+
+      - name: Deploy to Vercel (production)
+        run: npx vercel --prod --yes --token=${{ secrets.VERCEL_TOKEN }}
+        env:
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+
+  # ─── Deploy to Production (K8s) ──────────────────────────────────────────
   deploy-production:
-    name: Deploy to Production
+    name: Deploy to Production (K8s)
     runs-on: ubuntu-latest
     needs: deploy-staging
     if: github.ref == 'refs/heads/main'

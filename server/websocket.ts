@@ -26,6 +26,11 @@
 import { WebSocketServer, WebSocket } from "ws";
 import type { Server } from "http";
 import { eventBus, type IntelliNexusEvent } from "./services/event-bus";
+import {
+  isAblyEnabled,
+  publishToTenantChannel as ablyPublishToTenant,
+  publishToAllTenants as ablyPublishToAll,
+} from "./services/ably-realtime";
 
 // ─── Connection Registry ───────────────────────────────────────────────────
 
@@ -42,6 +47,28 @@ const clients = new Map<WebSocket, ConnectedClient>();
 // ─── WebSocket Server Setup ────────────────────────────────────────────────
 
 export function setupWebSocket(httpServer: Server, sessionMiddleware: any): void {
+  // ── Ably mode: skip native WebSocket server ─────────────────────────────
+  // When running on Vercel (VERCEL=1) or when ABLY_API_KEY is configured,
+  // Ably manages the WebSocket layer. The event bus still publishes events;
+  // broadcastToTenant() below routes them to Ably instead of native ws.
+  if (process.env.VERCEL === "1" || isAblyEnabled()) {
+    console.log(
+      "[WebSocket] Ably mode — native WebSocket server skipped. " +
+      "Real-time events will be delivered via Ably Pub/Sub.",
+    );
+
+    // Still wire up the event bus → Ably relay so events reach browsers
+    eventBus.subscribeAll((event: IntelliNexusEvent) => {
+      void ablyPublishToTenant(event.tenantId, {
+        type: "event",
+        event,
+      });
+    });
+
+    return;
+  }
+
+  // ── Native ws mode: traditional long-lived WebSocket server ────────────
   const wss = new WebSocketServer({ server: httpServer, path: "/ws" });
 
   // Subscribe to ALL IntelliNexus events and broadcast to relevant tenant clients
@@ -132,8 +159,15 @@ export function setupWebSocket(httpServer: Server, sessionMiddleware: any): void
 /**
  * Broadcast a message to all connected clients belonging to a specific tenant.
  * Multi-Tenant isolation: other tenants' clients never receive this message.
+ *
+ * In Ably mode (VERCEL=1 or ABLY_API_KEY set): delegates to Ably REST API.
+ * In native ws mode: iterates the in-process client registry.
  */
 export function broadcastToTenant(tenantId: string, payload: unknown): void {
+  if (isAblyEnabled()) {
+    void ablyPublishToTenant(tenantId, payload);
+    return;
+  }
   const message = JSON.stringify(payload);
   for (const [socket, client] of clients) {
     if (client.tenantId === tenantId && socket.readyState === WebSocket.OPEN) {
@@ -148,8 +182,18 @@ export function broadcastToTenant(tenantId: string, payload: unknown): void {
 
 /**
  * Broadcast a system-wide message to all connected clients (SUPER_ADMIN only use).
+ *
+ * In Ably mode: not supported without enumerating active tenants from DB.
+ * Use publishToAllTenants() from ably-realtime.ts directly for system broadcasts.
  */
 export function broadcastToAll(payload: unknown): void {
+  if (isAblyEnabled()) {
+    console.warn(
+      "[WebSocket] broadcastToAll() called in Ably mode — " +
+      "import publishToAllTenants() from services/ably-realtime.ts instead.",
+    );
+    return;
+  }
   const message = JSON.stringify(payload);
   for (const [socket] of clients) {
     if (socket.readyState === WebSocket.OPEN) {
