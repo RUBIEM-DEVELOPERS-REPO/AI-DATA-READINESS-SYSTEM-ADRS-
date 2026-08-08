@@ -78,7 +78,12 @@ ${contextString}`;
     res.json({ reply, sources: searchResults.map(r => r.fileName) });
   } catch (err: any) {
     console.error("[Copilot] Chat error:", err);
-    res.status(500).json({ error: "Failed to process chat request" });
+    const detail = err?.message ?? "Unknown error";
+    const configError = /not configured|baseUrl is required|API key/i.test(detail);
+    const reply = configError
+      ? "The AI service is not configured on this server. Ask an administrator to set the AI provider API key in the server environment, then try again."
+      : "I couldn't reach the AI service right now. Please try again in a moment — if this persists, check the AI provider configuration and API key.";
+    res.json({ reply, sources: [], error: detail });
   }
 });
 

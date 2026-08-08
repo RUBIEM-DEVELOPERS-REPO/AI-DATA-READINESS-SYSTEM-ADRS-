@@ -247,6 +247,59 @@ const agentTools = [
   }
 ];
 
+// ─── Deterministic fallback (AI provider unavailable) ────────────────────────
+function buildFallbackAgentResult(
+  ctx: AgentContext,
+  task: AgentTask | undefined,
+  stats: AgentStats,
+  reason: string
+): AgentResult {
+  const focus = LAYER_FOCUS[ctx.layer] ?? LAYER_FOCUS.system;
+
+  const lines: string[] = [];
+  lines.push(`${task?.label ?? "Agent"} — ${task?.description ?? "System assessment for this workspace."}`);
+  lines.push("");
+  lines.push(`Current system state (${ctx.layer.toUpperCase()} workspace):`);
+  lines.push(`- Evidence files: ${stats.evidenceFiles}`);
+  lines.push(`- Extraction runs: ${stats.extractionRuns}`);
+  lines.push(`- Validation tasks pending: ${stats.validationTasks}`);
+  lines.push(`- CDM entities: ${stats.cdmEntities}`);
+  lines.push(`- Vector embeddings indexed: ${stats.chunkEmbeddings}`);
+  lines.push(`- Knowledge graph: ${stats.kgNodes} nodes, ${stats.kgEdges} edges`);
+  lines.push(`- Published datasets: ${stats.publishedDatasets}`);
+  lines.push("");
+  lines.push(`Workspace focus: ${focus}`);
+  lines.push("");
+  lines.push("Recommendations:");
+
+  const recs: string[] = [];
+  if (stats.evidenceFiles === 0) {
+    recs.push("Upload evidence documents to begin ingestion before running deeper pipeline stages.");
+  } else if (stats.extractionRuns < stats.evidenceFiles) {
+    recs.push(`Run extraction for the ${stats.evidenceFiles - stats.extractionRuns} evidence file(s) that have not been processed yet.`);
+  }
+  if (stats.validationTasks > 0) {
+    recs.push(`Clear the ${stats.validationTasks} pending validation task(s) to unblock downstream publishing.`);
+  }
+  if (stats.chunkEmbeddings === 0 && stats.evidenceFiles > 0) {
+    recs.push("Index vector embeddings for extracted text to enable RAG search and context intelligence.");
+  }
+  if (stats.cdmEntities === 0 && stats.extractionRuns > 0) {
+    recs.push("Check entity inference settings — extraction completed but no CDM entities were created.");
+  }
+  if (recs.length === 0) {
+    recs.push("Pipeline is healthy — monitor live metrics and continue with the current cadence.");
+  }
+
+  const output =
+    lines.join("\n") +
+    "\n" +
+    recs.map((r, i) => `${i + 1}. ${r}`).join("\n") +
+    `\n\n*AI provider unavailable (${reason}) — response generated from live system metrics.*`;
+
+  return { taskId: ctx.taskId, layer: ctx.layer, output, suggestions: recs.slice(0, 4) };
+}
+
 // ─── Main agent execution ─────────────────────────────────────────────────────
 export async function runAgentTask(ctx: AgentContext, tenantId?: string): Promise<AgentResult> {
   // Gather live system stats to ground the agent
@@ -395,7 +448,7 @@ Instructions:
 
   } catch (err: any) {
     console.error("[Agent] LLM call failed:", err?.message ?? err);
-    throw new Error(`Agent execution failed: ${err?.message ?? err}`);
+    return buildFallbackAgentResult(ctx, task, stats, err?.message ?? "service error");
   }
 }
 

@@ -8,7 +8,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Bot, X, ChevronRight, Sparkles, Loader2, CheckCircle2,
-  RefreshCw, Layers,
+  RefreshCw, Layers, AlertCircle,
 } from "lucide-react";
 import { getCsrfToken } from "@/lib/queryClient";
 import { resolveLayer } from "@/lib/agent-layers";
@@ -59,6 +59,7 @@ export function AgentAssist({
   const [selectedTask, setSelectedTask] = useState<AgentTask | null>(null);
   const [query, setQuery] = useState("");
   const [result, setResult] = useState<AgentResult | null>(null);
+  const [runError, setRunError] = useState<string | null>(null);
 
   // Position stored as viewport top-left offsets
   const [pos, setPos] = useState<{ x: number; y: number } | null>(null);
@@ -171,25 +172,43 @@ export function AgentAssist({
 
   // Run agent task
   const { isPending, mutate: runTask } = useMutation<AgentResult, Error, { taskId: string; query?: string }>({
-    mutationFn: async ({ taskId, query: q }) =>
-      fetch("/api/agent/run", {
+    mutationFn: async ({ taskId, query: q }) => {
+      const response = await fetch("/api/agent/run", {
         method: "POST",
         headers: { "Content-Type": "application/json", "X-CSRF-Token": await getCsrfToken() },
         credentials: "include",
         body: JSON.stringify({ layer, taskId, query: q }),
-      }).then(r => r.json()),
-    onSuccess: (data) => setResult(data),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(data?.error ?? data?.detail ?? `Agent task failed (HTTP ${response.status})`);
+      }
+      if (typeof data?.output !== "string") {
+        throw new Error("Agent returned an empty response. The AI service may be unavailable.");
+      }
+      return data as AgentResult;
+    },
+    onSuccess: (data) => {
+      setResult(data);
+      setRunError(null);
+    },
+    onError: (err) => {
+      setResult(null);
+      setRunError(err?.message ?? "Agent task failed. Please try again.");
+    },
   });
 
   const handleRun = (task: AgentTask) => {
     setSelectedTask(task);
     setResult(null);
+    setRunError(null);
     runTask({ taskId: task.id, query: query || undefined });
   };
 
   const handleReset = () => {
     setSelectedTask(null);
     setResult(null);
+    setRunError(null);
     setQuery("");
   };
 
@@ -294,7 +313,7 @@ export function AgentAssist({
             )}
 
             {/* Task list or result */}
-            {!result && !isPending && (
+            {!result && !isPending && !runError && (
               <>
                 {/* Optional context input */}
                 <div>
@@ -351,6 +370,27 @@ export function AgentAssist({
               </div>
             )}
 
+            {/* Run error */}
+            {runError && !isPending && (
+              <div className="space-y-3">
+                <div className="flex items-center gap-2">
+                  <div className="w-6 h-6 rounded-full bg-red-500/10 flex items-center justify-center flex-shrink-0">
+                    <AlertCircle className="w-3.5 h-3.5 text-red-400" />
+                  </div>
+                  <div>
+                    <p className="text-xs font-bold">{selectedTask?.label ?? "Agent Assist"}</p>
+                    <p className="text-[10px] text-muted-foreground">Task could not be completed</p>
+                  </div>
+                </div>
+                <div className="bg-red-500/5 rounded-xl border border-red-500/20 p-3">
+                  <p className="text-xs leading-relaxed text-red-400 whitespace-pre-wrap">{runError}</p>
+                </div>
+                <Button variant="outline" size="sm" onClick={handleReset} className="w-full text-xs gap-2 h-8">
+                  <RefreshCw className="w-3 h-3" /> Try again
+                </Button>
+              </div>
+            )}
+
             {/* Result */}
             {result && !isPending && (
               <div className="space-y-3">
@@ -366,10 +406,10 @@ export function AgentAssist({
                 <div className="bg-muted/30 rounded-xl p-3">
                   <p className="text-xs leading-relaxed text-foreground whitespace-pre-wrap">{result.output}</p>
                 </div>
-                {result.suggestions.length > 0 && (
+                {(result.suggestions?.length ?? 0) > 0 && (
                   <div className="space-y-1.5">
                     <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Key Recommendations</p>
-                    {result.suggestions.map((s, i) => (
+                    {(result.suggestions ?? []).map((s, i) => (
                       <div key={i} className="flex items-start gap-2 text-xs">
                         <Badge variant="outline" className="text-[10px] shrink-0 mt-0.5 bg-emerald-500/5 text-emerald-400 border-emerald-500/20">{i + 1}</Badge>
                         <span className="text-muted-foreground leading-relaxed">{s.replace(/^\d+\.\s*/, "")}</span>

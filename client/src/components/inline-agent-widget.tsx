@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import {
   Bot, Sparkles, Loader2, CheckCircle2, RefreshCw, Zap,
-  ChevronDown, ChevronRight, ExternalLink, ArrowRight,
+  ChevronDown, ChevronRight, ExternalLink, ArrowRight, AlertCircle,
 } from "lucide-react";
 import { Link } from "wouter";
 import { getCsrfToken } from "@/lib/queryClient";
@@ -65,6 +65,7 @@ export function InlineAgentWidget({
   const [open, setOpen] = useState(!defaultCollapsed);
   const [running, setRunning] = useState<string | null>(null);
   const [results, setResults] = useState<Record<string, AgentResult>>({});
+  const [errors, setErrors] = useState<Record<string, string>>({});
   const [activeResult, setActiveResult] = useState<string | null>(null);
 
   const style = LAYER_STYLES[layer] ?? LAYER_STYLES.system;
@@ -78,22 +79,39 @@ export function InlineAgentWidget({
   });
 
   const { mutate: runTask } = useMutation<AgentResult, Error, { taskId: string }>({
-    mutationFn: async ({ taskId }) =>
-      fetch("/api/agent/run", {
+    mutationFn: async ({ taskId }) => {
+      const response = await fetch("/api/agent/run", {
         method: "POST",
         headers: { "Content-Type": "application/json", "X-CSRF-Token": await getCsrfToken() },
         credentials: "include",
         body: JSON.stringify({ layer, taskId }),
-      }).then((r) => r.json()),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(data?.error ?? data?.detail ?? `Agent task failed (HTTP ${response.status})`);
+      }
+      if (typeof data?.output !== "string") {
+        throw new Error("Agent returned an empty response. The AI service may be unavailable.");
+      }
+      return data as AgentResult;
+    },
     onMutate: ({ taskId }) => {
       setRunning(taskId);
       setActiveResult(taskId);
     },
     onSuccess: (data) => {
       setResults((prev) => ({ ...prev, [data.taskId]: data }));
+      setErrors((prev) => {
+        const next = { ...prev };
+        delete next[data.taskId];
+        return next;
+      });
       setRunning(null);
     },
-    onError: () => setRunning(null),
+    onError: (err, { taskId }) => {
+      setErrors((prev) => ({ ...prev, [taskId]: err?.message ?? "Agent task failed. Please try again." }));
+      setRunning(null);
+    },
   });
 
   const tasks = (tasksData?.tasks ?? []).slice(0, maxTasks);
@@ -212,6 +230,21 @@ export function InlineAgentWidget({
               </div>
             )}
 
+            {/* Run error */}
+            {activeResult && errors[activeResult] && !running && (
+              <div className="bg-red-500/5 rounded-xl border border-red-500/20 overflow-hidden">
+                <div className="flex items-center gap-2 px-3 py-2">
+                  <AlertCircle className="w-3.5 h-3.5 text-red-400 flex-shrink-0" />
+                  <span className="text-xs font-bold text-red-400">
+                    {tasks.find((t) => t.id === activeResult)?.label}
+                  </span>
+                </div>
+                <p className="text-[11px] leading-relaxed text-red-400/90 whitespace-pre-wrap px-3 pb-2.5">
+                  {errors[activeResult]}
+                </p>
+              </div>
+            )}
+
             {activeRes && !running && (
               <div className="bg-muted/20 rounded-xl border border-border/30 overflow-hidden">
                 <div className="flex items-center justify-between px-3 py-2 border-b border-border/20">
@@ -238,9 +271,9 @@ export function InlineAgentWidget({
                   <p className="text-xs leading-relaxed whitespace-pre-wrap text-foreground">
                     {activeRes.output}
                   </p>
-                  {activeRes.suggestions.length > 0 && (
+                  {(activeRes.suggestions?.length ?? 0) > 0 && (
                     <div className="space-y-1 pt-1 border-t border-border/20">
-                      {activeRes.suggestions.map((s, i) => (
+                      {(activeRes.suggestions ?? []).map((s, i) => (
                         <div key={i} className="flex items-start gap-2 text-[11px] text-muted-foreground">
                           <Badge
                             variant="outline"
