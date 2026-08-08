@@ -9,6 +9,14 @@ import { isSafeRemoteUrl } from "./security";
 export const UPLOADS_DIR = path.join(process.cwd(), "uploads");
 if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 
+// Temporary staging directory for incoming uploads. MUST be separate from
+// UPLOADS_DIR (the persistent object-store dir): the upload flow writes the
+// temp file here, copies it into the object store, then deletes the temp copy.
+// If both share a directory, the delete would remove the stored file too,
+// leaving every evidence record pointing at a file that no longer exists on disk.
+export const UPLOADS_TEMP_DIR = path.join(process.cwd(), ".tmp-uploads");
+if (!fs.existsSync(UPLOADS_TEMP_DIR)) fs.mkdirSync(UPLOADS_TEMP_DIR, { recursive: true });
+
 const allowedExtensions = new Set([
   ".pdf",
   ".docx",
@@ -38,7 +46,7 @@ const allowedExtensions = new Set([
 ]);
 
 const diskStorage = multer.diskStorage({
-  destination: UPLOADS_DIR,
+  destination: UPLOADS_TEMP_DIR,
   filename: (_req, file, cb) => {
     const ext = path.extname(file.originalname).toLowerCase();
     cb(null, `${Date.now()}_${Math.random().toString(36).slice(2)}${ext}`);

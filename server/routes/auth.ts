@@ -147,7 +147,16 @@ router.post("/auth/mfa-challenge", async (req: any, res: any, next: any) => {
 // ─── CSRF Token ───────────────────────────────────────────────────────────────
 router.get("/csrf-token", (req: any, res: any) => {
   const token = generateCsrfToken(req.sessionID || "default-session-id");
-  res.json({ csrfToken: token });
+  // CSRF tokens are bound to the session ID, so the response must never be
+  // cached (reverse proxies / browsers would serve a stale token for another
+  // session and cause every state-changing request to be rejected).
+  res.setHeader("Cache-Control", "no-store, private, max-age=0");
+  res.setHeader("Pragma", "no-cache");
+  res.setHeader("Expires", "0");
+  res.setHeader("Vary", "Origin, Cookie");
+  // Return both keys for compatibility: `token` is what the client reads,
+  // `csrfToken` kept for any legacy/external consumers.
+  res.json({ token, csrfToken: token });
 });
 
 router.post("/auth/register", async (req: any, res: any) => {

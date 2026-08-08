@@ -5,7 +5,7 @@ import { objectStore, resolveLocalPath } from "../services/object-store";
 import { assertFileSafe } from "../malware-scan";
 import { insertBatchSchema, insertEvidenceSchema } from "@shared/schema";
 import { tenantIdFromReq, generateCode, generateHash } from "./utils";
-import { uploadMiddleware, computeFileHash, getMimeType, detectCloudSource, downloadFile, UPLOADS_DIR } from "../upload";
+import { uploadMiddleware, computeFileHash, getMimeType, detectCloudSource, downloadFile, UPLOADS_TEMP_DIR } from "../upload";
 import { requireTenantContext, type TenantContext } from "../middleware/tenant-guard";
 import path from "path";
 import fs from "fs";
@@ -171,7 +171,7 @@ router.post("/evidence/import-url", requireRole("ANALYST"), async (req: any, res
     const { source, downloadUrl, fileName: detectedName } = detectCloudSource(url);
     const ext = path.extname(detectedName).slice(1).toLowerCase() || "bin";
     const diskName = `${Date.now()}_${Math.random().toString(36).slice(2)}.${ext || "bin"}`;
-    tempDiskPath = path.join(UPLOADS_DIR, diskName);
+          tempDiskPath = path.join(UPLOADS_TEMP_DIR, diskName);
     
     await downloadFile(downloadUrl, tempDiskPath);
     assertFileSafe(tempDiskPath);
@@ -230,7 +230,7 @@ router.post("/evidence/import-url", requireRole("ANALYST"), async (req: any, res
 // ZIP Batch Upload
 const zipUploadMiddleware = multer({
   storage: multer.diskStorage({
-    destination: UPLOADS_DIR,
+    destination: UPLOADS_TEMP_DIR,
     filename: (_req: any, file: any, cb: any) => {
       cb(null, `zip_${Date.now()}_${Math.random().toString(36).slice(2)}.zip`);
     },
@@ -280,7 +280,7 @@ router.post("/evidence/upload-zip", requireRole("ANALYST"), (req: any, res: any)
           const baseName = path.basename(entry.path);
           const ext = path.extname(baseName).slice(1).toLowerCase() || "bin";
           const diskName = `${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`;
-          tempDiskPath = path.join(UPLOADS_DIR, diskName);
+    tempDiskPath = path.join(UPLOADS_TEMP_DIR, diskName);
           
           const buffer = await entry.buffer();
           fs.writeFileSync(tempDiskPath, buffer);

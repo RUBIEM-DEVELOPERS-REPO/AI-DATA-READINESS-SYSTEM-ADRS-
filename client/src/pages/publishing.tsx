@@ -14,7 +14,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { useToast } from "@/hooks/use-toast";
-import { apiRequest, queryClient } from "@/lib/queryClient";
+import { apiRequest, queryClient, getCsrfToken } from "@/lib/queryClient";
 import type { PublishedDataset, DatasetCard } from "@shared/schema";
 import { Link } from "wouter";
 import {
@@ -225,7 +225,7 @@ function DatasetCard({ dataset }: { dataset: PublishedDataset }) {
     mutationFn: async (opts?: { override?: boolean; overrideReason?: string }) => {
       const res = await fetch(`/api/datasets/${dataset.id}/publish`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "X-CSRF-Token": await getCsrfToken() },
         body: JSON.stringify({
           publishedBy: "Wills",
           ...(opts?.override ? { override: true, overrideReason: opts.overrideReason } : {}),

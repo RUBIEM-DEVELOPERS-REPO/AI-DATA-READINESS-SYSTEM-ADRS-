@@ -48,6 +48,7 @@ import AdministrationPage from "@/pages/administration";
 import { AiCopilot } from "@/components/ai-copilot";
 import { AgentAssist } from "@/components/agent-assist";
 import { getPortalAssistantConfig } from "@/components/assistant-config";
+import { resolveLayer, LAYER_LABELS } from "@/lib/agent-layers";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem,
   DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger
@@ -168,17 +169,36 @@ function PortalAssistantLayer() {
     portal = "dpo";
   }
 
-  if (!portal) return null;
+  // No floating assistant on the public login page
+  if (location === "/auth") return null;
 
-  const config = getPortalAssistantConfig(portal);
+  const config = portal
+    ? getPortalAssistantConfig(portal)
+    : {
+        copilot: {
+          title: "IntelliNexus Copilot",
+          subtitle: "AI Workspace · RAG System",
+          placeholder: "Ask about your documents...",
+          initialMessage: "Hi! I'm the IntelliNexus Copilot. I can answer questions based on the documents you've uploaded to the system.",
+        },
+        agent: {
+          title: "AI Agent Assist",
+          subtitle: "Workflow automation",
+          initialMessage: "I can help with tasks across the current workspace. The active layer adapts to the page you're on.",
+          layer: "system",
+        },
+      };
+
+  const activeLayer = portal ? config.agent.layer : resolveLayer(location);
+  const pageLabel = portal ? config.agent.subtitle : (LAYER_LABELS[activeLayer] ?? "AI Workspace");
 
   return (
     <>
-      <AiCopilot {...config.copilot} />
+      <AiCopilot {...config.copilot} layer={activeLayer} pageLabel={pageLabel} />
       <AgentAssist
         {...config.agent}
-        layerOverride={config.agent.layer}
-        layerLabel={config.agent.subtitle}
+        layerOverride={portal ? config.agent.layer : undefined}
+        layerLabel={portal ? config.agent.subtitle : undefined}
       />
     </>
   );

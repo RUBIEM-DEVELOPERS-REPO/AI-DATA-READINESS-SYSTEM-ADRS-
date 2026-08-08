@@ -9,6 +9,7 @@ import {
   ChevronDown, ChevronRight, ExternalLink, ArrowRight,
 } from "lucide-react";
 import { Link } from "wouter";
+import { getCsrfToken } from "@/lib/queryClient";
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 interface AgentTask {
@@ -77,10 +78,10 @@ export function InlineAgentWidget({
   });
 
   const { mutate: runTask } = useMutation<AgentResult, Error, { taskId: string }>({
-    mutationFn: ({ taskId }) =>
+    mutationFn: async ({ taskId }) =>
       fetch("/api/agent/run", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "X-CSRF-Token": await getCsrfToken() },
         credentials: "include",
         body: JSON.stringify({ layer, taskId }),
       }).then((r) => r.json()),

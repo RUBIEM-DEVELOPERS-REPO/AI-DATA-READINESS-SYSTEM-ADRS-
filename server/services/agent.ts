@@ -90,6 +90,19 @@ export const AGENT_TASKS: AgentTask[] = [
   { id: "system.roi_report",       layer: "system",       icon: "BarChart3",      label: "Business Analyst",           description: "Estimate time and cost savings delivered by AI automation vs. manual processing." },
 ];
 
+export const LAYER_FOCUS: Record<string, string> = {
+  evidence: "Ingestion and evidence lifecycle: batches, stored files, upload health, ingestion metrics.",
+  intelligence: "Multimodal extraction quality: document types, OCR/extraction confidence, field coverage.",
+  cdm: "Canonical data model: entity standardisation, conflicts, lineage, golden records.",
+  feature: "Feature representation: vector embeddings, feature-store coverage, embedding quality.",
+  attention: "Context intelligence: profile routing, attention/fusion, context packets.",
+  validation: "Trust scoring, HITL validation, policy compliance, and conflict resolution.",
+  graph: "Knowledge graph: nodes, edges, relationships, anomalies, and isolated subgraphs.",
+  publishing: "Dataset publishing: quality gates, artifacts, lineage, and AI-ready export.",
+  dpo: "DPO portal compliance: privacy notices, breach triage, authorisation, and data subject rights.",
+  system: "End-to-end system health and cross-layer operations.",
+};
+
 function scopeSqlToTenant(sqlQuery: string, tenantId: string): string {
   let query = sqlQuery;
   // Replace table names with tenant-scoped subqueries.
@@ -277,6 +290,8 @@ export async function runAgentTask(ctx: AgentContext, tenantId?: string): Promis
 
   const task = AGENT_TASKS.find(t => t.id === ctx.taskId);
 
+  const layerFocus = LAYER_FOCUS[ctx.layer] ?? LAYER_FOCUS.system;
+
   const systemPrompt = `You are an expert AI Agent embedded in ADRS (AI Data Readiness System), an enterprise pipeline for ingesting, extracting, validating, and publishing AI-ready datasets.
 
 Live system metrics:
@@ -291,6 +306,9 @@ Live system metrics:
 Active layer: ${ctx.layer.toUpperCase()}
 Agent task: ${ctx.taskId}
 
+Workspace focus: ${layerFocus}
+Stay within this workspace's domain. You may query other domains for supporting facts, but frame the answer for this workspace and note the source domain when relevant.
+
 You have access to tools to query the database and act on the system state. Use them proactively to get precise facts before drawing conclusions!
 
 Instructions:
@@ -298,8 +316,7 @@ Instructions:
 - Lead with the most critical insight
 - Use numbered recommendations (1. 2. 3.) where applicable
 - Be specific, actionable, and grounded in the database facts you retrieve
-- Do not mention being an AI or add caveats
-- If the active layer is DPO, emphasize DPO portal compliance, privacy notice guidance, breach triage, authorisation requirements, and data subject rights management.`;
+- Do not mention being an AI or add caveats`;
 
   const userPrompt = task
     ? `Execute: "${task.label}" — ${task.description}${ctx.query ? `\n\nAdditional context: ${ctx.query}` : ""}`

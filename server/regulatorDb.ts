@@ -1,15 +1,10 @@
+import "./env";
 import { drizzle } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
 import * as schema from "@shared/schema";
 
-const connectionString = process.env.REGULATOR_DATABASE_URL || (process.env.NODE_ENV === "production" ? undefined : "postgresql://postgres:postgres@localhost:5446/regulator_db");
-if (!process.env.REGULATOR_DATABASE_URL && process.env.NODE_ENV === "production") {
-  throw new Error("REGULATOR_DATABASE_URL must be configured in production");
-}
-
-if (!process.env.REGULATOR_DATABASE_URL) {
-  console.warn("REGULATOR_DATABASE_URL not set — falling back to localhost:5446/regulator_db");
-}
+const defaultDbUrl = process.env.DATABASE_URL || "postgresql://postgres:postgres@localhost:5432/regulator_db";
+const connectionString = process.env.REGULATOR_DATABASE_URL || defaultDbUrl;
 
 const pool = new Pool({ connectionString });
 

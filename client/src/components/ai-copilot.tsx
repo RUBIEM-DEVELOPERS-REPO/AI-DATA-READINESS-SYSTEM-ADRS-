@@ -5,6 +5,7 @@ import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { getCsrfToken } from "@/lib/queryClient";
 
 interface ChatMessage {
   role: "user" | "system";
@@ -17,6 +18,10 @@ interface AiCopilotProps {
   subtitle?: string;
   placeholder?: string;
   initialMessage?: string;
+  /** Active pipeline layer / workspace for this page (e.g. "cdm", "evidence", "dpo") */
+  layer?: string;
+  /** Human-readable label for the active workspace shown in the header */
+  pageLabel?: string;
 }
 
 const BTN_SIZE = 56; // px - explicit size to avoid Tailwind custom class issues
@@ -26,6 +31,8 @@ export function AiCopilot({
   subtitle = "AI Workspace · RAG System",
   placeholder = "Ask about your documents...",
   initialMessage = "Hi! I'm the IntelliNexus Copilot. I can answer questions based on the documents you've uploaded to the system.",
+  layer,
+  pageLabel,
 }: AiCopilotProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([
@@ -150,9 +157,11 @@ export function AiCopilot({
     try {
       const response = await fetch("/api/copilot/chat", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "X-CSRF-Token": await getCsrfToken() },
         body: JSON.stringify({
           message: userMessage,
+          layer,
+          pageLabel,
           conversationHistory: messages.filter(m => m.role === "user" || m.role === "system").map(m => ({
             role: m.role,
             content: m.content
@@ -242,6 +251,11 @@ export function AiCopilot({
             <div>
               <h3 className="font-semibold text-sm leading-tight">{title}</h3>
               <p className="text-xs text-indigo-100 opacity-80 leading-tight">{subtitle}</p>
+              {pageLabel && (
+                <Badge variant="secondary" className="mt-1 text-[9px] bg-white/20 text-white border-white/30">
+                  {pageLabel}
+                </Badge>
+              )}
             </div>
           </div>
           <Button variant="ghost" size="icon" onClick={() => setIsOpen(false)} className="text-white hover:bg-white/10 rounded-full h-8 w-8">

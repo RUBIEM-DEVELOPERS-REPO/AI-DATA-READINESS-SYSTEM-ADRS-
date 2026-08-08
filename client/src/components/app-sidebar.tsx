@@ -1,10 +1,11 @@
+import React from "react";
 import { Link, useLocation } from "wouter";
 import {
   Sidebar, SidebarContent, SidebarFooter, SidebarGroup, SidebarGroupContent,
   SidebarGroupLabel, SidebarHeader, SidebarMenu, SidebarMenuButton, SidebarMenuItem, SidebarSeparator
 } from "@/components/ui/sidebar";
 import {
-  LayoutDashboard, FolderOpen, Brain, CheckSquare, Database, Upload, FileText, Shield, BarChart3, Users, BookOpen, Target, GitBranch, Cpu, Bot
+  LayoutDashboard, FolderOpen, Brain, CheckSquare, Database, Upload, FileText, Shield, BarChart3, Users, BookOpen, Target, GitBranch, Cpu, Bot, LogOut
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { useQuery } from "@tanstack/react-query";
@@ -84,9 +85,22 @@ const navGroups: NavGroup[] = [
 
 export function AppSidebar() {
   const [location] = useLocation();
-  const { user, can } = useAuth();
+  const { user, can, logout } = useAuth();
+  const [signingOut, setSigningOut] = React.useState(false);
+
+  const handleSignOut = async () => {
+    setSigningOut(true);
+    try {
+      await logout();
+    } catch {
+      setSigningOut(false);
+    }
+  };
   const { data: stats } = useQuery<{ pendingValidation: number }>({
     queryKey: ["/api/dashboard/stats"],
+    refetchInterval: 30_000,
+    refetchOnWindowFocus: true,
+    staleTime: 30_000,
   });
 
   const initials = user
@@ -231,6 +245,16 @@ export function AppSidebar() {
               <Shield className="w-3 h-3 mr-1.5" />
               {user.role.replace("_", " ")}
             </Badge>
+            <button
+              id="btn-sign-out"
+              onClick={handleSignOut}
+              disabled={signingOut}
+              className="w-full flex items-center justify-center gap-2 rounded-xl border border-border/40 bg-background/50 hover:bg-destructive/10 hover:border-destructive/40 hover:text-destructive text-muted-foreground text-[13px] font-medium py-2 px-3 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+              aria-label="Sign out"
+            >
+              <LogOut className="w-4 h-4" />
+              {signingOut ? "Signing out…" : "Sign Out"}
+            </button>
           </div>
         ) : (
           <div className="flex items-center gap-3 px-2 py-1">

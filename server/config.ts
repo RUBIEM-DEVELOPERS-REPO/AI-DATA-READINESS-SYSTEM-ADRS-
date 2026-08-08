@@ -24,8 +24,11 @@ export function validateRuntimeConfig() {
   const databaseUrl = getSecret("DATABASE_URL");
   const sessionSecret = getSecret("SESSION_SECRET");
   const defaultTenant = getSecret("DEFAULT_TENANT");
-  let portVal = getSecret("PORT") || "5000";
-  let hostVal = getSecret("HOST");
+  // Phusion Passenger (cPanel Application Manager) assigns its own PORT at
+  // runtime via process.env.PORT. Always prefer that over the .env value so
+  // the app binds to the socket Passenger is listening on.
+  let portVal = process.env.PORT || getSecret("PORT") || "5001";
+  let hostVal = process.env.HOST || getSecret("HOST");
 
   if (!databaseUrl) {
     errors.push("DATABASE_URL is required");
@@ -52,6 +55,8 @@ export function validateRuntimeConfig() {
     errors.push("ALLOWED_ORIGINS is required in production");
   }
 
+  const allowHttpOrigins = getSecret("ALLOW_HTTP_ORIGINS") === "true";
+
   const normalizedOrigins: string[] = [];
   for (const origin of allowedOrigins) {
     if (origin === "*") {
@@ -63,7 +68,8 @@ export function validateRuntimeConfig() {
       errors.push(`ALLOWED_ORIGINS contains an invalid origin: ${origin}`);
       continue;
     }
-    if (isProduction && normalized.startsWith("http://")) {
+    // Allow http:// origins when ALLOW_HTTP_ORIGINS=true (e.g. pre-SSL IP-based VPS deployments)
+    if (isProduction && normalized.startsWith("http://") && !allowHttpOrigins) {
       errors.push(`ALLOWED_ORIGINS must use https:// in production: ${origin}`);
       continue;
     }

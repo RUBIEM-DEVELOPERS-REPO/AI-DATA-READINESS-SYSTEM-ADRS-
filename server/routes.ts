@@ -101,6 +101,17 @@ export async function registerRoutes(httpServer: any, app: Express): Promise<any
     console.warn("[ADRS] Skipping bootstrap user seeding in production. Set BOOTSTRAP_ADMIN_USERNAME/BOOTSTRAP_ADMIN_PASSWORD to create initial accounts.");
   }
 
+  // ─── API anti-caching header ────────────────────────────────────────────
+  // Ensures no intermediate proxy/CDN/nginx cache ever stores dynamic API
+  // responses (e.g. /api/auth/me). Without this, a cached 200 containing an
+  // old session's user object is served to every visitor — including after
+  // signout — which causes the app to appear permanently logged in.
+  app.use("/api", (_req: any, res: any, next: any) => {
+    res.setHeader("Cache-Control", "no-store, private, max-age=0");
+    res.setHeader("Pragma", "no-cache");
+    next();
+  });
+
   // Mount decomposed domain routers under /api prefix
   app.use("/api", authRouter);
   app.use("/api", mfaRouter);

@@ -1,3 +1,4 @@
+import "./env";
 import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
@@ -50,6 +51,43 @@ export const httpServer = createServer(app);
 app.disable("x-powered-by");
 app.use(createRequestLogger());
 
+// Public host used to rewrite outgoing Location headers when the hosting proxy
+// rewrites or exposes internal backend addresses. Configure via
+// `PUBLIC_HOST=https://your-public-host.example` or it will fallback to
+// the first entry in ALLOWED_ORIGINS from the environment.
+const publicHost =
+  process.env.PUBLIC_HOST || (process.env.ALLOWED_ORIGINS || "").split(",").map((s) => s.trim()).filter(Boolean)[0] || "";
+
+// Middleware to rewrite outgoing Location headers and `res.redirect()` targets
+// so they reference the external public host instead of internal addresses
+// like https://127.0.0.1:5001 which cPanel's proxy may inject.
+app.use((req, res, next) => {
+  const origSetHeader = res.setHeader.bind(res);
+  res.setHeader = (name: string, value: any) => {
+    if (typeof name === "string" && name.toLowerCase() === "location" && typeof value === "string" && publicHost) {
+      let v = value as string;
+      // replace common internal forms with the public host
+      v = v.replace(/https?:\/\/(?:127\.0\.0\.1|localhost)(:\d+)?/gi, publicHost.replace(/\/$/, ""));
+      v = v.replace(/https?:\/\/127\.0\.0\.1:\d+/gi, publicHost.replace(/\/$/, ""));
+      return origSetHeader(name, v);
+    }
+    return origSetHeader(name, value);
+  };
+
+  const origRedirect = res.redirect.bind(res);
+  res.redirect = (...args: any[]) => {
+    if (typeof args[0] === "string" && publicHost) {
+      let target = args[0] as string;
+      target = target.replace(/https?:\/\/(?:127\.0\.0\.1|localhost)(:\d+)?/gi, publicHost.replace(/\/$/, ""));
+      args[0] = target;
+    }
+    // @ts-ignore - keep original signature
+    return origRedirect(...args);
+  };
+
+  next();
+});
+
 const runtimeConfig = validateRuntimeConfig();
 
 declare module "http" {
@@ -58,7 +96,9 @@ declare module "http" {
   }
 }
 
-if (runtimeConfig.isProduction) {
+const allowHttpOrigins = process.env.ALLOW_HTTP_ORIGINS === "true";
+
+if (runtimeConfig.isProduction && !allowHttpOrigins) {
   app.set("trust proxy", 1);
   app.use((req, res, next) => {
     const forwardedProto = String(req.headers["x-forwarded-proto"] || "").split(",")[0].trim().toLowerCase();
@@ -230,7 +270,24 @@ export async function startServer(opts: StartServerOptions = {}) {
   );
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  // Direct invocation (npm run dev / npm start) — bind the port normally
-  await startServer({ skipListen: false });
+function isDirectInvocation(): boolean {
+  if (typeof require !== "undefined" && typeof module !== "undefined" && require.main === module) {
+    return true;
+  }
+  if (process.argv[1]) {
+    try {
+      return pathToFileURL(process.argv[1]).href === import.meta.url;
+    } catch {
+      return false;
+    }
+  }
+  return false;
 }
+
+if (isDirectInvocation()) {
+  startServer({ skipListen: false }).catch((err) => {
+    console.error("Failed to start server:", err);
+    process.exit(1);
+  });
+}
+

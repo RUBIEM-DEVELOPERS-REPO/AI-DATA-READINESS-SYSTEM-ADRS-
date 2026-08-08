@@ -17,7 +17,7 @@ import {
   MessageSquare, Layers, ArrowRight, Activity, ChevronRight,
   BookOpen, FlaskConical, Workflow, Lightbulb, Target, Eye,
 } from "lucide-react";
-import { apiRequest } from "@/lib/queryClient";
+import { apiRequest, getCsrfToken } from "@/lib/queryClient";
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 interface AgentTask {
@@ -264,7 +264,7 @@ function RagExplorerTab() {
     try {
       const res = await fetch("/api/copilot/chat", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "X-CSRF-Token": await getCsrfToken() },
         credentials: "include",
         body: JSON.stringify({
           message: msg,

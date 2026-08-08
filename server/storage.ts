@@ -555,7 +555,7 @@ export class DatabaseStorage implements IStorage {
       ));
     const [cdmCount] = await db.select({ count: sql<number>`count(*)` })
       .from(cdmEntities).where(eq(cdmEntities.tenantId, ctx.tenantId));
-    const [avgTrust] = await db.select({ avg: sql<number>`avg(er.trust_score)` })
+    const [avgTrust] = await db.select({ avg: sql<number>`avg(${extractionRuns.trustScore})` })
       .from(extractionRuns)
       .innerJoin(evidenceFiles, and(
         eq(extractionRuns.evidenceId, evidenceFiles.id),

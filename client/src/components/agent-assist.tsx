@@ -10,6 +10,8 @@ import {
   Bot, X, ChevronRight, Sparkles, Loader2, CheckCircle2,
   RefreshCw, Layers,
 } from "lucide-react";
+import { getCsrfToken } from "@/lib/queryClient";
+import { resolveLayer } from "@/lib/agent-layers";
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 interface AgentTask {
@@ -29,21 +31,6 @@ interface AgentAssistProps {
 }
 
 // ─── Route → Layer mapping ─────────────────────────────────────────────────────
-const ROUTE_LAYER: Record<string, string> = {
-  "/":                      "system",
-  "/dashboard":             "system",
-  "/evidence":              "evidence",
-  "/intelligence":          "intelligence",
-  "/cdm":                   "cdm",
-  "/validation":            "validation",
-  "/feature-representation":"feature",
-  "/intelligence-layer":    "attention",
-  "/kg-visualizer":         "graph",
-  "/publishing":            "publishing",
-  "/agent-layer":           "system",
-  "/evaluate":              "system",
-  "/catalogue":             "system",
-};
 
 const LAYER_META: Record<string, { label: string; color: string; bg: string }> = {
   evidence:     { label: "Evidence",                    color: "text-blue-400",    bg: "bg-blue-500/10" },
@@ -168,11 +155,11 @@ export function AgentAssist({
     if (left + cardW > window.innerWidth - 12) left = window.innerWidth - cardW - 12;
     if (top < 12) top = pos.y + BTN_SIZE + 12;
     if (top + cardH > window.innerHeight - 12) top = window.innerHeight - cardH - 12;
-    return { left: `${left}px`, top: `${top}px`, maxHeight: `${cardH}px` };
+    return { left: `${left}px`, top: `${top}px`, height: `${cardH}px`, maxHeight: `${cardH}px` };
   };
 
   // Determine active layer from route or explicit portal override
-  const layer = layerOverride ?? ROUTE_LAYER[location] ?? "system";
+  const layer = layerOverride ?? resolveLayer(location);
   const meta  = LAYER_META[layer] ?? LAYER_META.system;
 
   // Fetch tasks for this layer
@@ -184,10 +171,10 @@ export function AgentAssist({
 
   // Run agent task
   const { isPending, mutate: runTask } = useMutation<AgentResult, Error, { taskId: string; query?: string }>({
-    mutationFn: ({ taskId, query: q }) =>
+    mutationFn: async ({ taskId, query: q }) =>
       fetch("/api/agent/run", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "X-CSRF-Token": await getCsrfToken() },
         credentials: "include",
         body: JSON.stringify({ layer, taskId, query: q }),
       }).then(r => r.json()),

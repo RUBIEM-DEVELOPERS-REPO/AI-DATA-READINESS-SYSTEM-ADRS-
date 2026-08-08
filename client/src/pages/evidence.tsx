@@ -13,7 +13,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
-import { apiRequest, queryClient } from "@/lib/queryClient";
+import { apiRequest, queryClient, getCsrfToken } from "@/lib/queryClient";
 import type { EvidenceFile, Batch } from "@shared/schema";
 import {
   FileText, Upload, Search, Filter, Lock, Hash, HardDrive, Clock, FolderOpen, Plus, Eye, RefreshCw,
@@ -714,7 +714,7 @@ function IngestFileDialog() {
       formData.append("file", zipFile);
       formData.append("uploadedBy", zipOperator);
       if (zipBatch && zipBatch !== "none") formData.append("batchId", zipBatch);
-      const resp = await fetch("/api/evidence/upload-zip", { method: "POST", body: formData });
+      const resp = await fetch("/api/evidence/upload-zip", { method: "POST", headers: { "X-CSRF-Token": await getCsrfToken() }, body: formData });
       const data = await resp.json();
       if (!resp.ok) throw new Error(data.error ?? "ZIP upload failed");
       setZipResult({ ingested: data.ingested, errors: data.errors, errorDetails: data.errorDetails ?? [] });
@@ -757,7 +757,7 @@ function IngestFileDialog() {
       fd.append("sourceType", isAV ? (fileMediaType === "AUDIO" ? "RECORDING" : "DEVICE") : "SCAN");
       if (uploadBatch && uploadBatch !== "none") fd.append("batchId", uploadBatch);
       if (uploadDuration) fd.append("durationSeconds", uploadDuration);
-      const res = await fetch("/api/evidence/upload", { method: "POST", body: fd });
+      const res = await fetch("/api/evidence/upload", { method: "POST", headers: { "X-CSRF-Token": await getCsrfToken() }, body: fd });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Upload failed");
       invalidate();

@@ -25,7 +25,7 @@ router.use(requireTenantContext);
 // ─── Copilot Chat (RAG) ──────────────────────────────────────────────────────
 router.post("/copilot/chat", async (req, res) => {
   try {
-    const { message, conversationHistory = [] } = req.body;
+    const { message, conversationHistory = [], layer, pageLabel } = req.body;
     if (!message || typeof message !== "string") {
       return res.status(400).json({ error: "Message is required" });
     }
@@ -40,11 +40,18 @@ router.post("/copilot/chat", async (req, res) => {
       contextString = "No relevant context documents found in the system for this query.";
     }
 
+    const workspaceScope = layer || pageLabel
+      ? `\nCurrent workspace: ${pageLabel || layer} (layer: ${layer || "system"}).
+You are embedded in this workspace. Answer within this workspace's scope and do not blend in concepts from unrelated parts of the ADRS pipeline.
+If the context documents do not support a focused answer for this workspace, say so explicitly instead of substituting unrelated context.`
+      : "";
+
     const systemPrompt = `You are ADRS Copilot, an AI assistant for the African Data Readiness System.
 Your job is to answer the user's questions based strictly on the provided Context Documents.
 If the context documents do not contain the answer, say "I don't have enough information in the ingested documents to answer that."
 Do not hallucinate or invent information outside of the provided context.
 When providing an answer, cite the source document name if possible.
+${workspaceScope}
 
 ${contextString}`;
 

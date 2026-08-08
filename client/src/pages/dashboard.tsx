@@ -108,6 +108,9 @@ function ActivityItem({ log }: { log: AuditLog }) {
 export default function Dashboard() {
   const { data: stats, isLoading } = useQuery<DashboardStats>({
     queryKey: ["/api/dashboard/stats"],
+    refetchInterval: 30_000,
+    refetchOnWindowFocus: true,
+    staleTime: 30_000,
   });
 
   const avgTrust = stats?.avgTrustScore ?? 0;

@@ -12,7 +12,7 @@ async function fetchCsrfToken(): Promise<string> {
   return _csrfToken;
 }
 
-async function getCsrfToken(): Promise<string> {
+export async function getCsrfToken(): Promise<string> {
   if (_csrfToken) return _csrfToken;
   return fetchCsrfToken();
 }
@@ -77,7 +77,13 @@ export const getQueryFn: <T>(options: {
 }) => QueryFunction<T> =
   ({ on401: unauthorizedBehavior }) =>
   async ({ queryKey }) => {
-    const res = await fetch(queryKey.join("/") as string, {
+    let url = queryKey.join("/") as string;
+    // The shared reverse-proxy cache historically cached /api/auth/me responses,
+    // serving a stale 200 (old session's user) to every visitor — including
+    // after signout — so the app appeared permanently logged in. Bypass it.
+    // Dashboard stats must reflect live DB state, so bypass it as well.
+    if (url === "/api/auth/me" || url === "/api/dashboard/stats") url += `?cb=${Date.now()}`;
+    const res = await fetch(url, {
       credentials: "include",
     });
 
