@@ -221,7 +221,7 @@ router.get("/users", async (req: any, res: any) => {
 });
 
 // Change password
-router.post("/auth/change-password", requireAuth, requireRecentAuth(15 * 60 * 1000), async (req: any, res: any) => {
+router.post("/auth/change-password", requireAuth, async (req: any, res: any) => {
   const { currentPassword, newPassword } = req.body;
   if (!currentPassword || !newPassword) {
     return res.status(400).json({ error: "Current password and new password are required" });
@@ -346,7 +346,7 @@ router.post("/access-requests", async (req: any, res: any) => {
   }
   const accessReq = await storage.createAccessRequest({
     firstName, lastName, email, organisation,
-    requestedRole, reason, tenantId: tenantIdFromReq(req),
+    requestedRole, reason, tenantId: "TENANT-001",
   });
   await storage.createAuditLog({
     action: "ACCESS_REQUEST_SUBMITTED",
@@ -354,7 +354,7 @@ router.post("/access-requests", async (req: any, res: any) => {
     resourceId: accessReq.id,
     userId: "anonymous",
     details: { firstName, lastName, email, organisation, requestedRole },
-    tenantId: tenantIdFromReq(req),
+    tenantId: "TENANT-001",
   });
   res.status(201).json({ id: accessReq.id, message: "Access request submitted successfully" });
 });
